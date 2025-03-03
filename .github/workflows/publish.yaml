@@ -16,36 +16,31 @@ on:
         options: [patch, minor, major]
 
 jobs:
-  build-frontend:
+  build-sveltekit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Init Node Environment
+        uses: ./.github/actions/init-env-node  # 使用原始配置的初始化方法
 
       - name: Set build mode
         run: |
           MODE="nightly"
-          [[ "${{ inputs.channel }}" == "release" ]] && MODE="production"
+          [[ "${{ github.event.inputs.channel }}" == "release" ]] && MODE="production"
           echo "BUILD_MODE=$MODE" >> $GITHUB_ENV
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build project
+      - name: Build SvelteKit
         run: pnpm build:desktop -- --mode ${{ env.BUILD_MODE }}
 
   build-tauri:
-    needs: build-frontend
+    needs: build-sveltekit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Init Node Environment
+        uses: ./.github/actions/init-env-node
 
-      - name: Install cross-compile tools
+      - name: Setup ARM64 Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -53,9 +48,9 @@ jobs:
             g++-aarch64-linux-gnu \
             libc6-dev-arm64-cross
 
-      - name: Build binary
+      - name: Build Tauri
         run: |
           ./scripts/release.sh \
-            --channel "${{ inputs.channel || 'nightly' }}" \
+            --channel "${{ github.event.inputs.channel || 'nightly' }}" \
             --dist "./build-output" \
             --target aarch64-unknown-linux-gnu
