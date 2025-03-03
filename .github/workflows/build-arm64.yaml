@@ -1,0 +1,61 @@
+name: Linux ARM64 Build
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Build channel
+        required: true
+        default: nightly
+        type: choice
+        options: [release, nightly]
+      bump:
+        description: Version bump type
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
+
+jobs:
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set build mode
+        run: |
+          MODE="nightly"
+          [[ "${{ inputs.channel }}" == "release" ]] && MODE="production"
+          echo "BUILD_MODE=$MODE" >> $GITHUB_ENV
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build project
+        run: pnpm build:desktop -- --mode ${{ env.BUILD_MODE }}
+
+  build-tauri:
+    needs: build-frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross-compile tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libc6-dev-arm64-cross
+
+      - name: Build binary
+        run: |
+          ./scripts/release.sh \
+            --channel "${{ inputs.channel || 'nightly' }}" \
+            --dist "./build-output" \
+            --target aarch64-unknown-linux-gnu
