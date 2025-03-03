@@ -1,76 +1,61 @@
-name: 'Publish'
+name: Linux ARM64 Build
 on:
   workflow_dispatch:
     inputs:
       channel:
-        type: choice
+        description: Build channel
         required: true
-        description: channel
         default: nightly
-        options:
-          - release
-          - nightly
-      bump:
         type: choice
+        options: [release, nightly]
+      bump:
+        description: Version bump type
         required: true
-        description: update type
         default: patch
-        options:
-          - undefined
-          - patch
-          - minor
-          - major
+        type: choice
+        options: [patch, minor, major]
 
 jobs:
-  build-sveltekit:
+  build-frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set build mode
+        run: |
+          MODE="nightly"
+          [[ "${{ inputs.channel }}" == "release" ]] && MODE="production"
+          echo "BUILD_MODE=$MODE" >> $GITHUB_ENV
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
         with:
-          token: ${{ secrets.PAT_JUNON }}
-      - name: Consume input variables
-        shell: bash
-        run: |
-          VITEMODE=nightly
-          if [[ "${{ github.event.inputs.channel }}" == "release" ]]; then
-            VITEMODE=production
-          fi
-          echo "vitemode=$VITEMODE" >> $GITHUB_ENV
-          echo "channel=${{ github.event.inputs.channel || 'nightly' }}" >> $GITHUB_ENV
-          echo "bump=${{ github.event.inputs.bump || 'patch' }}" >> $GITHUB_ENV
-      - name: Calculate next version
-        shell: bash
-        run: |
-          CURRENT_VERSION="$(curl --silent "https://app.gitbutler.com/releases/${{ env.channel }}" | jq -r '.version')"
-          NEXT_VERSION=$(./scripts/next.sh "${CURRENT_VERSION}" "${{ env.bump }}")
-          echo "version=$NEXT_VERSION" >> $GITHUB_ENV
-      - name: Init Node Environment
-        uses: ./.github/actions/init-env-node
-      - name: Build SvelteKit
-        run: pnpm build:desktop -- --mode ${{ env.vitemode }}
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build project
+        run: pnpm build:desktop -- --mode ${{ env.BUILD_MODE }}
 
   build-tauri:
-    needs: build-sveltekit
+    needs: build-frontend
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        platform: [linux-arm64]  # 自定义ARM64架构标识
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_JUNON }}
-      - name: Setup cross-compilation
+
+      - name: Install cross-compile tools
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
             libc6-dev-arm64-cross
+
       - name: Build binary
-        shell: bash
         run: |
           ./scripts/release.sh \
-            --channel "${{ env.channel }}" \
-            --dist "./release" \
-            --version "${{ env.version }}" \
+            --channel "${{ inputs.channel || 'nightly' }}" \
+            --dist "./build-output" \
             --target aarch64-unknown-linux-gnu
