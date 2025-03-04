@@ -1,61 +1,58 @@
-name: Linux ARM64 Build
+name: Build Linux ARM64
+
 on:
-  workflow_dispatch:
-    inputs:
-      channel:
-        description: Build channel
-        required: true
-        default: nightly
-        type: choice
-        options: [release, nightly]
-      bump:
-        description: Version bump type
-        required: true
-        default: patch
-        type: choice
-        options: [patch, minor, major]
+  workflow_dispatch:  # 仅支持手动触发
 
 jobs:
-  build-frontend:
+  build-arm64:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v4
+      # 检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set build mode
+      # 安装基础依赖
+      - name: Setup system
         run: |
-          MODE="nightly"
-          [[ "${{ inputs.channel }}" == "release" ]] && MODE="production"
-          echo "BUILD_MODE=$MODE" >> $GITHUB_ENV
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build project
-        run: pnpm build:desktop -- --mode ${{ env.BUILD_MODE }}
-
-  build-tauri:
-    needs: build-frontend
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install cross-compile tools
-        run: |
+          sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            libc6-dev-arm64-cross
+            libgtk-3-dev:arm64 \
+            libwebkit2gtk-4.0-dev:arm64 \
+            libappindicator3-dev:arm64
 
-      - name: Build binary
+      # 配置 Rust 工具链
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      # 设置交叉编译环境变量
+      - name: Configure env
         run: |
-          ./scripts/release.sh \
-            --channel "${{ inputs.channel || 'nightly' }}" \
-            --dist "./build-output" \
-            --target aarch64-unknown-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo 'TARGET=aarch64-unknown-linux-gnu' >> $GITHUB_ENV
+
+      # 构建命令
+      - name: Build
+        run: |
+          cargo build --release --target $TARGET
+          strip target/$TARGET/release/gitbutler
+
+      # 打包产物
+      - name: Package
+        run: |
+          mkdir -p artifact
+          tar czvf artifact/gitbutler-arm64.tar.gz \
+            -C target/$TARGET/release \
+            gitbutler
+
+      # 上传构建结果
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: gitbutler-linux-arm64
+          path: artifact/*
