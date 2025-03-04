@@ -70,7 +70,8 @@ function arch() {
 	esac
 }
 
-ARCH="$(arch)"
+#ARCH="$(arch)"
+ARCH="aarch64"
 OS="$(os)"
 DIST="release"
 
