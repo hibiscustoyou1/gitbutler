@@ -53,3 +53,4 @@ jobs:
           ./scripts/release.sh \
             --channel "${{ github.event.inputs.channel || 'nightly' }}" \
             --dist "./build-output"
+            --version "${{ env.version }}"
