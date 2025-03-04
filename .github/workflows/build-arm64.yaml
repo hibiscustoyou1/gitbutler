@@ -1,58 +1,72 @@
 name: Build Linux ARM64
 
 on:
-  workflow_dispatch:  # 仅支持手动触发
+  workflow_dispatch:  # 仅手动触发
 
 jobs:
   build-arm64:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-22.04  # 使用稳定的 LTS 版本
+    timeout-minutes: 20
 
     steps:
-      # 检出代码
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 安装基础依赖
-      - name: Setup system
+      # 配置国内镜像源 + 多架构支持
+      - name: Configure APT sources
         run: |
+          sudo sed -i \
+            -e 's|http://archive.ubuntu.com|https://mirrors.aliyun.com|g' \
+            -e 's|http://security.ubuntu.com|https://mirrors.aliyun.com|g' \
+            /etc/apt/sources.list
+          
           sudo dpkg --add-architecture arm64
           sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu \
-            libgtk-3-dev:arm64 \
-            libwebkit2gtk-4.0-dev:arm64 \
-            libappindicator3-dev:arm64
 
-      # 配置 Rust 工具链
+      # 安装精确版本的交叉编译工具链
+      - name: Install ARM64 toolchain
+        run: |
+          sudo apt-get install -y \
+            gcc-11-aarch64-linux-gnu \
+            g++-11-aarch64-linux-gnu \
+            libgtk-3-dev:arm64=3.24.33-1ubuntu2 \
+            libwebkit2gtk-4.0-dev:arm64=2.38.5-0ubuntu1
+
+      # 配置 Rust 交叉编译环境
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-linux-gnu
 
-      # 设置交叉编译环境变量
-      - name: Configure env
+      - name: Configure linker
         run: |
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo 'TARGET=aarch64-unknown-linux-gnu' >> $GITHUB_ENV
+          echo '[target.aarch64-unknown-linux-gnu]' >> $GITHUB_WORKSPACE/.cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc-11"' >> $GITHUB_WORKSPACE/.cargo/config.toml
 
-      # 构建命令
-      - name: Build
+      # 带缓存的构建流程
+      - name: Build with cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: arm64-build
+
+      - name: Compile
         run: |
-          cargo build --release --target $TARGET
-          strip target/$TARGET/release/gitbutler
+          cargo build --release --target aarch64-unknown-linux-gnu \
+            -Z build-std=std,panic=abort \
+            -Z build-std-features=panic_immediate_abort
 
-      # 打包产物
-      - name: Package
+      # 生成最小化产物
+      - name: Strip binary
         run: |
-          mkdir -p artifact
-          tar czvf artifact/gitbutler-arm64.tar.gz \
-            -C target/$TARGET/release \
-            gitbutler
+          aarch64-linux-gnu-strip \
+            -s \
+            -R .comment \
+            -R .gnu.version \
+            target/aarch64-unknown-linux-gnu/release/gitbutler
 
-      # 上传构建结果
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: gitbutler-linux-arm64
-          path: artifact/*
+          path: |
+            target/aarch64-unknown-linux-gnu/release/gitbutler
