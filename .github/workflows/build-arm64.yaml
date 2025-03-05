@@ -1,72 +1,58 @@
-name: Build Linux ARM64
-
+name: 'Build Linux Arm64'
 on:
-  workflow_dispatch:  # 仅手动触发
+  workflow_run:
+    workflows: ['Nightly build']
+    types:
+      - completed
+
+  workflow_dispatch:
+    inputs:
+      channel:
+        type: choice
+        required: true
+        description: channel
+        default: nightly
+        options:
+          - release
+          - nightly
+      bump:
+        type: choice
+        required: true
+        description: update type
+        default: patch
+        options:
+          - undefined
+          - patch
+          - minor
+          - major
 
 jobs:
-  build-arm64:
-    runs-on: ubuntu-22.04  # 使用稳定的 LTS 版本
-    timeout-minutes: 20
+  build:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      # 配置国内镜像源 + 多架构支持
-      - name: Configure APT sources
-        run: |
-          sudo sed -i \
-            -e 's|http://archive.ubuntu.com|https://mirrors.aliyun.com|g' \
-            -e 's|http://security.ubuntu.com|https://mirrors.aliyun.com|g' \
-            /etc/apt/sources.list
-          
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
+    - name: Install linux dependencies
+      shell: bash
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt update;
+        sudo apt install -y \
+          build-essential \
+          curl \
+          wget \
+          file \
+          libssl-dev \
+          libgtk-3-dev \
+          libappindicator3-dev \
+          librsvg2-dev;
 
-      # 安装精确版本的交叉编译工具链
-      - name: Install ARM64 toolchain
-        run: |
-          sudo apt-get install -y \
-            gcc-11-aarch64-linux-gnu \
-            g++-11-aarch64-linux-gnu \
-            libgtk-3-dev:arm64=3.24.33-1ubuntu2 \
-            libwebkit2gtk-4.0-dev:arm64=2.38.5-0ubuntu1
-
-      # 配置 Rust 交叉编译环境
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
-
-      - name: Configure linker
-        run: |
-          echo '[target.aarch64-unknown-linux-gnu]' >> $GITHUB_WORKSPACE/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc-11"' >> $GITHUB_WORKSPACE/.cargo/config.toml
-
-      # 带缓存的构建流程
-      - name: Build with cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: arm64-build
-
-      - name: Compile
-        run: |
-          cargo build --release --target aarch64-unknown-linux-gnu \
-            -Z build-std=std,panic=abort \
-            -Z build-std-features=panic_immediate_abort
-
-      # 生成最小化产物
-      - name: Strip binary
-        run: |
-          aarch64-linux-gnu-strip \
-            -s \
-            -R .comment \
-            -R .gnu.version \
-            target/aarch64-unknown-linux-gnu/release/gitbutler
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: gitbutler-linux-arm64
-          path: |
-            target/aarch64-unknown-linux-gnu/release/gitbutler
+        sudo apt install -y \
+          libwebkit2gtk-4.1-0=2.44.0-2 \
+          libwebkit2gtk-4.1-dev=2.44.0-2 \
+          libjavascriptcoregtk-4.1-0=2.44.0-2 \
+          libjavascriptcoregtk-4.1-dev=2.44.0-2 \
+          gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
+          gir1.2-webkit2-4.1=2.44.0-2;
