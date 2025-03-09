@@ -5,6 +5,7 @@ import type { HttpClient } from '@gitbutler/shared/network/httpClient';
 export interface User {
 	id: number;
 	login: string | undefined;
+	avatar_url: string | undefined;
 	name: string;
 	email: string;
 	created_at: Date;
@@ -51,5 +52,17 @@ export class UserService {
 
 	clearUser() {
 		this.user.set(undefined);
+	}
+
+	async updateUser(params: { name?: string; picture?: File }): Promise<any> {
+		const formData = new FormData();
+		if (params.name) formData.append('name', params.name);
+		if (params.picture) formData.append('avatar', params.picture);
+
+		// Content Type must be unset for the right form-data border to be set automatically
+		return await this.httpClient.put('user.json', {
+			body: formData,
+			headers: { 'Content-Type': undefined }
+		});
 	}
 }
