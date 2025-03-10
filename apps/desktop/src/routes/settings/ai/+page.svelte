@@ -4,8 +4,6 @@
 	import InfoMessage from '$components/InfoMessage.svelte';
 	import RadioButton from '$components/RadioButton.svelte';
 	import Section from '$components/Section.svelte';
-	import Select from '$components/Select.svelte';
-	import SelectItem from '$components/SelectItem.svelte';
 	import SettingsPage from '$components/SettingsPage.svelte';
 	import { AISecretHandle, AIService, GitAIConfigKey, KeyOption } from '$lib/ai/service';
 	import { OpenAIModelName, AnthropicModelName, ModelKind } from '$lib/ai/types';
@@ -16,6 +14,8 @@
 	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
 	import Spacer from '@gitbutler/ui/Spacer.svelte';
 	import Textbox from '@gitbutler/ui/Textbox.svelte';
+	import Select from '@gitbutler/ui/select/Select.svelte';
+	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
 	import { onMount, tick } from 'svelte';
 	import { run } from 'svelte/legacy';
 
@@ -105,20 +105,16 @@
 
 	const anthropicModelOptions = [
 		{
-			label: 'Sonnet',
-			value: AnthropicModelName.Sonnet
-		},
-		{
-			label: 'Opus',
-			value: AnthropicModelName.Opus
-		},
-		{
 			label: 'Haiku',
 			value: AnthropicModelName.Haiku
 		},
 		{
-			label: 'Sonnet 3.5 (recommended)',
+			label: 'Sonnet 3.5',
 			value: AnthropicModelName.Sonnet35
+		},
+		{
+			label: 'Sonnet 3.7 (recommended)',
+			value: AnthropicModelName.Sonnet37
 		}
 	];
 

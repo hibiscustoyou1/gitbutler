@@ -15,13 +15,12 @@
 
 	const { projectId, selectable = false, change }: Props = $props();
 	const [diffService, changeSelection] = inject(DiffService, ChangeSelectionService);
-	const result = $derived(diffService.getDiff(projectId, change).current);
+	const diffResult = $derived(diffService.getDiff(projectId, change));
 
 	const selection = $derived(changeSelection.getById(change.path).current);
 	const pathData = $derived({
 		path: change.path,
-		pathBytes: change!.pathBytes,
-		previousPathBytes: change!.previousPathBytes
+		pathBytes: change!.pathBytes
 	});
 
 	function onchange(hunk: DiffHunk, selected: boolean, allHunks: DiffHunk[]) {
@@ -86,7 +85,7 @@
 </script>
 
 <div class="diff-section">
-	<ReduxResult {result}>
+	<ReduxResult result={diffResult.current}>
 		{#snippet children(diff)}
 			{#if diff.type === 'Patch'}
 				{#each diff.subject.hunks as hunk}

@@ -27,7 +27,7 @@ export function workspacePath(projectId: string) {
 }
 
 export function isWorkspacePath() {
-	return isUrl<{ projectId: string; branchId?: string }>('/[projectId]/workspace/[[stackId]]');
+	return isUrl<{ projectId: string; branchId?: string }>('/[projectId]/workspace/');
 }
 
 export function branchesPath(projectId: string) {
@@ -68,6 +68,24 @@ export function stackPath(projectId: string, stackId: string) {
 	return `/${projectId}/workspace/${stackId}`;
 }
 
+export function toggleBoolQueryParam(param: string) {
+	const url = new URL(page.url);
+	const searchParams = url.searchParams;
+
+	if (searchParams.has(param)) {
+		url.searchParams.delete(param);
+	} else {
+		url.searchParams.set(param, 'true');
+	}
+	return url.toString();
+}
+
+export function setQueryParam(param: string, value: string) {
+	const url = new URL(page.url);
+	url.searchParams.set(param, value);
+	return url.toString();
+}
+
 export function createCommitPath(
 	projectId: string,
 	stackId: string,
@@ -76,6 +94,14 @@ export function createCommitPath(
 ) {
 	const url = `/${projectId}/workspace/${stackId}/${branchName}/commit`;
 	return commitId ? url + '?commitId=' + commitId : url;
+}
+
+export function createBrPath(projectId: string, stackId: string, branchName: string) {
+	return `/${projectId}/workspace/${stackId}/${branchName}/butler-review`;
+}
+
+export function createPrPath(projectId: string, stackId: string, branchName: string) {
+	return `/${projectId}/workspace/${stackId}/${branchName}/pull-request`;
 }
 
 export function clonePath() {

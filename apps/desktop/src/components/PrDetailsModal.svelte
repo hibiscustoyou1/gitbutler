@@ -11,6 +11,7 @@
 	import PrTemplateSection from './PrTemplateSection.svelte';
 	import ScrollableContainer from '$components/ScrollableContainer.svelte';
 	import { AIService } from '$lib/ai/service';
+	import { writeClipboard } from '$lib/backend/clipboard';
 	import { BaseBranch } from '$lib/baseBranch/baseBranch';
 	import { BranchStack } from '$lib/branches/branch';
 	import { PatchSeries } from '$lib/branches/branch';
@@ -28,7 +29,6 @@
 	import { showError, showToast } from '$lib/notifications/toasts';
 	import { Project } from '$lib/project/project';
 	import { getBranchNameFromRef } from '$lib/utils/branch';
-	import { KeyName, onMetaEnter } from '$lib/utils/hotkeys';
 	import { sleep } from '$lib/utils/sleep';
 	import { openExternalUrl } from '$lib/utils/url';
 	import { getContext, getContextStore } from '@gitbutler/shared/context';
@@ -43,6 +43,7 @@
 	import ToggleButton from '@gitbutler/ui/ToggleButton.svelte';
 	import Markdown from '@gitbutler/ui/markdown/Markdown.svelte';
 	import { error } from '@gitbutler/ui/toasts';
+	import { KeyName, onMetaEnter } from '@gitbutler/ui/utils/hotkeys';
 	import { isDefined } from '@gitbutler/ui/utils/typeguards';
 	import { tick } from 'svelte';
 
@@ -320,9 +321,7 @@
 
 	let prLinkCopied = $state(false);
 	function handlePrLinkCopied(link: string) {
-		if (!navigator.clipboard) return;
-
-		navigator.clipboard.writeText(link);
+		writeClipboard(link);
 		prLinkCopied = true;
 
 		setTimeout(() => {

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ChatDiffLineSelection from './ChatDiffLineSelection.svelte';
+	import ChatInReplyTo, { type ReplyToMessage } from './ChatInReplyTo.svelte';
 	import MentionSuggestions from './MentionSuggestions.svelte';
 	import MessageHandler from '$lib/chat/message.svelte';
 	import RichText from '$lib/chat/richText.svelte';
@@ -9,14 +10,15 @@
 	import { getChatChannelParticipants } from '@gitbutler/shared/chat/chatChannelsPreview.svelte';
 	import { ChatChannelsService } from '@gitbutler/shared/chat/chatChannelsService';
 	import { getContext } from '@gitbutler/shared/context';
-	import { PatchService } from '@gitbutler/shared/patches/patchService';
+	import { PatchCommitService } from '@gitbutler/shared/patches/patchCommitService';
 	import { AppState } from '@gitbutler/shared/redux/store.svelte';
 	import { UserService as NewUserService } from '@gitbutler/shared/users/userService';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
 	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
 	import DropDownButton from '@gitbutler/ui/DropDownButton.svelte';
-	import RichTextEditor, { type EditorInstance } from '@gitbutler/ui/old_RichTextEditor.svelte';
+	import RichTextEditor from '@gitbutler/ui/RichTextEditor.svelte';
+	import MentionsPlugin from '@gitbutler/ui/richText/plugins/Mention.svelte';
 	import { env } from '$env/dynamic/public';
 
 	interface Props {
@@ -28,6 +30,8 @@
 		isUserLoggedIn: boolean | undefined;
 		diffSelection: DiffSelection | undefined;
 		clearDiffSelection: () => void;
+		replyingTo: ReplyToMessage | undefined;
+		clearReply: () => void;
 	}
 
 	let {
@@ -38,7 +42,9 @@
 		isPatchAuthor,
 		isUserLoggedIn,
 		diffSelection,
-		clearDiffSelection
+		clearDiffSelection,
+		replyingTo,
+		clearReply
 	}: Props = $props();
 
 	const newUserService = getContext(NewUserService);
@@ -46,24 +52,21 @@
 	const user = $derived(userService.user);
 
 	const appState = getContext(AppState);
-	const patchService = getContext(PatchService);
+	const patchCommitService = getContext(PatchCommitService);
 	const chatChannelService = getContext(ChatChannelsService);
 	const chatParticipants = $derived(
 		getChatChannelParticipants(appState, chatChannelService, projectId, changeId)
-	);
-	const suggestions = $derived(
-		new SuggestionsHandler(newUserService, chatParticipants.current, $user)
-	);
-
-	const messageHandler = $derived(
-		new MessageHandler(chatChannelService, projectId, branchId, changeId)
 	);
 
 	let isSendingMessage = $state(false);
 	let isExecuting = $state(false);
 
-	// Rich text editor
 	const richText = new RichText();
+	const messageHandler = new MessageHandler();
+	const suggestions = new SuggestionsHandler();
+
+	$effect(() => messageHandler.init(chatChannelService, projectId, branchId, changeId));
+	$effect(() => suggestions.init(newUserService, chatParticipants.current, $user));
 	$effect(() => {
 		if (changeId) {
 			// Just here to track the changeId
@@ -71,7 +74,8 @@
 
 		return () => {
 			// Cleanup once the change ID changes
-			richText.reset();
+			richText.clearEditor();
+			suggestions.reset();
 		};
 	});
 
@@ -79,42 +83,51 @@
 		if (isSendingMessage) return;
 		isSendingMessage = true;
 		try {
-			await messageHandler.send({ issue, diffSelection });
+			await messageHandler.send({ issue, diffSelection, inReplyTo: replyingTo?.uuid });
 		} finally {
-			const editor = richText.richTextEditor?.getEditor();
-			editor?.commands.clearContent(true);
+			richText.clearEditor();
 			isSendingMessage = false;
 			clearDiffSelection();
+			clearReply();
 		}
 	}
 
-	function handleKeyDown(event: KeyboardEvent): boolean {
-		if (event.key === 'Enter' && !event.shiftKey && richText.suggestions === undefined) {
+	function handleKeyDown(event: KeyboardEvent | null): boolean {
+		if (event === null) return false;
+
+		if (suggestions.suggestions !== undefined) {
+			return suggestions.onSuggestionKeyDown(event);
+		}
+
+		const metaKey = event.metaKey || event.ctrlKey;
+
+		if (event.key === 'Enter' && !event.shiftKey && suggestions.suggestions === undefined) {
 			event.preventDefault();
 			event.stopPropagation();
 			handleSendMessage();
 			return true;
 		}
 
-		const editor = richText.richTextEditor?.getEditor();
-		if (event.key === 'Enter' && event.shiftKey && editor) {
-			editor.commands.first(({ commands }) => [
-				() => commands.newlineInCode(),
-				() => commands.createParagraphNear(),
-				() => commands.liftEmptyBlock(),
-				() => commands.splitBlock()
-			]);
-			return true;
-		}
+		if (event.key === 'Escape') {
+			if (!diffSelection || metaKey) {
+				// Clear reply only if the diff selection is not open
+				// or if the meta key is pressed
+				clearReply();
+			}
 
-		if (event.key === 'Escape' && !richText.suggestions) {
 			// Clear diff selection on escape only if the mention suggestions
 			// are not open
 			clearDiffSelection();
 			return false;
 		}
 
-		if (event.key === 'Backspace' && !richText.suggestions && !messageHandler.message) {
+		if (event.key === 'Backspace' && !messageHandler.message) {
+			if (!diffSelection || metaKey) {
+				// Clear reply only if the diff selection is not open
+				// or if the meta key is pressed
+				clearReply();
+			}
+
 			// Clear diff selection on delete only if the mention suggestions
 			// are not open and the input is empty
 			clearDiffSelection();
@@ -140,21 +153,19 @@
 	let dropDownButton = $state<ReturnType<typeof DropDownButton>>();
 
 	async function approve() {
-		await patchService.updatePatch(branchUuid, changeId, {
+		await patchCommitService.updatePatch(branchUuid, changeId, {
 			signOff: true,
 			message: messageHandler.message
 		});
-		const editor = richText.richTextEditor?.getEditor();
-		editor?.commands.clearContent(true);
+		richText.clearEditor();
 	}
 
 	async function requestChanges() {
-		await patchService.updatePatch(branchUuid, changeId, {
+		await patchCommitService.updatePatch(branchUuid, changeId, {
 			signOff: false,
 			message: messageHandler.message
 		});
-		const editor = richText.richTextEditor?.getEditor();
-		editor?.commands.clearContent(true);
+		richText.clearEditor();
 	}
 
 	async function handleActionClick() {
@@ -182,10 +193,6 @@
 		return actionLabels[action] + suffix;
 	});
 
-	function onEditorUpdate(editor: EditorInstance) {
-		messageHandler.update(editor);
-	}
-
 	function login() {
 		window.location.href = `${env.PUBLIC_APP_HOST}/cloud/login?callback=${window.location.href}`;
 	}
@@ -194,25 +201,41 @@
 {#if isUserLoggedIn}
 	<div class="chat-input">
 		<MentionSuggestions
-			bind:this={richText.mentionSuggestions}
+			bind:this={suggestions.mentionSuggestions}
 			isLoading={suggestions.isLoading}
-			suggestions={richText.suggestions}
-			selectSuggestion={richText.selectSuggestion}
+			suggestions={suggestions.suggestions}
+			selectSuggestion={(s) => suggestions.selectSuggestion(s)}
 		/>
 		<div class="text-input chat-input__content-container">
+			{#if replyingTo}
+				<div class="chat-input__reply">
+					<ChatInReplyTo message={replyingTo} {clearReply} />
+				</div>
+			{/if}
+
 			{#if diffSelection}
 				<ChatDiffLineSelection {diffSelection} {clearDiffSelection} />
 			{/if}
+
 			<RichTextEditor
+				styleContext="chat-input"
+				placeholder="Write your message"
 				bind:this={richText.richTextEditor}
-				getSuggestionItems={(q) => suggestions.getSuggestionItems(q)}
-				onSuggestionStart={(p) => richText.onSuggestionStart(p)}
-				onSuggestionUpdate={(p) => richText.onSuggestionUpdate(p)}
-				onSuggestionExit={() => richText.onSuggestionExit()}
-				onSuggestionKeyDown={(event) => richText.onSuggestionKeyDown(event)}
+				markdown={false}
+				namespace="ChatInput"
+				onError={console.error}
+				onChange={(text) => messageHandler.update(text)}
 				onKeyDown={handleKeyDown}
-				onUpdate={onEditorUpdate}
-			/>
+			>
+				{#snippet plugins()}
+					<MentionsPlugin
+						bind:this={suggestions.mentionPlugin}
+						getSuggestionItems={(q) => suggestions.getSuggestionItems(q)}
+						onUpdateSuggestion={(p) => suggestions.onSuggestionUpdate(p)}
+						onExitSuggestion={() => suggestions.onSuggestionExit()}
+					/>
+				{/snippet}
+			</RichTextEditor>
 			<div class="chat-input__actions">
 				<div class="chat-input__secondary-actions">
 					<Button
@@ -299,11 +322,17 @@
 		border-top: 1px solid var(--clr-border-2);
 	}
 
+	.chat-input__reply {
+		padding: 6px 6px 0;
+	}
+
 	.chat-input__content-container {
 		flex-grow: 1;
 		display: flex;
 		flex-direction: column;
 		padding: 0;
+		overflow: hidden;
+		border-radius: var(--radius-m);
 	}
 
 	.chat-input__actions {
