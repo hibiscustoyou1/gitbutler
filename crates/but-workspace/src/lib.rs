@@ -44,10 +44,41 @@ mod integrated;
 
 pub mod commit_engine;
 
-/// utilities for applying and unapplying branches.
+/// 🚧utilities for applying and unapplying branches 🚧.
 pub mod branch;
 
+/// 🚧Deal with worktree changes 🚧.
+mod stash {
+    /// Information about a stash which is associated with the tip of a stack.
+    #[derive(Debug, Copy, Clone)]
+    pub enum StashStatus {
+        /// The parent reference is still present, but it doesn't point to the first parent of the *stash commit* anymore.
+        Desynced,
+        /// The parent reference could not be found. Maybe it was removed, maybe it was renamed.
+        Orphaned,
+    }
+}
+pub use stash::StashStatus;
+
 mod commit;
+
+/// Types used only when obtaining head-information.
+///
+/// Note that many of these types should eventually end up in the crate root.
+pub mod head_info;
+pub use head_info::function::head_info;
+
+/// Information about where the user is currently looking at.
+#[derive(Debug, Clone)]
+pub struct HeadInfo {
+    /// The stacks visible in the current workspace.
+    ///
+    /// This is an empty array if the `HEAD` is detached.
+    /// Otherwise, there is one or more stacks.
+    pub stacks: Vec<branch::Stack>,
+    /// The full name to the target reference that we should integrate with, if present.
+    pub target_ref: Option<gix::refs::FullName>,
+}
 
 mod virtual_branches_metadata;
 pub use virtual_branches_metadata::VirtualBranchesTomlMetadata;
@@ -201,6 +232,11 @@ pub struct Branch {
     /// This would occur when the branch has been merged at the remote and the workspace has been updated with that change.
     /// An archived branch will not have any commits associated with it.
     pub archived: bool,
+    /// This is the base commit from the perspective of this branch.
+    /// If the branch is part of a stack and is on top of another branch, this is the head of the branch below it.
+    /// If this branch is at the bottom of the stack, this is the merge base of the stack.
+    #[serde(with = "gitbutler_serde::object_id")]
+    pub base_commit: gix::ObjectId,
 }
 
 /// Returns the branches that belong to a particular [`gitbutler_stack::Stack`]
@@ -214,6 +250,8 @@ pub fn stack_branches(stack_id: String, ctx: &CommandContext) -> Result<Vec<Bran
 
     let mut stack_branches = vec![];
     let stack = state.get_stack(Id::from_str(&stack_id)?)?;
+    let stack_ctx = ctx.to_stack_context()?;
+    let mut current_base = stack.merge_base(&stack_ctx)?.to_gix();
     for internal in stack.branches() {
         let upstream_reference = ctx
             .repo()
@@ -223,11 +261,13 @@ pub fn stack_branches(stack_id: String, ctx: &CommandContext) -> Result<Vec<Bran
         let result = Branch {
             name: internal.name().to_owned().into(),
             remote_tracking_branch: upstream_reference.map(Into::into),
-            description: internal.description,
+            description: internal.description.clone(),
             pr_number: internal.pr_number,
-            review_id: internal.review_id,
+            review_id: internal.review_id.clone(),
             archived: internal.archived,
+            base_commit: current_base,
         };
+        current_base = internal.head_oid(&stack_ctx, &stack)?.to_gix();
         stack_branches.push(result);
     }
     stack_branches.reverse();
@@ -249,6 +289,7 @@ pub fn stack_branch_local_and_remote_commits(
     stack_id: String,
     branch_name: String,
     ctx: &CommandContext,
+    repo: &gix::Repository,
 ) -> Result<Vec<Commit>> {
     let state = state_handle(&ctx.project().gb_dir());
     let stack = state.get_stack(Id::from_str(&stack_id)?)?;
@@ -258,7 +299,7 @@ pub fn stack_branch_local_and_remote_commits(
     if branch.archived {
         return Ok(vec![]);
     }
-    local_and_remote_commits(ctx, branch.clone(), &stack)
+    local_and_remote_commits(ctx, repo, branch.clone(), &stack)
 }
 
 /// Returns a fift of commits beloning to this branch. Ordered from newest to oldest (child-most to parent-most).
@@ -272,6 +313,7 @@ pub fn stack_branch_upstream_only_commits(
     stack_id: String,
     branch_name: String,
     ctx: &CommandContext,
+    repo: &gix::Repository,
 ) -> Result<Vec<UpstreamCommit>> {
     let state = state_handle(&ctx.project().gb_dir());
     let stack = state.get_stack(Id::from_str(&stack_id)?)?;
@@ -281,17 +323,18 @@ pub fn stack_branch_upstream_only_commits(
     if branch.archived {
         return Ok(vec![]);
     }
-    upstream_only_commits(ctx, branch.clone(), &stack)
+    upstream_only_commits(ctx, repo, branch.clone(), &stack)
 }
 
 fn upstream_only_commits(
     ctx: &CommandContext,
+    repo: &gix::Repository,
     stack_branch: gitbutler_stack::StackBranch,
     stack: &Stack,
 ) -> Result<Vec<UpstreamCommit>> {
     let stack_ctx = ctx.to_stack_context()?;
     let branch_commits = stack_branch.commits(&stack_ctx, stack)?;
-    let local_and_remote = local_and_remote_commits(ctx, stack_branch, stack)?;
+    let local_and_remote = local_and_remote_commits(ctx, repo, stack_branch, stack)?;
 
     // Upstream only
     let mut upstream_only = vec![];
@@ -322,6 +365,7 @@ fn upstream_only_commits(
 
 fn local_and_remote_commits(
     ctx: &CommandContext,
+    repo: &gix::Repository,
     stack_branch: gitbutler_stack::StackBranch,
     stack: &Stack,
 ) -> Result<Vec<Commit>> {
@@ -329,10 +373,9 @@ fn local_and_remote_commits(
     let default_target = state
         .get_default_target()
         .context("failed to get default target")?;
-    let repo = ctx.gix_repository()?;
     let cache = repo.commit_graph_if_enabled()?;
     let mut graph = repo.revision_graph(cache.as_ref());
-    let mut check_commit = IsCommitIntegrated::new(ctx, &default_target, &repo, &mut graph)?;
+    let mut check_commit = IsCommitIntegrated::new(ctx, &default_target, repo, &mut graph)?;
 
     let stack_ctx = ctx.to_stack_context()?;
     let branch_commits = stack_branch.commits(&stack_ctx, stack)?;

@@ -1,19 +1,19 @@
 <script lang="ts">
 	import {
 		getPatchApproversAllWithAvatars,
-		getPatchRejectorsAllWithAvatars,
-		type Patch
-	} from '@gitbutler/shared/branches/types';
+		getPatchRejectorsAllWithAvatars
+	} from '@gitbutler/shared/contributors';
+	import { type PatchCommit } from '@gitbutler/shared/patches/types';
 	import AvatarGroup from '@gitbutler/ui/avatar/AvatarGroup.svelte';
 
 	type Props = {
-		patch: Patch;
+		patchCommit: PatchCommit;
 	};
 
-	const { patch }: Props = $props();
+	const { patchCommit }: Props = $props();
 
-	const approvers = $derived(getPatchApproversAllWithAvatars(patch));
-	const rejectors = $derived(getPatchRejectorsAllWithAvatars(patch));
+	const approvers = $derived(getPatchApproversAllWithAvatars(patchCommit));
+	const rejectors = $derived(getPatchRejectorsAllWithAvatars(patchCommit));
 </script>
 
 {#await Promise.all([approvers, rejectors]) then [approvers, rejectors]}

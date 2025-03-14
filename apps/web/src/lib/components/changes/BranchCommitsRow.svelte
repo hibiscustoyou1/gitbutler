@@ -1,19 +1,15 @@
 <script lang="ts">
 	import TableRow from '$lib/components/table/TableRow.svelte';
-	import { PatchService } from '@gitbutler/shared/branches/patchService';
-	import { getPatch } from '@gitbutler/shared/branches/patchesPreview.svelte';
+	import { getContext } from '@gitbutler/shared/context';
 	import {
 		getPatchContributorsWithAvatars,
-		getPatchStatus
-	} from '@gitbutler/shared/branches/types';
-	import {
 		getPatchApproversAllWithAvatars,
 		getPatchRejectorsAllWithAvatars
-	} from '@gitbutler/shared/branches/types';
-	import { getContext } from '@gitbutler/shared/context';
+	} from '@gitbutler/shared/contributors';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
 	import { isFound } from '@gitbutler/shared/network/loadable';
-	import { AppState } from '@gitbutler/shared/redux/store.svelte';
+	import { getPatch } from '@gitbutler/shared/patches/patchCommitsPreview.svelte';
+	import { getPatchStatus } from '@gitbutler/shared/patches/types';
 	import {
 		WebRoutesService,
 		type ProjectReviewParameters
@@ -32,11 +28,9 @@
 
 	const { changeId, params, branchUuid }: Props = $props();
 
-	const appState = getContext(AppState);
-	const patchService = getContext(PatchService);
 	const routes = getContext(WebRoutesService);
 
-	const change = $derived(getPatch(appState, patchService, branchUuid, changeId));
+	const change = $derived(getPatch(branchUuid, changeId));
 	let contributors = $state<Array<{ srcUrl: string; name: string }>>([]);
 	let approvers = $state<Array<{ srcUrl: string; name: string }>>([]);
 	let rejectors = $state<Array<{ srcUrl: string; name: string }>>([]);
@@ -64,6 +58,7 @@
 			href={routes.projectReviewBranchCommitPath({ ...params, changeId: patch.changeId })}
 			columns={[
 				{ key: 'status', value: getPatchStatus(patch) },
+				{ key: 'version', value: `v${patch.version}`, tooltip: 'Patch Version' },
 				{ key: 'title', value: patch.title, tooltip: patch.title },
 				{
 					key: 'changes',

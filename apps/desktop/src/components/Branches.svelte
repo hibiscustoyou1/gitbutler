@@ -2,8 +2,8 @@
 	import GroupHeader from './GroupHeader.svelte';
 	import BranchListingSidebarEntry from '$components/BranchListingSidebarEntry.svelte';
 	import ChunkyList from '$components/ChunkyList.svelte';
+	import ScrollableContainer from '$components/ConfigurableScrollableContainer.svelte';
 	import PullRequestSidebarEntry from '$components/PullRequestSidebarEntry.svelte';
-	import ScrollableContainer from '$components/ScrollableContainer.svelte';
 	import noBranchesSvg from '$lib/assets/empty-state/no-branches.svg?raw';
 	import {
 		CombinedBranchListingService,
@@ -142,7 +142,7 @@
 	{#if $branchListings.length > 0}
 		{#if $searchedBranches.length > 0 || $searchTerm === undefined}
 			<div class="branch-entries-list">
-				<ScrollableContainer fillViewport={$searchedBranches.length === 0}>
+				<ScrollableContainer>
 					{#if $searchTerm}
 						<div class="group">
 							{#each $searchedBranches as sidebarEntrySubject}

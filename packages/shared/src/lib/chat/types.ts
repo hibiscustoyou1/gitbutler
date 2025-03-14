@@ -9,9 +9,27 @@ export type ApiDiffPatch = {
 	line: string;
 };
 
+export type ApiChatMessageReaction = {
+	reaction: string;
+	users: ApiUserSimple[];
+};
+
+export type ApiChatMessageInReplyTo = {
+	uuid: string;
+	user: ApiUserSimple;
+	outdated: boolean;
+	issue: boolean;
+	resolved: boolean;
+	thread_id: string | null;
+	comment: string;
+	mentions: ApiUserSimple[];
+};
+
 export type ApiChatMessage = {
 	comment: string;
 	mentions: ApiUserSimple[];
+	emoji_reactions: ApiChatMessageReaction[];
+	in_reply_to: ApiChatMessageInReplyTo | null;
 	diff_patch_array: ApiDiffPatch[] | null;
 	diff_path: string | null;
 	diff_sha: string | null;
@@ -32,9 +50,49 @@ export type DiffPatch = {
 	line: string;
 };
 
+export type ChatMessageReaction = {
+	reaction: string;
+	users: UserSimple[];
+};
+
+export function apiToChatMessageReaction(apiReaction: ApiChatMessageReaction): ChatMessageReaction {
+	return {
+		reaction: apiReaction.reaction,
+		users: apiReaction.users.map(apiToUserSimple)
+	};
+}
+
+export type ChatMessageInReplyTo = {
+	uuid: string;
+	user: UserSimple;
+	outdated: boolean;
+	issue: boolean;
+	resolved: boolean;
+	threadId: string | undefined;
+	comment: string;
+	mentions: UserSimple[];
+};
+
+export function apiToChatMessageInReplyTo(
+	apiInReplyTo: ApiChatMessageInReplyTo
+): ChatMessageInReplyTo {
+	return {
+		uuid: apiInReplyTo.uuid,
+		user: apiToUserSimple(apiInReplyTo.user),
+		outdated: apiInReplyTo.outdated,
+		issue: apiInReplyTo.issue,
+		resolved: apiInReplyTo.resolved,
+		threadId: apiInReplyTo.thread_id ?? undefined,
+		comment: apiInReplyTo.comment,
+		mentions: apiInReplyTo.mentions.map(apiToUserSimple)
+	};
+}
+
 export type ChatMessage = {
 	comment: string;
 	mentions: UserSimple[];
+	inReplyTo: ChatMessageInReplyTo | undefined;
+	emojiReactions: ChatMessageReaction[];
 	diffPatchArray: DiffPatch[] | undefined;
 	diffPath: string | undefined;
 	diffSha: string | undefined;
@@ -75,6 +133,10 @@ export function apiToChatMessage(apiChatMessage: ApiChatMessage): ChatMessage {
 	return {
 		comment: apiChatMessage.comment,
 		mentions: apiChatMessage.mentions.map(apiToUserSimple),
+		inReplyTo: apiChatMessage.in_reply_to
+			? apiToChatMessageInReplyTo(apiChatMessage.in_reply_to)
+			: undefined,
+		emojiReactions: apiChatMessage.emoji_reactions.map(apiToChatMessageReaction),
 		diffPatchArray: apiChatMessage.diff_patch_array ?? undefined,
 		diffPath: apiChatMessage.diff_path ?? undefined,
 		diffSha: apiChatMessage.diff_sha ?? undefined,
@@ -128,6 +190,10 @@ export type ApiCreateChatMessageParams = {
 	 * Range of Diff to comment on (ex: L15 or L15-R50)
 	 */
 	range?: string;
+	/**
+	 * UUID of chat message to reply to
+	 */
+	in_reply_to?: string;
 };
 
 export type SendChatMessageParams = {
@@ -164,6 +230,10 @@ export type SendChatMessageParams = {
 	 * Range of Diff to comment on (ex: L15 or L15-R50)
 	 */
 	range?: string;
+	/**
+	 * UUID of chat message to reply to
+	 */
+	inReplyTo?: string;
 };
 
 export function toApiCreateChatMessageParams(
@@ -178,7 +248,8 @@ export function toApiCreateChatMessageParams(
 		issue: params.issue,
 		diff_path: params.diffPath,
 		diff_sha: params.diffSha,
-		range: params.range
+		range: params.range,
+		in_reply_to: params.inReplyTo
 	};
 }
 
@@ -187,7 +258,11 @@ export type ApiPatchChatMessageParams = {
 	/**
 	 * Chat message issue is resolved
 	 */
-	resolved: boolean;
+	resolved?: boolean;
+	/**
+	 * Emoji reaction to add or, if present, remove
+	 */
+	reaction?: string;
 };
 
 export type PatchChatMessageParams = {
@@ -197,7 +272,11 @@ export type PatchChatMessageParams = {
 	/**
 	 * Chat message issue is resolved
 	 */
-	resolved: boolean;
+	resolved?: boolean;
+	/**
+	 * Emoji reaction to add or, if present, remove
+	 */
+	reaction?: string;
 };
 
 export function toApiPatchChatMessageParams(
@@ -205,6 +284,7 @@ export function toApiPatchChatMessageParams(
 ): ApiPatchChatMessageParams {
 	return {
 		chat_uuid: params.messageUuid,
-		resolved: params.resolved
+		resolved: params.resolved,
+		reaction: params.reaction
 	};
 }

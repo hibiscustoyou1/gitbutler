@@ -6,6 +6,7 @@ use but_core::RepositoryExt;
 use but_core::unified_diff::DiffHunk;
 use but_rebase::RebaseOutput;
 use but_rebase::commit::CommitterMode;
+use gitbutler_project::access::WorktreeWritePermission;
 use gitbutler_stack::{StackId, VirtualBranchesHandle, VirtualBranchesState};
 use gix::prelude::ObjectIdExt as _;
 use gix::refs::transaction::PreviousValue;
@@ -36,11 +37,31 @@ pub enum Destination {
         ///
         /// To create a commit at the position of the first commit of a branch, the parent has to be the merge-base with the *target branch*.
         parent_commit_id: Option<gix::ObjectId>,
+        /// The stack and reference the commit is supposed to go into. It is necessary to disambiguate the reference update.
+        stack_segment: Option<StackSegmentId>,
         /// Use `message` as commit message for the new commit.
         message: String,
     },
     /// Amend all changes to the given commit, leaving all other aspects of the commit unchanged.
     AmendCommit(gix::ObjectId),
+}
+
+/// The stack and the branch the commit is supposed to go into.
+#[derive(Debug, Clone)]
+pub struct StackSegmentId {
+    /// Identifies the stack the commit is destined to (without it, ambiguity is still possible, e.g. when all stacks have no commits)
+    pub stack_id: StackId,
+    /// The name of the ref pointing to the tip of the stack segment the commit is supposed to go into. It is necessary to disambiguate the reference update.
+    pub segment_ref: gix::refs::FullName,
+}
+
+impl Destination {
+    pub(self) fn stack_segment(&self) -> Option<&StackSegmentId> {
+        match self {
+            Destination::NewCommit { stack_segment, .. } => stack_segment.as_ref(),
+            Destination::AmendCommit(..) => None,
+        }
+    }
 }
 
 /// Identify the commit that contains the patches to be moved, along with the branch that should be rewritten.
@@ -226,6 +247,7 @@ pub fn create_commit(
             Destination::NewCommit {
                 message,
                 parent_commit_id: _,
+                stack_segment: _,
             } => {
                 let (author, committer) = repo.commit_signatures()?;
                 let new_commit = create_possibly_signed_commit(
@@ -263,11 +285,12 @@ pub fn create_commit(
 
 /// All information to know where in the commit-graph the rewritten commit is located to figure out
 /// which descendant commits to rewrite.
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ReferenceFrame {
     /// The commit that merges all stacks together for a unified view.
+    /// It includes the `branch_tip` naturally, if provided.
     pub workspace_tip: Option<gix::ObjectId>,
-    /// If given, and if rebases are necessary, this is the tip (commit) whose ancestry contains
+    /// If given, and if rebases are necessary, this is the tip (top-most commit) whose ancestry contains
     /// the commit which is committed onto, or amended to.
     ///
     /// Note that in case of moves, right now the source *and* destination need to be contained.
@@ -348,6 +371,7 @@ pub fn create_commit_and_update_refs(
                 all_refs_by_id,
                 [(commit_in_graph, new_commit)],
                 &mut out.references,
+                destination.stack_segment(),
             )?;
         } else {
             let Some(branch_tip) = frame.branch_tip else {
@@ -412,6 +436,7 @@ pub fn create_commit_and_update_refs(
                     .map(|(_base, old, new)| (*old, *new))
                     .chain(Some((commit_in_graph, new_commit))),
                 &mut out.references,
+                destination.stack_segment(),
             )?;
             out.rebase_output = Some(rebase);
         }
@@ -456,66 +481,48 @@ pub fn create_commit_and_update_refs(
 /// if present. Alternatively it uses the current `HEAD` as only reference point.
 /// Note that virtual branches will be updated and written back after this call, which will obtain
 /// an exclusive workspace lock as well.
+#[allow(clippy::too_many_arguments)]
 pub fn create_commit_and_update_refs_with_project(
     repo: &gix::Repository,
-    project: Option<(&gitbutler_project::Project, Option<StackId>)>,
+    project: &gitbutler_project::Project,
+    maybe_stackid: Option<StackId>,
     destination: Destination,
     move_source: Option<MoveSourceCommit>,
     changes: Vec<DiffSpec>,
     context_lines: u32,
+    _perm: &mut WorktreeWritePermission,
 ) -> anyhow::Result<CreateCommitOutcome> {
-    match project {
-        Some((project, maybe_stackid)) => {
-            let _guard = project.exclusive_worktree_access();
-            let vbh = VirtualBranchesHandle::new(project.gb_dir());
-            let mut vb = vbh.read_file()?;
-            let frame = match maybe_stackid {
-                None => {
-                    let maybe_commit_id = match &destination {
-                        Destination::NewCommit {
-                            parent_commit_id, ..
-                        } => *parent_commit_id,
-                        Destination::AmendCommit(commit_id) => Some(*commit_id),
-                    };
-                    match maybe_commit_id {
-                        None => ReferenceFrame::default(),
-                        Some(commit_id) => ReferenceFrame::infer(
-                            repo,
-                            &vb,
-                            InferenceMode::CommitIdInStack(commit_id),
-                        )?,
-                    }
-                }
-                Some(stack_id) => {
-                    ReferenceFrame::infer(repo, &vb, InferenceMode::StackId(stack_id))?
-                }
+    let vbh = VirtualBranchesHandle::new(project.gb_dir());
+    let mut vb = vbh.read_file()?;
+    let frame = match maybe_stackid {
+        None => {
+            let maybe_commit_id = match &destination {
+                Destination::NewCommit {
+                    parent_commit_id, ..
+                } => *parent_commit_id,
+                Destination::AmendCommit(commit_id) => Some(*commit_id),
             };
-            let out = create_commit_and_update_refs(
-                repo,
-                frame,
-                &mut vb,
-                destination,
-                move_source,
-                changes,
-                context_lines,
-            )?;
-
-            vbh.write_file(&vb)?;
-            Ok(out)
+            match maybe_commit_id {
+                None => ReferenceFrame::default(),
+                Some(commit_id) => {
+                    ReferenceFrame::infer(repo, &vb, InferenceMode::CommitIdInStack(commit_id))?
+                }
+            }
         }
-        None => create_commit_and_update_refs(
-            repo,
-            ReferenceFrame {
-                workspace_tip: None,
-                branch_tip: repo.head_id()?.detach().into(),
-            },
-            &mut VirtualBranchesState::default(),
-            destination,
-            move_source,
-            changes,
-            context_lines,
-        ),
-    }
+        Some(stack_id) => ReferenceFrame::infer(repo, &vb, InferenceMode::StackId(stack_id))?,
+    };
+    let out = create_commit_and_update_refs(
+        repo,
+        frame,
+        &mut vb,
+        destination,
+        move_source,
+        changes,
+        context_lines,
+    )?;
+
+    vbh.write_file(&vb)?;
+    Ok(out)
 }
 
 /// Create a commit exactly as specified, and sign it depending on Git and GitButler specific Git configuration.

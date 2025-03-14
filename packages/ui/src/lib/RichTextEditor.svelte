@@ -1,201 +1,195 @@
-<script lang="ts" module>
-	export type EditorInstance = Editor;
-	export type Range = {
-		from: number;
-		to: number;
-	};
-	// See `addAttributes` below
-	export interface MentionNodeAttrs {
-		/**
-		 * The identifier for the selected item that was mentioned, stored as a `data-id`
-		 * attribute.
-		 */
-		id: string;
-		/**
-		 * The label to be rendered by the editor as the displayed text for this mentioned
-		 * item, if provided. Stored as a `data-label` attribute. See `renderLabel`.
-		 */
-		label: string;
-	}
-
-	export interface SuggestionProps {
-		/**
-		 * The editor instance.
-		 */
-		editor: Editor;
-
-		/**
-		 * The range of the suggestion.
-		 */
-		range: Range;
-
-		/**
-		 * The current suggestion query.
-		 */
-		query: string;
-
-		/**
-		 * The current suggestion text.
-		 */
-		text: string;
-
-		/**
-		 * The suggestion items array.
-		 */
-		items: MentionNodeAttrs[];
-
-		/**
-		 * A function that is called when a suggestion is selected.
-		 * @param props The props object.
-		 * @returns void
-		 */
-		command: (props: MentionNodeAttrs) => void;
-
-		/**
-		 * The decoration node HTML element
-		 * @default null
-		 */
-		decorationNode: Element | null;
-
-		/**
-		 * The function that returns the client rect
-		 * @default null
-		 * @example () => new DOMRect(0, 0, 0, 0)
-		 */
-		clientRect?: (() => DOMRect | null) | null;
-	}
-</script>
-
 <script lang="ts">
-	import { pxToRem } from './utils/pxToRem';
-	import { Editor } from '@tiptap/core';
-	import Document from '@tiptap/extension-document';
-	import Mention from '@tiptap/extension-mention';
-	import Paragraph from '@tiptap/extension-paragraph';
-	import Text from '@tiptap/extension-text';
+	import MarkdownTransitionPlugin from './richText/plugins/markdownTransition.svelte';
+	import { standardConfig } from '$lib/richText/config/config';
+	import { standardTheme } from '$lib/richText/config/theme';
+	import EmojiPlugin from '$lib/richText/plugins/Emoji.svelte';
+	import OnChangePlugin from '$lib/richText/plugins/onChange.svelte';
+	import { COMMAND_PRIORITY_CRITICAL, $getRoot as getRoot, KEY_DOWN_COMMAND } from 'lexical';
+	import { type Snippet } from 'svelte';
+	import {
+		Composer,
+		ContentEditable,
+		RichTextPlugin,
+		SharedHistoryPlugin,
+		ListPlugin,
+		CheckListPlugin,
+		AutoFocusPlugin,
+		PlaceHolder,
+		HashtagPlugin,
+		PlainTextPlugin,
+		AutoLinkPlugin,
+		FloatingLinkEditorPlugin,
+		CodeHighlightPlugin,
+		CodeActionMenuPlugin,
+		MarkdownShortcutPlugin,
+		ALL_TRANSFORMERS,
+		Toolbar,
+		StateStoreRichTextUpdator,
+		LinkPlugin
+	} from 'svelte-lexical';
 
-	interface Props {
-		getSuggestionItems: (query: string) => Promise<MentionNodeAttrs[]>;
-		onSuggestionStart: (props: SuggestionProps) => void;
-		onSuggestionUpdate: (props: SuggestionProps) => void;
-		onSuggestionExit: (props: SuggestionProps) => void;
-		onSuggestionKeyDown: (event: KeyboardEvent) => boolean;
-		onKeyDown?: (event: KeyboardEvent) => boolean;
-		onUpdate?: (event: EditorInstance) => void;
-		padding?: {
-			top: number;
-			right: number;
-			bottom: number;
-			left: number;
-		};
-	}
+	type Props = {
+		namespace: string;
+		markdown: boolean;
+		onError: (error: unknown) => void;
+		styleContext: 'client-editor' | 'chat-input';
+		toolBar?: Snippet;
+		plugins?: Snippet;
+		placeholder?: string;
+		onChange?: (text: string) => void;
+		onKeyDown?: (event: KeyboardEvent | null) => boolean;
+		initialText?: string;
+	};
 
 	const {
-		getSuggestionItems,
-		onSuggestionStart,
-		onSuggestionUpdate,
-		onSuggestionKeyDown,
-		onSuggestionExit,
+		namespace,
+		markdown,
+		onError,
+		styleContext,
+		toolBar,
+		plugins,
+		placeholder,
+		onChange,
 		onKeyDown,
-		onUpdate,
-		padding = { top: 12, right: 12, bottom: 12, left: 12 }
+		initialText
 	}: Props = $props();
 
-	let element = $state<HTMLDivElement>();
-	let editor = $state<Editor>();
-
-	$effect(() => {
-		editor = new Editor({
-			parseOptions: {
-				preserveWhitespace: 'full'
-			},
-			element: element,
-			editorProps: {
-				handleKeyDown(_, event) {
-					if (onKeyDown) {
-						return onKeyDown(event);
-					}
-					return false;
-				}
-			},
-			extensions: [
-				Document,
-				Paragraph,
-				Text,
-				Mention.configure({
-					HTMLAttributes: {
-						class: 'mention'
-					},
-					suggestion: {
-						items: async ({ query }): Promise<MentionNodeAttrs[]> => {
-							return await getSuggestionItems(query);
-						},
-						render: () => {
-							return {
-								onStart: (props) => {
-									onSuggestionStart(props);
-								},
-								onUpdate: (props) => {
-									onSuggestionUpdate(props);
-								},
-								onKeyDown: (props) => {
-									return onSuggestionKeyDown(props.event);
-								},
-								onExit: (props) => {
-									const range = {
-										from: props.editor.state.selection.from,
-										to: props.editor.state.selection.from + props.query.length
-									};
-									props.editor.commands.setTextSelection(range);
-									props.editor.commands.deleteSelection();
-
-									onSuggestionExit(props);
-								}
-							};
-						}
-					}
-				})
-			],
-			onTransaction: () => {
-				// force re-render so `editor.isActive` works as expected
-				editor = editor;
-			},
-			onUpdate: ({ editor }) => {
-				onUpdate?.(editor);
-			}
-		});
-
-		return () => {
-			editor?.destroy();
-		};
+	/** Standard configuration for our commit message editor. */
+	const initialConfig = standardConfig({
+		initialText,
+		namespace,
+		theme: standardTheme,
+		onError
 	});
 
-	export function getEditor(): Editor | undefined {
-		return editor;
+	/**
+	 * Instance of the lexical composer, used for manipulating the contents of the editor
+	 * programatically.
+	 */
+	let composer = $state<ReturnType<typeof Composer>>();
+
+	let editorDiv: HTMLDivElement | undefined = $state();
+	const editor = $derived(composer?.getEditor());
+
+	let emojiPlugin = $state<ReturnType<typeof EmojiPlugin>>();
+
+	// TODO: Change this plugin in favor of a toggle button.
+	const markdownTransitionPlugin = new MarkdownTransitionPlugin(markdown);
+
+	$effect(() => {
+		if (editor) {
+			markdownTransitionPlugin.setEditor(editor);
+		}
+	});
+
+	$effect(() => {
+		markdownTransitionPlugin.setMarkdown(markdown);
+	});
+
+	$effect(() => {
+		if (editor) {
+			return editor.registerCommand<KeyboardEvent | null>(
+				KEY_DOWN_COMMAND,
+				(e) => {
+					if (emojiPlugin?.isBusy()) {
+						return false;
+					}
+					return onKeyDown?.(e) ?? false;
+				},
+				COMMAND_PRIORITY_CRITICAL
+			);
+		}
+	});
+
+	export function getPlaintext(): Promise<string | undefined> {
+		return new Promise((resolve) => {
+			editor?.read(() => {
+				const text = getRoot().getTextContent();
+				resolve(text);
+			});
+		});
+	}
+
+	export function clear() {
+		editor?.update(() => {
+			const root = getRoot();
+			root.clear();
+		});
+	}
+
+	export function focus() {
+		editor?.focus();
 	}
 </script>
 
-<div
-	style:--padding-top={pxToRem(padding.top)}
-	style:--padding-right={pxToRem(padding.right)}
-	style:--padding-bottom={pxToRem(padding.bottom)}
-	style:--padding-left={pxToRem(padding.left)}
-	style:--lineheight-ratio={1.6}
-	class="text-body text-13 rich-text-wrapper"
-	bind:this={element}
-></div>
+<Composer {initialConfig} bind:this={composer}>
+	{#if toolBar}
+		<Toolbar>
+			<StateStoreRichTextUpdator />
+			{@render toolBar()}
+		</Toolbar>
+	{/if}
 
-<style>
-	.rich-text-wrapper :global(.mention) {
-		padding: 0px 4px;
-		border-radius: var(--radius-s);
-		background: var(--clr-theme-pop-bg-muted);
-		color: var(--clr-theme-pop-on-soft);
+	<div class="lexical-container lexical-{styleContext}" bind:this={editorDiv}>
+		<div class="editor-scroller">
+			<div class="editor">
+				<ContentEditable />
+				{#if placeholder}
+					<PlaceHolder>{placeholder}</PlaceHolder>
+				{/if}
+			</div>
+		</div>
+
+		<EmojiPlugin bind:this={emojiPlugin} />
+		<OnChangePlugin {onChange} />
+
+		{#if markdown}
+			<AutoFocusPlugin />
+			<AutoLinkPlugin />
+			<CheckListPlugin />
+			<CodeActionMenuPlugin anchorElem={editorDiv} />
+			<CodeHighlightPlugin />
+			<FloatingLinkEditorPlugin anchorElem={editorDiv} />
+			<HashtagPlugin />
+			<ListPlugin />
+			<LinkPlugin />
+			<MarkdownShortcutPlugin transformers={ALL_TRANSFORMERS} />
+			<RichTextPlugin />
+			<SharedHistoryPlugin />
+		{:else}
+			<PlainTextPlugin />
+		{/if}
+
+		{#if plugins}
+			{@render plugins()}
+		{/if}
+	</div>
+</Composer>
+
+<style lang="postcss">
+	.lexical-container {
+		flex-grow: 1;
+		background-color: var(--clr-bg-1);
+		position: relative;
+		display: block;
 	}
 
-	.rich-text-wrapper > :global(.ProseMirror) {
-		padding: var(--padding-top) var(--padding-right) var(--padding-bottom) var(--padding-left);
+	.editor-scroller {
+		border: 0;
+		display: flex;
+		position: relative;
 		outline: 0;
-		color: var(--clr-text-1);
+		z-index: 0;
+		overflow: auto;
+		height: 100%;
+		/* It's unclear why the resizer is on by default on this element. */
+		resize: none;
+	}
+
+	.editor {
+		flex: auto;
+		position: relative;
+		resize: vertical;
+		z-index: -1;
 	}
 </style>

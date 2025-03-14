@@ -1,23 +1,24 @@
-import { BranchStatus, type Branch, type Patch } from '@gitbutler/shared/branches/types';
+import { BranchStatus, type Branch } from '$lib/branches/types';
 import { type CommitStatusType } from '@gitbutler/ui/CommitStatusBadge.svelte';
+import type { PatchCommit } from '$lib/patches/types';
 
-function getPatches(branch: Branch): Patch[] {
-	return branch.patches;
+function getPatches(branch: Branch): PatchCommit[] {
+	return branch.patches ?? [];
 }
 
-function anyRejected(patches: Patch[]): boolean {
+function anyRejected(patches: PatchCommit[]): boolean {
 	return patches.some((patch) => patch.reviewAll.rejected.length > 0);
 }
 
-function someApproved(patches: Patch[]): boolean {
+function someApproved(patches: PatchCommit[]): boolean {
 	return patches.some((patch) => patch.reviewAll.signedOff.length > 0);
 }
 
-function allApproved(patches: Patch[]): boolean {
+function allApproved(patches: PatchCommit[]): boolean {
 	return !patches.some((patch) => patch.reviewAll.signedOff.length === 0);
 }
 
-function hasComments(patches: Patch[]): boolean {
+function hasComments(patches: PatchCommit[]): boolean {
 	return patches.some((patch) => patch.commentCount > 0);
 }
 

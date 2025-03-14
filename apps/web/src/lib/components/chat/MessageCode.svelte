@@ -12,23 +12,38 @@
 	const lines = $derived(codeContentToTokens(text, parser));
 </script>
 
-<div class="code">
-	{#each lines as line, i (i)}
-		<div class="line">
-			{@html line.join('')}
-		</div>
-	{/each}
+<div class="code-wrapper">
+	<code class="code">
+		{#each lines as line, i (i)}
+			<p class="line">
+				{@html line.join('')}
+			</p>
+		{/each}
+	</code>
 </div>
 
-<style>
+<style lang="postcss">
+	.code-wrapper {
+		display: flex;
+		min-width: 0;
+		max-width: 640px;
+		overflow-x: scroll;
+		border-radius: var(--radius-s);
+
+		border: 1px solid var(--clr-border-2);
+		padding: 4px 8px;
+
+		@media (--tablet-viewport) {
+			max-width: 80vw;
+		}
+	}
 	.code {
 		width: 100%;
-		border-radius: var(--radius-s);
+		max-width: 100%;
+		font-family: var(--fontfamily-mono);
+		box-sizing: border-box;
 		background-color: var(--clr-diff-line-bg);
-		border: 1px solid var(--clr-border-2);
-		overflow-x: scroll;
-		padding: 4px 8px;
-		white-space: pre;
+		border: none;
 	}
 
 	.line {
@@ -37,5 +52,8 @@
 		text-wrap: nowrap;
 		tab-size: 4;
 		cursor: text;
+		line-height: normal;
+		padding: 0;
+		margin: 0;
 	}
 </style>

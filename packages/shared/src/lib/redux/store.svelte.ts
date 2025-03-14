@@ -1,84 +1,99 @@
-import { branchReviewListingsReducer } from '$lib/branches/branchReviewListingsSlice';
-import { branchesReducer } from '$lib/branches/branchesSlice';
-import { latestBranchLookupsReducer } from '$lib/branches/latestBranchLookupSlice';
-import { patchEventsReducer } from '$lib/branches/patchEventsSlice';
-import { patchSectionsReducer } from '$lib/branches/patchSectionsSlice';
-import { patchesReducer } from '$lib/branches/patchesSlice';
-import { chatChannelsReducer } from '$lib/chat/chatChannelsSlice';
+import { branchReviewListingTable } from '$lib/branches/branchReviewListingsSlice';
+import { branchTable } from '$lib/branches/branchesSlice';
+import { latestBranchLookupTable } from '$lib/branches/latestBranchLookupSlice';
+import { chatChannelTable } from '$lib/chat/chatChannelsSlice';
 import { feedsReducer } from '$lib/feeds/feedsSlice';
 import { postsReducer } from '$lib/feeds/postsSlice';
-import { organizationsReducer } from '$lib/organizations/organizationsSlice';
-import { projectsReducer } from '$lib/organizations/projectsSlice';
-import { repositoryIdLookupsReducer } from '$lib/organizations/repositoryIdLookupsSlice';
+import { organizationTable } from '$lib/organizations/organizationsSlice';
+import { projectTable } from '$lib/organizations/projectsSlice';
+import { recentlyInteractedProjectIdsReducer } from '$lib/organizations/recentlyInteractedProjectIds';
+import { recentlyPushedProjectIdsReducer } from '$lib/organizations/recentlyPushedProjectIds';
+import { repositoryIdLookupTable } from '$lib/organizations/repositoryIdLookupsSlice';
+import { patchEventsReducer } from '$lib/patchEvents/patchEventsSlice';
+import { patchCommitTable } from '$lib/patches/patchCommitsSlice';
+import { patchIdableTable } from '$lib/patches/patchIdablesSlice';
+import { patchSectionsReducer } from '$lib/patches/patchSectionsSlice';
 import { exampleReducer } from '$lib/redux/example';
-import { notificationSettingsReducer } from '$lib/settings/notificationSetttingsSlice';
-import { usersByLoginReducer, usersReducer } from '$lib/users/usersSlice';
+import { notificationSettingsTable } from '$lib/settings/notificationSetttingsSlice';
+import { userByLoginTable, userTable } from '$lib/users/usersSlice';
 import { configureStore, createSelector } from '@reduxjs/toolkit';
 
 // Individual interfaces to be used when consuming in other servies.
 // By specifying only the interfaces you need, IE:
 // `appState: AppPostState & AppExampleState`, it means there is less mocking
 // needed when testing.
-export interface AppExampleState {
+export type AppExampleState = {
 	readonly example: ReturnType<typeof exampleReducer>;
-}
+};
 
-export interface AppPostsState {
+export type AppPostsState = {
 	readonly posts: ReturnType<typeof postsReducer>;
-}
+};
 
-export interface AppFeedsState {
+export type AppFeedsState = {
 	readonly feeds: ReturnType<typeof feedsReducer>;
-}
+};
 
-export interface AppOrganizationsState {
-	readonly organizations: ReturnType<typeof organizationsReducer>;
-}
+export type AppOrganizationsState = {
+	readonly organizations: ReturnType<typeof organizationTable.reducer>;
+};
 
-export interface AppUsersState {
-	readonly users: ReturnType<typeof usersReducer>;
-	readonly usersByLogin: ReturnType<typeof usersByLoginReducer>;
-}
+export type AppUsersState = {
+	readonly users: ReturnType<typeof userTable.reducer>;
+	readonly usersByLogin: ReturnType<typeof userByLoginTable.reducer>;
+};
 
-export interface AppProjectsState {
-	readonly projects: ReturnType<typeof projectsReducer>;
-}
+export type AppProjectsState = {
+	readonly projects: ReturnType<typeof projectTable.reducer>;
+};
 
-export interface AppPatchesState {
-	readonly patches: ReturnType<typeof patchesReducer>;
-}
+export type AppPatchesState = {
+	readonly patches: ReturnType<typeof patchCommitTable.reducer>;
+};
 
-export interface AppPatchEventsState {
+export type AppPatchEventsState = {
 	readonly patchEvents: ReturnType<typeof patchEventsReducer>;
-}
+};
 
-export interface AppBranchesState {
-	readonly branches: ReturnType<typeof branchesReducer>;
-}
+export type AppBranchesState = {
+	readonly branches: ReturnType<typeof branchTable.reducer>;
+};
 
-export interface AppPatchSectionsState {
+export type AppPatchSectionsState = {
 	readonly patchSections: ReturnType<typeof patchSectionsReducer>;
-}
+};
 
-export interface AppChatChannelsState {
-	readonly chatChannels: ReturnType<typeof chatChannelsReducer>;
-}
+export type AppChatChannelsState = {
+	readonly chatChannels: ReturnType<typeof chatChannelTable.reducer>;
+};
 
-export interface AppRepositoryIdLookupsState {
-	readonly repositoryIdLookups: ReturnType<typeof repositoryIdLookupsReducer>;
-}
+export type AppRepositoryIdLookupsState = {
+	readonly repositoryIdLookups: ReturnType<typeof repositoryIdLookupTable.reducer>;
+};
 
-export interface AppLatestBranchLookupsState {
-	readonly latestBranchLookups: ReturnType<typeof latestBranchLookupsReducer>;
-}
+export type AppLatestBranchLookupsState = {
+	readonly latestBranchLookups: ReturnType<typeof latestBranchLookupTable.reducer>;
+};
 
-export interface AppBranchReviewListingsState {
-	readonly branchReviewListings: ReturnType<typeof branchReviewListingsReducer>;
-}
+export type AppBranchReviewListingsState = {
+	readonly branchReviewListings: ReturnType<typeof branchReviewListingTable.reducer>;
+};
 
-export interface AppNotificationSettingsState {
-	readonly notificationSettings: ReturnType<typeof notificationSettingsReducer>;
-}
+export type AppNotificationSettingsState = {
+	readonly notificationSettings: ReturnType<typeof notificationSettingsTable.reducer>;
+};
+
+export type AppPatchIdablesState = {
+	readonly patchIdables: ReturnType<typeof patchIdableTable.reducer>;
+};
+
+export type AppRecentlyInteractedProjectIds = {
+	readonly recentlyInteractedProjectIds: ReturnType<typeof recentlyInteractedProjectIdsReducer>;
+};
+
+export type AppRecentlyPushedProjectIds = {
+	readonly recentlyPushedProjectIds: ReturnType<typeof recentlyPushedProjectIdsReducer>;
+};
 
 export class AppDispatch {
 	constructor(readonly dispatch: typeof AppState.prototype._store.dispatch) {}
@@ -100,8 +115,33 @@ export class AppState
 		AppRepositoryIdLookupsState,
 		AppLatestBranchLookupsState,
 		AppBranchReviewListingsState,
-		AppNotificationSettingsState
+		AppNotificationSettingsState,
+		AppPatchIdablesState,
+		AppRecentlyInteractedProjectIds,
+		AppRecentlyPushedProjectIds
 {
+	protected readonly reducers = {
+		examples: exampleReducer,
+		posts: postsReducer,
+		feeds: feedsReducer,
+		orgnaizations: organizationTable.reducer,
+		users: userTable.reducer,
+		usersByLogin: userByLoginTable.reducer,
+		projects: projectTable.reducer,
+		patches: patchCommitTable.reducer,
+		patchEvents: patchEventsReducer,
+		branches: branchTable.reducer,
+		patchSections: patchSectionsReducer,
+		chatChannels: chatChannelTable.reducer,
+		repositoryIdLookups: repositoryIdLookupTable.reducer,
+		latestBranchLookups: latestBranchLookupTable.reducer,
+		branchReviewListings: branchReviewListingTable.reducer,
+		notificationSettings: notificationSettingsTable.reducer,
+		patchIdables: patchIdableTable.reducer,
+		recentlyInteractedProjectIds: recentlyInteractedProjectIdsReducer,
+		recentlyPushedProjectIds: recentlyPushedProjectIdsReducer
+	};
+
 	/**
 	 * The base store.
 	 *
@@ -109,24 +149,7 @@ export class AppState
 	 * @private
 	 */
 	readonly _store = configureStore({
-		reducer: {
-			examples: exampleReducer,
-			posts: postsReducer,
-			feeds: feedsReducer,
-			orgnaizations: organizationsReducer,
-			users: usersReducer,
-			usersByLogin: usersByLoginReducer,
-			projects: projectsReducer,
-			patches: patchesReducer,
-			patchEvents: patchEventsReducer,
-			branches: branchesReducer,
-			patchSections: patchSectionsReducer,
-			chatChannels: chatChannelsReducer,
-			repositoryIdLookups: repositoryIdLookupsReducer,
-			latestBranchLookups: latestBranchLookupsReducer,
-			branchReviewListings: branchReviewListingsReducer,
-			notificationSettings: notificationSettingsReducer
-		}
+		reducer: this.reducers
 	});
 
 	readonly appDispatch = new AppDispatch(this._store.dispatch);
@@ -195,6 +218,18 @@ export class AppState
 		[this.selectSelf],
 		(rootState) => rootState.notificationSettings
 	);
+	private readonly selectPatchIdables = createSelector(
+		[this.selectSelf],
+		(rootState) => rootState.patchIdables
+	);
+	private readonly selectRecentlyInteractedProjectIds = createSelector(
+		[this.selectSelf],
+		(rootState) => rootState.recentlyInteractedProjectIds
+	);
+	private readonly selectRecentlyPushedProjectIds = createSelector(
+		[this.selectSelf],
+		(rootState) => rootState.recentlyPushedProjectIds
+	);
 
 	readonly example = $derived(this.selectExample(this.rootState));
 	readonly posts = $derived(this.selectPosts(this.rootState));
@@ -212,6 +247,11 @@ export class AppState
 	readonly latestBranchLookups = $derived(this.selectLatestBranchLookups(this.rootState));
 	readonly branchReviewListings = $derived(this.selectBranchReviewListings(this.rootState));
 	readonly notificationSettings = $derived(this.selectNotificationSettings(this.rootState));
+	readonly patchIdables = $derived(this.selectPatchIdables(this.rootState));
+	readonly recentlyInteractedProjectIds = $derived(
+		this.selectRecentlyInteractedProjectIds(this.rootState)
+	);
+	readonly recentlyPushedProjectIds = $derived(this.selectRecentlyPushedProjectIds(this.rootState));
 
 	constructor() {
 		$effect(() => {

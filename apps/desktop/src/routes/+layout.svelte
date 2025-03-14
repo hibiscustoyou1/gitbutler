@@ -43,7 +43,9 @@
 	import { ShortcutService } from '$lib/shortcuts/shortcutService.svelte';
 	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { ClientState } from '$lib/state/clientState.svelte';
+	import { UiState } from '$lib/state/uiState.svelte';
 	import { UpdaterService } from '$lib/updater/updater';
+	import { UpstreamIntegrationService } from '$lib/upstream/upstreamIntegrationService.svelte';
 	import { User } from '$lib/user/user';
 	import { UserService } from '$lib/user/userService';
 	import * as events from '$lib/utils/events';
@@ -53,12 +55,12 @@
 	import { WorktreeService } from '$lib/worktree/worktreeService.svelte';
 	import { BranchService as CloudBranchService } from '@gitbutler/shared/branches/branchService';
 	import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
-	import { PatchService as CloudPatchService } from '@gitbutler/shared/branches/patchService';
 	import { FeedService } from '@gitbutler/shared/feeds/service';
 	import { HttpClient } from '@gitbutler/shared/network/httpClient';
 	import { OrganizationService } from '@gitbutler/shared/organizations/organizationService';
 	import { ProjectService as CloudProjectService } from '@gitbutler/shared/organizations/projectService';
 	import { RepositoryIdLookupService } from '@gitbutler/shared/organizations/repositoryIdLookupService';
+	import { PatchCommitService as CloudPatchCommitService } from '@gitbutler/shared/patches/patchCommitService';
 	import { AppDispatch, AppState } from '@gitbutler/shared/redux/store.svelte';
 	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
 	import { reactive } from '@gitbutler/shared/storeUtils';
@@ -93,8 +95,9 @@
 	const organizationService = new OrganizationService(data.cloud, appState.appDispatch);
 	const cloudUserService = new CloudUserService(data.cloud, appState.appDispatch);
 	const cloudProjectService = new CloudProjectService(data.cloud, appState.appDispatch);
+
 	const cloudBranchService = new CloudBranchService(data.cloud, appState.appDispatch);
-	const cloudPatchService = new CloudPatchService(data.cloud, appState.appDispatch);
+	const cloudPatchService = new CloudPatchCommitService(data.cloud, appState.appDispatch);
 	const repositoryIdLookupService = new RepositoryIdLookupService(data.cloud, appState.appDispatch);
 	const latestBranchLookupService = new LatestBranchLookupService(data.cloud, appState.appDispatch);
 	const webRoutesService = new WebRoutesService(env.PUBLIC_CLOUD_BASE_URL);
@@ -105,6 +108,21 @@
 		cloudBranchService,
 		latestBranchLookupService
 	);
+	const upstreamIntegrationService = new UpstreamIntegrationService(
+		clientState,
+		stackService,
+		data.projectsService,
+		cloudProjectService,
+		cloudBranchService,
+		latestBranchLookupService
+	);
+
+	const uiStateSlice = $derived(clientState.uiState);
+	const uiState = new UiState(
+		reactive(() => uiStateSlice),
+		clientState.dispatch
+	);
+	setContext(UiState, uiState);
 
 	shortcutService.listen();
 
@@ -119,7 +137,7 @@
 	setContext(CloudUserService, cloudUserService);
 	setContext(CloudProjectService, cloudProjectService);
 	setContext(CloudBranchService, cloudBranchService);
-	setContext(CloudPatchService, cloudPatchService);
+	setContext(CloudPatchCommitService, cloudPatchService);
 	setContext(RepositoryIdLookupService, repositoryIdLookupService);
 	setContext(LatestBranchLookupService, latestBranchLookupService);
 	setContext(WebRoutesService, webRoutesService);
@@ -148,6 +166,7 @@
 	setContext(AppSettings, data.appSettings);
 	setContext(GitHubAuthenticationService, data.githubAuthenticationService);
 	setContext(StackService, stackService);
+	setContext(UpstreamIntegrationService, upstreamIntegrationService);
 	setContext(WorktreeService, worktreeService);
 	setContext(ShortcutService, shortcutService);
 	setContext(DiffService, diffService);

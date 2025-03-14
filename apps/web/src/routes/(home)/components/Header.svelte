@@ -92,6 +92,7 @@
 				{/snippet}
 			</HeaderLink>
 			<HeaderLink label="Blog" href={jsonLinks.resources.blog.url} />
+			<HeaderLink label="Jobs" href={jsonLinks.resources.jobs.url} />
 		</section>
 
 		<section class="navigation-section">
@@ -351,9 +352,6 @@
 		width: 100%;
 		padding: 120px 40px 40px;
 		background-color: var(--clr-white);
-
-		// opacity: 0;
-		// pointer-events: none;
 
 		@media (max-width: 800px) {
 			padding: 100px 20px 20px;

@@ -1,9 +1,10 @@
 <script lang="ts">
-	import {
-		getPatchContributorsWithAvatars,
-		type PatchVersionEvent
-	} from '@gitbutler/shared/branches/types';
+	import { setAfterVersion, setBeforeVersion } from '$lib/interdiffRangeQuery.svelte';
 	import { eventTimeStamp, getMultipleContributorNames } from '@gitbutler/shared/branches/utils';
+	import { getPatchContributorsWithAvatars } from '@gitbutler/shared/contributors';
+	import { isFound } from '@gitbutler/shared/network/loadable';
+	import { type PatchVersionEvent } from '@gitbutler/shared/patchEvents/types';
+	import { getPatch } from '@gitbutler/shared/patches/patchCommitsPreview.svelte';
 	import Icon from '@gitbutler/ui/Icon.svelte';
 	import AvatarGroup from '@gitbutler/ui/avatar/AvatarGroup.svelte';
 
@@ -19,6 +20,16 @@
 	const authorAvatars = $derived(getPatchContributorsWithAvatars(patch));
 
 	const timestamp = $derived(eventTimeStamp(event));
+	const latestPatchCommit = $derived(getPatch(patch.branchUuid, patch.changeId));
+
+	// NOTE: Because this is working with the query params this MUST NOT be
+	// called if the `<ReviewSections>` of a different patchComit are currently
+	// displayed. Doing so will cause it to show a potentially broken range.
+	async function viewInterdiff() {
+		if (!isFound(latestPatchCommit.current)) return;
+		await setBeforeVersion(patch.version - 1);
+		await setAfterVersion(latestPatchCommit.current.value.version, patch.version);
+	}
 </script>
 
 <div class="patch-version">
@@ -26,6 +37,7 @@
 		<Icon name="patch" />
 	</div>
 
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<div class="patch-version__header">
 		{#if patch.contributors.length > 0}
 			<div class="patch-version__author-avatars">
@@ -37,8 +49,11 @@
 
 		<div class="text-13 text-bold patch-version__author-name">{authorNames}</div>
 
-		<p class="text-12 patch-verssion__message">
-			published a new <span class="text-bold">commit version #{patch.version}</span>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<p class="text-12 patch-verssion__message" onclick={viewInterdiff}>
+			published a new <span class="interdiff-version text-bold"
+				>commit version #{patch.version}</span
+			>
 		</p>
 
 		<div class="text-12 patch-version__timestamp" title={event.createdAt}>{timestamp}</div>
@@ -114,5 +129,9 @@
 		text-overflow: ellipsis;
 
 		opacity: 0.4;
+	}
+
+	.interdiff-version {
+		cursor: pointer;
 	}
 </style>

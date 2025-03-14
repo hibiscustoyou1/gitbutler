@@ -326,7 +326,7 @@ fn amend_with_commit_engine(
     commit_oid: git2::Oid,
     worktree_changes: Vec<DiffSpec>,
 ) -> Result<git2::Oid> {
-    // let changes: Vec<DiffSpec> = ownership.claims.iter().map(claim_to_diffspec).collect();
+    let mut guard = ctx.project().exclusive_worktree_access();
 
     let vb_state = ctx.project().virtual_branches();
     let stack = vb_state.get_stack(stack_id)?;
@@ -338,11 +338,13 @@ fn amend_with_commit_engine(
 
     let outcome = commit_engine::create_commit_and_update_refs_with_project(
         &ctx.gix_repository()?,
-        Some((ctx.project(), Some(stack_id))),
+        ctx.project(),
+        Some(stack_id),
         commit_engine::Destination::AmendCommit(commit_oid.to_gix()),
         None,
         worktree_changes,
         3, // for the old API this is hardcoded
+        guard.write_permission(),
     )?;
     let new_commit = outcome.new_commit.ok_or(anyhow::anyhow!(
         "Failed to amend with commit engine. Rejected specs: {:?}",
@@ -373,7 +375,9 @@ pub fn undo_commit(ctx: &CommandContext, stack_id: StackId, commit_oid: git2::Oi
     assure_open_workspace_mode(ctx).context("Undoing a commit requires open workspace mode")?;
     let mut guard = ctx.project().exclusive_worktree_access();
     let snapshot_tree = ctx.project().prepare_snapshot(guard.read_permission());
-    let result: Result<()> = crate::undo_commit::undo_commit(ctx, stack_id, commit_oid).map(|_| ());
+    let result: Result<()> =
+        crate::undo_commit::undo_commit(ctx, stack_id, commit_oid, guard.write_permission())
+            .map(|_| ());
     let _ = snapshot_tree.and_then(|snapshot_tree| {
         ctx.project().snapshot_commit_undo(
             snapshot_tree,
@@ -602,8 +606,13 @@ pub fn upstream_integration_statuses(
 ) -> Result<StackStatuses> {
     let mut guard = ctx.project().exclusive_worktree_access();
 
-    let context =
-        UpstreamIntegrationContext::open(ctx, target_commit_oid, guard.write_permission())?;
+    let gix_repo = ctx.gix_repository()?;
+    let context = UpstreamIntegrationContext::open(
+        ctx,
+        target_commit_oid,
+        guard.write_permission(),
+        &gix_repo,
+    )?;
 
     upstream_integration::upstream_integration_statuses(&context)
 }

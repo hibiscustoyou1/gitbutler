@@ -1,33 +1,47 @@
 <script lang="ts">
 	import ChatDiffLineSelection from './ChatDiffLineSelection.svelte';
+	import ChatInReplyTo, { type ReplyToMessage } from './ChatInReplyTo.svelte';
 	import MentionSuggestions from './MentionSuggestions.svelte';
 	import MessageHandler from '$lib/chat/message.svelte';
 	import RichText from '$lib/chat/richText.svelte';
 	import SuggestionsHandler from '$lib/chat/suggestions.svelte';
 	import { type DiffSelection } from '$lib/diff/lineSelection.svelte';
 	import { UserService } from '$lib/user/userService';
-	import { PatchService } from '@gitbutler/shared/branches/patchService';
 	import { getChatChannelParticipants } from '@gitbutler/shared/chat/chatChannelsPreview.svelte';
 	import { ChatChannelsService } from '@gitbutler/shared/chat/chatChannelsService';
 	import { getContext } from '@gitbutler/shared/context';
+	import { uploadFiles } from '@gitbutler/shared/dom';
+	import { PatchCommitService } from '@gitbutler/shared/patches/patchCommitService';
 	import { AppState } from '@gitbutler/shared/redux/store.svelte';
+	import { UploadsService } from '@gitbutler/shared/uploads/uploadsService';
 	import { UserService as NewUserService } from '@gitbutler/shared/users/userService';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
 	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
 	import DropDownButton from '@gitbutler/ui/DropDownButton.svelte';
-	import RichTextEditor, { type EditorInstance } from '@gitbutler/ui/RichTextEditor.svelte';
+	import RichTextEditor from '@gitbutler/ui/RichTextEditor.svelte';
+	import FileUploadPlugin, {
+		type DropFileResult
+	} from '@gitbutler/ui/richText/plugins/FileUpload.svelte';
+	import MentionsPlugin from '@gitbutler/ui/richText/plugins/Mention.svelte';
+	import { isDefined } from '@gitbutler/ui/utils/typeguards';
+	import type { PatchCommit } from '@gitbutler/shared/patches/types';
 	import { env } from '$env/dynamic/public';
+
+	const ACCEPTED_FILE_TYPES = ['image/*', 'application/*', 'text/*', 'audio/*', 'video/*'];
 
 	interface Props {
 		projectId: string;
 		branchId: string;
 		branchUuid: string;
 		changeId: string;
+		patchCommit: PatchCommit;
 		isPatchAuthor: boolean | undefined;
 		isUserLoggedIn: boolean | undefined;
 		diffSelection: DiffSelection | undefined;
 		clearDiffSelection: () => void;
+		replyingTo: ReplyToMessage | undefined;
+		clearReply: () => void;
 	}
 
 	let {
@@ -35,10 +49,13 @@
 		projectId,
 		branchId,
 		changeId,
+		patchCommit,
 		isPatchAuthor,
 		isUserLoggedIn,
 		diffSelection,
-		clearDiffSelection
+		clearDiffSelection,
+		replyingTo,
+		clearReply
 	}: Props = $props();
 
 	const newUserService = getContext(NewUserService);
@@ -46,24 +63,24 @@
 	const user = $derived(userService.user);
 
 	const appState = getContext(AppState);
-	const patchService = getContext(PatchService);
+	const patchCommitService = getContext(PatchCommitService);
 	const chatChannelService = getContext(ChatChannelsService);
+	const uploadsService = getContext(UploadsService);
+	const contributors = $derived(patchCommit.contributors.map((c) => c.user).filter(isDefined));
 	const chatParticipants = $derived(
 		getChatChannelParticipants(appState, chatChannelService, projectId, changeId)
-	);
-	const suggestions = $derived(
-		new SuggestionsHandler(newUserService, chatParticipants.current, $user)
-	);
-
-	const messageHandler = $derived(
-		new MessageHandler(chatChannelService, projectId, branchId, changeId)
 	);
 
 	let isSendingMessage = $state(false);
 	let isExecuting = $state(false);
+	let fileUploadPlugin = $state<ReturnType<typeof FileUploadPlugin>>();
 
-	// Rich text editor
 	const richText = new RichText();
+	const messageHandler = new MessageHandler();
+	const suggestions = new SuggestionsHandler();
+
+	$effect(() => messageHandler.init(chatChannelService, projectId, branchId, changeId));
+	$effect(() => suggestions.init(newUserService, chatParticipants.current, contributors, $user));
 	$effect(() => {
 		if (changeId) {
 			// Just here to track the changeId
@@ -71,7 +88,8 @@
 
 		return () => {
 			// Cleanup once the change ID changes
-			richText.reset();
+			richText.clearEditor();
+			suggestions.reset();
 		};
 	});
 
@@ -79,42 +97,51 @@
 		if (isSendingMessage) return;
 		isSendingMessage = true;
 		try {
-			await messageHandler.send({ issue, diffSelection });
+			await messageHandler.send({ issue, diffSelection, inReplyTo: replyingTo?.uuid });
 		} finally {
-			const editor = richText.richTextEditor?.getEditor();
-			editor?.commands.clearContent(true);
+			richText.clearEditor();
 			isSendingMessage = false;
 			clearDiffSelection();
+			clearReply();
 		}
 	}
 
-	function handleKeyDown(event: KeyboardEvent): boolean {
-		if (event.key === 'Enter' && !event.shiftKey && richText.suggestions === undefined) {
+	function handleKeyDown(event: KeyboardEvent | null): boolean {
+		if (event === null) return false;
+
+		if (suggestions.suggestions !== undefined) {
+			return suggestions.onSuggestionKeyDown(event);
+		}
+
+		const metaKey = event.metaKey || event.ctrlKey;
+
+		if (event.key === 'Enter' && !event.shiftKey && suggestions.suggestions === undefined) {
 			event.preventDefault();
 			event.stopPropagation();
 			handleSendMessage();
 			return true;
 		}
 
-		const editor = richText.richTextEditor?.getEditor();
-		if (event.key === 'Enter' && event.shiftKey && editor) {
-			editor.commands.first(({ commands }) => [
-				() => commands.newlineInCode(),
-				() => commands.createParagraphNear(),
-				() => commands.liftEmptyBlock(),
-				() => commands.splitBlock()
-			]);
-			return true;
-		}
+		if (event.key === 'Escape') {
+			if (!diffSelection || metaKey) {
+				// Clear reply only if the diff selection is not open
+				// or if the meta key is pressed
+				clearReply();
+			}
 
-		if (event.key === 'Escape' && !richText.suggestions) {
 			// Clear diff selection on escape only if the mention suggestions
 			// are not open
 			clearDiffSelection();
 			return false;
 		}
 
-		if (event.key === 'Backspace' && !richText.suggestions && !messageHandler.message) {
+		if (event.key === 'Backspace' && !messageHandler.message) {
+			if (!diffSelection || metaKey) {
+				// Clear reply only if the diff selection is not open
+				// or if the meta key is pressed
+				clearReply();
+			}
+
 			// Clear diff selection on delete only if the mention suggestions
 			// are not open and the input is empty
 			clearDiffSelection();
@@ -140,21 +167,19 @@
 	let dropDownButton = $state<ReturnType<typeof DropDownButton>>();
 
 	async function approve() {
-		await patchService.updatePatch(branchUuid, changeId, {
+		await patchCommitService.updatePatch(branchUuid, changeId, {
 			signOff: true,
 			message: messageHandler.message
 		});
-		const editor = richText.richTextEditor?.getEditor();
-		editor?.commands.clearContent(true);
+		richText.clearEditor();
 	}
 
 	async function requestChanges() {
-		await patchService.updatePatch(branchUuid, changeId, {
+		await patchCommitService.updatePatch(branchUuid, changeId, {
 			signOff: false,
 			message: messageHandler.message
 		});
-		const editor = richText.richTextEditor?.getEditor();
-		editor?.commands.clearContent(true);
+		richText.clearEditor();
 	}
 
 	async function handleActionClick() {
@@ -182,37 +207,79 @@
 		return actionLabels[action] + suffix;
 	});
 
-	function onEditorUpdate(editor: EditorInstance) {
-		messageHandler.update(editor);
-	}
-
 	function login() {
 		window.location.href = `${env.PUBLIC_APP_HOST}/cloud/login?callback=${window.location.href}`;
+	}
+
+	function isAcceptedFileType(file: File): boolean {
+		const type = file.type.split('/')[0];
+		return ACCEPTED_FILE_TYPES.some((acceptedType) => acceptedType.startsWith(type));
+	}
+
+	async function handleDropFiles(files: FileList | undefined): Promise<DropFileResult[]> {
+		if (files === undefined) return [];
+		const uploads = Array.from(files)
+			.filter(isAcceptedFileType)
+			.map(async (file) => {
+				const upload = await uploadsService.uploadFile(file);
+				return { name: file.name, url: upload.url, isImage: upload.isImage };
+			});
+		const settled = await Promise.allSettled(uploads);
+		const successful = settled.filter((result) => result.status === 'fulfilled');
+		return successful.map((result) => result.value);
+	}
+
+	async function attachFiles() {
+		richText.richTextEditor?.focus();
+		const files = await uploadFiles(ACCEPTED_FILE_TYPES.join(','));
+		if (!files) return;
+		await fileUploadPlugin?.handleFileUpload(files);
+	}
+
+	export function focusInput() {
+		richText.richTextEditor?.focus();
 	}
 </script>
 
 {#if isUserLoggedIn}
 	<div class="chat-input">
 		<MentionSuggestions
-			bind:this={richText.mentionSuggestions}
+			bind:this={suggestions.mentionSuggestions}
 			isLoading={suggestions.isLoading}
-			suggestions={richText.suggestions}
-			selectSuggestion={richText.selectSuggestion}
+			suggestions={suggestions.suggestions}
+			selectSuggestion={(s) => suggestions.selectSuggestion(s)}
 		/>
 		<div class="text-input chat-input__content-container">
+			{#if replyingTo}
+				<div class="chat-input__reply">
+					<ChatInReplyTo message={replyingTo} {clearReply} />
+				</div>
+			{/if}
+
 			{#if diffSelection}
 				<ChatDiffLineSelection {diffSelection} {clearDiffSelection} />
 			{/if}
+
 			<RichTextEditor
+				styleContext="chat-input"
+				placeholder="Write your message"
 				bind:this={richText.richTextEditor}
-				getSuggestionItems={(q) => suggestions.getSuggestionItems(q)}
-				onSuggestionStart={(p) => richText.onSuggestionStart(p)}
-				onSuggestionUpdate={(p) => richText.onSuggestionUpdate(p)}
-				onSuggestionExit={() => richText.onSuggestionExit()}
-				onSuggestionKeyDown={(event) => richText.onSuggestionKeyDown(event)}
+				markdown={false}
+				namespace="ChatInput"
+				onError={console.error}
+				onChange={(text) => messageHandler.update(text)}
 				onKeyDown={handleKeyDown}
-				onUpdate={onEditorUpdate}
-			/>
+			>
+				{#snippet plugins()}
+					<MentionsPlugin
+						bind:this={suggestions.mentionPlugin}
+						getSuggestionItems={(q) => suggestions.getSuggestionItems(q)}
+						onUpdateSuggestion={(p) => suggestions.onSuggestionUpdate(p)}
+						onExitSuggestion={() => suggestions.onSuggestionExit()}
+					/>
+					<FileUploadPlugin bind:this={fileUploadPlugin} onDrop={handleDropFiles} />
+				{/snippet}
+			</RichTextEditor>
 			<div class="chat-input__actions">
 				<div class="chat-input__secondary-actions">
 					<Button
@@ -220,10 +287,7 @@
 						tooltip="Attach files"
 						tooltipPosition="top"
 						kind="ghost"
-						disabled
-						onclick={() => {
-							// TODO: Implement
-						}}
+						onclick={attachFiles}
 					/>
 					<Button
 						icon="smile"
@@ -299,11 +363,17 @@
 		border-top: 1px solid var(--clr-border-2);
 	}
 
+	.chat-input__reply {
+		padding: 6px 6px 0;
+	}
+
 	.chat-input__content-container {
 		flex-grow: 1;
 		display: flex;
 		flex-direction: column;
 		padding: 0;
+		overflow: hidden;
+		border-radius: var(--radius-m);
 	}
 
 	.chat-input__actions {

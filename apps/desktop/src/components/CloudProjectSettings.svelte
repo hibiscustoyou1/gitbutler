@@ -8,6 +8,7 @@
 	import { getContext, getContextStore } from '@gitbutler/shared/context';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
 	import { isFound, map } from '@gitbutler/shared/network/loadable';
+	import PermissionsSelector from '@gitbutler/shared/organizations/PermissionsSelector.svelte';
 	import { OrganizationService } from '@gitbutler/shared/organizations/organizationService';
 	import { getOrganizations } from '@gitbutler/shared/organizations/organizationsPreview.svelte';
 	import { ProjectService as CloudProjectService } from '@gitbutler/shared/organizations/projectService';
@@ -16,11 +17,13 @@
 	import { RepositoryIdLookupService } from '@gitbutler/shared/organizations/repositoryIdLookupService';
 	import { AppState } from '@gitbutler/shared/redux/store.svelte';
 	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
+	import AsyncButton from '@gitbutler/ui/AsyncButton.svelte';
 	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
 	import Toggle from '@gitbutler/ui/Toggle.svelte';
 	import Link from '@gitbutler/ui/link/Link.svelte';
 	import type { Project as BackendProject } from '$lib/project/project';
 	import type { Project } from '@gitbutler/shared/organizations/types';
+
 	const appState = getContext(AppState);
 	const projectsService = getContext(ProjectsService);
 	const projectService = getContext(ProjectService);
@@ -35,9 +38,7 @@
 	const user = getContextStore(User);
 
 	const cloudProject = $derived(
-		$project?.api?.repository_id
-			? getProjectByRepositoryId(appState, cloudProjectService, $project.api.repository_id)
-			: undefined
+		$project?.api?.repository_id ? getProjectByRepositoryId($project.api.repository_id) : undefined
 	);
 
 	let organizationsList = $state<HTMLElement>();
@@ -52,7 +53,7 @@
 	);
 	const existingProject = $derived(
 		map(existingProjectRepositoryId?.current, (repositoryId) =>
-			getProjectByRepositoryId(appState, cloudProjectService, repositoryId)
+			getProjectByRepositoryId(repositoryId)
 		)
 	);
 
@@ -139,110 +140,123 @@
 		projectsService.updateProject(mutableProject);
 	}
 
-	let cloudFeatureFlag = $user?.role === 'admin';
+	let cloudFeatureFlag = $derived($user?.role === 'admin');
 </script>
 
-<Section>
-	<SectionCard orientation="row" labelFor="signCommits">
-		{#snippet title()}
-			GitButler Server Features
-		{/snippet}
-		{#snippet caption()}
-			Enabling this allows you to turn on various hosted features for this project on gitbutler.com.
-		{/snippet}
-		{#snippet actions()}
-			<Toggle id="signCommits" checked={!!$project?.api} onclick={toggleProject} />
-		{/snippet}
-	</SectionCard>
-</Section>
+{#if $userLogin}
+	<Section>
+		<SectionCard orientation="row" labelFor="serverFeatures">
+			{#snippet title()}
+				GitButler Server Features
+			{/snippet}
+			{#snippet caption()}
+				Enabling this allows you to turn on various hosted features for this project on
+				gitbutler.com.
+			{/snippet}
+			{#snippet actions()}
+				{#if $project?.api && !cloudProject}
+					<p>Loading...</p>
+				{:else}
+					<Toggle id="serverFeatures" checked={!!$project?.api} onclick={toggleProject} />
+				{/if}
+			{/snippet}
+		</SectionCard>
+	</Section>
+{:else}
+	<Section>
+		<SectionCard orientation="row">
+			{#snippet title()}
+				GitButler Server Features
+			{/snippet}
+			{#snippet caption()}
+				<div>Please log in to access GitButler Server Features.</div>
+			{/snippet}
+			{#snippet actions()}
+				<AsyncButton
+					style="pop"
+					icon="signin"
+					action={async () => {
+						await userService.login();
+					}}
+				>
+					Sign up or Log in
+				</AsyncButton>
+			{/snippet}
+		</SectionCard>
+	</Section>
+{/if}
 
 {#if cloudProject}
-	<br />
-	<Section gap={0}>
-		{#snippet children()}
-			<SectionCard
-				labelFor="reviews"
-				orientation="row"
-				roundedTop={true}
-				roundedBottom={!cloudFeatureFlag}
-			>
-				{#snippet title()}
-					Use Butler Review
-				{/snippet}
-				{#snippet caption()}
-					Use Butler Review with this project. Butler Review is a commit based code review tool that
-					helps your team review series of patches.
-					<Link href="https://docs.gitbutler.com/review/overview">Learn more</Link>
-				{/snippet}
-				{#snippet actions()}
-					<Toggle
-						id="reviews"
-						checked={$project?.api?.reviews || false}
-						onclick={async () => await onReviewsChange(!$project?.api?.reviews)}
-					/>
-				{/snippet}
-			</SectionCard>
-			{#if cloudFeatureFlag}
-				<SectionCard
-					labelFor="historySync"
-					roundedBottom={false}
-					roundedTop={false}
-					orientation="row"
-				>
-					{#snippet title()}
-						Timeline Backup
-					{/snippet}
-					{#snippet caption()}
-						Sync this project's operations log (timeline) to GitButler servers. The operations log
-						includes snapshots of the repository state, including non-committed code changes.
-					{/snippet}
-					{#snippet actions()}
-						<Toggle
-							id="historySync"
-							checked={$project?.api?.sync || false}
-							onclick={async () => await onSyncChange(!$project?.api?.sync)}
-						/>
-					{/snippet}
-				</SectionCard>
-				<SectionCard labelFor="branchesySync" roundedTop={false} orientation="row">
-					{#snippet title()}
-						Code Hosting
-					{/snippet}
-					{#snippet caption()}
-						Push this project's branches to a hosted GitButler repository.
-					{/snippet}
-					{#snippet actions()}
-						<Toggle
-							id="branchesySync"
-							checked={$project?.api?.sync_code || false}
-							onclick={async () => await onSyncCodeChange(!$project?.api?.sync_code)}
-						/>
-					{/snippet}
-				</SectionCard>
-			{/if}
-
+	<Loading loadable={cloudProject.current}>
+		{#snippet children(cloudProject)}
 			<br />
-
-			<Loading loadable={cloudProject.current}>
-				{#snippet children(cloudProject)}
-					<div class="api-link text-12">
-						<Link
-							target="_blank"
-							rel="noreferrer"
-							href={webRoutes.projectUrl({
-								ownerSlug: cloudProject.owner,
-								projectSlug: cloudProject.slug
-							})}>Go to GitButler Server Project</Link
+			<Section gap={0}>
+				{#snippet children()}
+					<SectionCard
+						labelFor="reviews"
+						orientation="row"
+						roundedTop={true}
+						roundedBottom={!cloudFeatureFlag}
+					>
+						{#snippet title()}
+							Use Butler Review
+						{/snippet}
+						{#snippet caption()}
+							Use Butler Review with this project. Butler Review is a commit based code review tool
+							that helps your team review series of patches.
+							<Link href="https://docs.gitbutler.com/review/overview">Learn more</Link>
+						{/snippet}
+						{#snippet actions()}
+							<Toggle
+								id="reviews"
+								checked={$project?.api?.reviews || false}
+								onclick={async () => await onReviewsChange(!$project?.api?.reviews)}
+							/>
+						{/snippet}
+					</SectionCard>
+					{#if cloudFeatureFlag}
+						<SectionCard
+							labelFor="historySync"
+							roundedBottom={false}
+							roundedTop={false}
+							orientation="row"
 						>
-					</div>
+							{#snippet title()}
+								Timeline Backup
+							{/snippet}
+							{#snippet caption()}
+								Sync this project's operations log (timeline) to GitButler servers. The operations
+								log includes snapshots of the repository state, including non-committed code
+								changes.
+							{/snippet}
+							{#snippet actions()}
+								<Toggle
+									id="historySync"
+									checked={$project?.api?.sync || false}
+									onclick={async () => await onSyncChange(!$project?.api?.sync)}
+								/>
+							{/snippet}
+						</SectionCard>
+						<SectionCard labelFor="branchesySync" roundedTop={false} orientation="row">
+							{#snippet title()}
+								Code Hosting
+							{/snippet}
+							{#snippet caption()}
+								Push this project's branches to a hosted GitButler repository.
+							{/snippet}
+							{#snippet actions()}
+								<Toggle
+									id="branchesySync"
+									checked={$project?.api?.sync_code || false}
+									onclick={async () => await onSyncCodeChange(!$project?.api?.sync_code)}
+								/>
+							{/snippet}
+						</SectionCard>
+					{/if}
 				{/snippet}
-			</Loading>
-		{/snippet}
-	</Section>
+			</Section>
 
-	{#if cloudFeatureFlag}
-		<Loading loadable={cloudProject.current}>
-			{#snippet children(cloudProject)}
+			{#if cloudFeatureFlag}
 				{#if !cloudProject.parentProjectRepositoryId}
 					<Section>
 						{#snippet title()}
@@ -277,9 +291,38 @@
 						</div>
 					</Section>
 				{/if}
-			{/snippet}
-		</Loading>
-	{/if}
+			{/if}
+
+			<br />
+
+			<SectionCard orientation="row" centerAlign>
+				{#snippet title()}
+					Project visibility
+				{/snippet}
+				{#snippet caption()}
+					Choose your project's visiblility. Public projects will get indexed, unlisted projects can
+					only be found by direct link, and private projects can only be seen by organization
+					members.
+				{/snippet}
+				{#snippet actions()}
+					<PermissionsSelector repositoryId={cloudProject.repositoryId} />
+				{/snippet}
+			</SectionCard>
+
+			<br />
+
+			<div class="api-link text-12">
+				<Link
+					target="_blank"
+					rel="noreferrer"
+					href={webRoutes.projectUrl({
+						ownerSlug: cloudProject.owner,
+						projectSlug: cloudProject.slug
+					})}>Go to GitButler Server Project</Link
+				>
+			</div>
+		{/snippet}
+	</Loading>
 {/if}
 
 <style>

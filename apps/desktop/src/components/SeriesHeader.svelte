@@ -6,8 +6,8 @@
 	import SeriesDescription from './SeriesDescription.svelte';
 	import SeriesHeaderStatusIcon from './SeriesHeaderStatusIcon.svelte';
 	import BranchReview from '$components/BranchReview.svelte';
-	import PrDetailsModal from '$components/PrDetailsModal.svelte';
 	import PullRequestCard from '$components/PullRequestCard.svelte';
+	import ReviewDetailsModal from '$components/ReviewDetailsModal.svelte';
 	import SeriesHeaderContextMenu from '$components/SeriesHeaderContextMenu.svelte';
 	import { PromptService } from '$lib/ai/promptService';
 	import { AIService } from '$lib/ai/service';
@@ -83,7 +83,7 @@
 	);
 
 	let stackingAddSeriesModal = $state<ReturnType<typeof AddSeriesModal>>();
-	let prDetailsModal = $state<ReturnType<typeof PrDetailsModal>>();
+	let prDetailsModal = $state<ReturnType<typeof ReviewDetailsModal>>();
 	let kebabContextMenu = $state<ReturnType<typeof ContextMenu>>();
 	let stackingContextMenu = $state<ReturnType<typeof SeriesHeaderContextMenu>>();
 	let confirmCreatePrModal = $state<ReturnType<typeof Modal>>();
@@ -93,7 +93,7 @@
 	let contextMenuOpened = $state(false);
 
 	const topPatch = $derived(branch?.patches[0]);
-	const branchType = $derived<CommitStatus>(topPatch?.status ?? 'local');
+	const branchType = $derived<CommitStatus>(topPatch?.status ?? 'LocalOnly');
 	const lineColor = $derived(getColorFromBranchType(branchType));
 	const hasNoCommits = $derived(branch.upstreamPatches.length === 0 && branch.patches.length === 0);
 	const parentIsPushed = $derived(!!parent?.upstreamReference);
@@ -169,7 +169,7 @@
 		prDetailsModal?.show();
 	}
 
-	function handleOpenPR() {
+	function handleOpenBranchReview() {
 		if (!previousSeriesHavePrNumber) {
 			confirmCreatePrModal?.show();
 			return;
@@ -251,7 +251,7 @@
 		// Display create pr modal after a slight delay, this prevents
 		// interference with the closing context menu. It also feels nice
 		// that these two things are not happening at the same time.
-		setTimeout(() => handleOpenPR(), 250);
+		setTimeout(() => handleOpenBranchReview(), 250);
 	}
 
 	closedStateSync(reactive(() => branch));
@@ -260,6 +260,7 @@
 <AddSeriesModal bind:this={stackingAddSeriesModal} parentSeriesName={branch.name} />
 
 <SeriesHeaderContextMenu
+	stackId={stack.id}
 	bind:this={stackingContextMenu}
 	bind:contextMenuEl={kebabContextMenu}
 	leftClickTrigger={kebabContextMenuTrigger}
@@ -277,7 +278,7 @@
 	}}
 	hasForgeBranch={!!forgeBranch}
 	pr={$pr}
-	openPrDetailsModal={handleOpenPR}
+	openPrDetailsModal={handleOpenBranchReview}
 	{branchType}
 	onMenuToggle={(isOpen, isLeftClick) => {
 		if (isLeftClick) {
@@ -333,7 +334,7 @@
 		<div class="branch-info">
 			<SeriesHeaderStatusIcon
 				lineTop={isTopBranch ? false : true}
-				icon={branchType === 'integrated' ? 'tick-small' : 'branch-small'}
+				icon={branchType === 'Integrated' ? 'tick-small' : 'branch-small'}
 				iconColor="var(--clr-core-ntrl-100)"
 				color={lineColor}
 			/>
@@ -349,8 +350,8 @@
 						onChange={(name) => editTitle(name)}
 						readonly={!!forgeBranch}
 						onDblClick={() => {
-							if (branchType !== 'integrated') {
-								stackingContextMenu?.showSeriesRenameModal?.(branch.name);
+							if (branchType !== 'Integrated') {
+								stackingContextMenu?.showSeriesRenameModal?.();
 							}
 						}}
 					/>
@@ -369,7 +370,7 @@
 			</div>
 		</div>
 		{#if !hasNoCommits}
-			<BranchReview {branch} openForgePullRequest={handleOpenPR}>
+			<BranchReview {branch} openForgePullRequest={handleOpenBranchReview}>
 				{#snippet branchLine()}
 					<div class="branch-action__line" style:--bg-color={lineColor}></div>
 				{/snippet}
@@ -377,7 +378,7 @@
 					<PullRequestCard
 						reloadPR={handleReloadPR}
 						reopenPr={handleReopenPr}
-						openPrDetailsModal={handleOpenPR}
+						openPrDetailsModal={handleOpenBranchReview}
 						{pr}
 						{checksMonitor}
 						{prMonitor}
@@ -399,16 +400,7 @@
 			</BranchReview>
 		{/if}
 
-		{#if $pr}
-			<PrDetailsModal bind:this={prDetailsModal} type="display" pr={$pr} currentSeries={branch} />
-		{:else}
-			<PrDetailsModal
-				bind:this={prDetailsModal}
-				type="preview"
-				currentSeries={branch}
-				stackId={stack.id}
-			/>
-		{/if}
+		<ReviewDetailsModal bind:this={prDetailsModal} currentSeries={branch} stackId={stack.id} />
 
 		<Modal
 			width="small"
@@ -483,21 +475,6 @@
 		gap: 6px;
 		padding: 14px 0;
 		margin-left: -2px;
-	}
-
-	.branch-action {
-		width: 100%;
-		display: flex;
-		justify-content: flex-start;
-		align-items: stretch;
-
-		.branch-action__body {
-			width: 100%;
-			padding: 0 14px 14px 0;
-			display: flex;
-			flex-direction: column;
-			gap: 14px;
-		}
 	}
 
 	.branch-action__line {

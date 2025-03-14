@@ -4,10 +4,18 @@
 	export function getHunkLineId(rowEncodedId: DiffFileLineId): string {
 		return `hunk-line-${rowEncodedId}`;
 	}
+
+	export type ContextMenuParams = {
+		event: MouseEvent;
+		beforeLineNumber: number | undefined;
+		afterLineNumber: number | undefined;
+	};
 </script>
 
 <script lang="ts">
 	import Button from '$lib/Button.svelte';
+	import Checkbox from '$lib/Checkbox.svelte';
+	import Icon from '$lib/Icon.svelte';
 	import {
 		CountColumnSide,
 		SectionType,
@@ -25,10 +33,14 @@
 		lineSelection: LineSelection;
 		tabSize: number;
 		wrapText: boolean;
+		diffFont?: string;
 		numberHeaderWidth?: number;
 		onQuoteSelection?: () => void;
 		onCopySelection?: () => void;
 		hoveringOverTable: boolean;
+		staged?: boolean;
+		onToggleStage?: () => void;
+		handleLineContextMenu?: (params: ContextMenuParams) => void;
 	}
 
 	const {
@@ -38,17 +50,22 @@
 		lineSelection,
 		tabSize,
 		wrapText,
+		diffFont = 'var(--fontfamily-mono)',
 		clearLineSelection,
 		numberHeaderWidth,
 		onQuoteSelection,
 		onCopySelection,
-		hoveringOverTable
+		hoveringOverTable,
+		staged,
+		onToggleStage,
+		handleLineContextMenu
 	}: Props = $props();
 
 	const touchDevice = isTouchDevice();
 
 	let rowElement = $state<HTMLTableRowElement>();
 	let overflowMenuHeight = $state<number>(0);
+	let stagingColumnWidth = $state<number>(0);
 
 	const rowTop = $derived(rowElement?.getBoundingClientRect().top);
 	const rowLeft = $derived(rowElement?.getBoundingClientRect().left);
@@ -87,6 +104,8 @@
 </script>
 
 {#snippet countColumn(row: Row, side: CountColumnSide, idx: number)}
+	{@const isDeltaLine =
+		row.type === SectionType.AddedLines || row.type === SectionType.RemovedLines}
 	<td
 		class="table__numberColumn"
 		data-no-drag
@@ -96,6 +115,9 @@
 		align="center"
 		class:is-last={row.isLast}
 		class:is-before={side === CountColumnSide.Before}
+		class:staged={staged && isDeltaLine}
+		style="--staging-column-width: {stagingColumnWidth}px;"
+		class:stagable={staged !== undefined}
 		onmousedown={(ev) => lineSelection.onStart(ev, row, idx)}
 		onmouseenter={(ev) => lineSelection.onMoveOver(ev, row, idx)}
 		onmouseup={() => lineSelection.onEnd()}
@@ -110,7 +132,35 @@
 	class="table__row"
 	class:selected={row.isSelected}
 	data-no-drag
+	style="--diff-font: {diffFont};"
 >
+	{#if staged !== undefined}
+		{@const isDeltaLine =
+			row.type === SectionType.AddedLines || row.type === SectionType.RemovedLines}
+		<td
+			bind:clientWidth={stagingColumnWidth}
+			class="table__numberColumn"
+			data-no-drag
+			class:diff-line-deletion={row.type === SectionType.RemovedLines}
+			class:diff-line-addition={row.type === SectionType.AddedLines}
+			class:clickable={onToggleStage}
+			align="center"
+			class:is-last={row.isLast}
+			class:staged={staged && isDeltaLine}
+			onclick={onToggleStage}
+		>
+			{#if isDeltaLine}
+				<div class="table__row-checkbox">
+					{#if staged}
+						<Checkbox checked={staged} small style="ghost" />
+					{:else}
+						<Icon name="minus-small" />
+					{/if}
+				</div>
+			{/if}
+		</td>
+	{/if}
+
 	{@render countColumn(row, CountColumnSide.Before, idx)}
 	{@render countColumn(row, CountColumnSide.After, idx)}
 	<td
@@ -124,6 +174,15 @@
 		class:is-last={row.isLast}
 		onclick={() => {
 			if (!row.isSelected) clearLineSelection?.();
+		}}
+		oncontextmenu={(ev) => {
+			ev.preventDefault();
+			ev.stopPropagation();
+			handleLineContextMenu?.({
+				event: ev,
+				beforeLineNumber: row.beforeLineNumber,
+				afterLineNumber: row.afterLineNumber
+			});
 		}}
 	>
 		<div class="table__row-header">
@@ -150,6 +209,7 @@
 								style="neutral"
 								kind="ghost"
 								size="button"
+								tooltip="Quote"
 								onclick={onQuoteSelection}
 							/>
 						</div>
@@ -161,6 +221,7 @@
 							style="neutral"
 							kind="ghost"
 							size="button"
+							tooltip="Copy"
 							onclick={onCopySelection}
 						/>
 					</div>
@@ -178,6 +239,7 @@
 		padding: 0;
 		margin: 0;
 		user-select: none;
+		font-family: var(--diff-font);
 	}
 
 	.table__textContent {
@@ -198,7 +260,7 @@
 	}
 
 	.table__selected-row-overlay {
-		z-index: var(--z-floating);
+		z-index: var(--z-lifted);
 		position: absolute;
 		pointer-events: none;
 		top: 0;
@@ -227,13 +289,12 @@
 	}
 
 	.table__selected-row-overflow-menu {
-		z-index: var(--z-modal);
+		z-index: var(--z-lifted);
 		position: absolute;
-		top: calc(var(--height) - var(--overflow-menu-height) - 4px);
+		top: calc(var(--height) - var(--overflow-menu-height) - 6px);
 		left: 0;
 		display: flex;
 		pointer-events: none;
-		gap: 0;
 		background: var(--clr-bg-1);
 		border: 1px solid var(--clr-border-2);
 		border-radius: var(--radius-m);
@@ -249,6 +310,10 @@
 			opacity: 1;
 			pointer-events: all;
 		}
+	}
+
+	.button-wrapper {
+		display: flex;
 	}
 
 	.table__numberColumn {
@@ -289,6 +354,16 @@
 		&.clickable {
 			cursor: pointer;
 		}
+
+		&.stagable {
+			min-width: var(--staging-column-width);
+		}
+
+		&.staged {
+			background-color: var(--clr-diff-selected-count-bg);
+			border-color: var(--clr-diff-selected-count-border);
+			color: var(--clr-diff-selected-count-text);
+		}
 	}
 
 	.table__numberColumn:first-of-type {
@@ -304,5 +379,20 @@
 
 	.diff-line-deletion {
 		background-color: var(--clr-diff-deletion-line-bg);
+	}
+
+	.table__row-checkbox {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		box-sizing: border-box;
+		flex-shrink: 0;
+		pointer-events: none;
+
+		color: var(--clr-diff-count-checkmark);
+		margin: 0;
+		padding: 0;
+		width: 18px;
+		height: 18px;
 	}
 </style>

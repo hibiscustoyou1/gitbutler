@@ -7,18 +7,18 @@
 	import ReviewInfo from '$lib/components/review/ReviewInfo.svelte';
 	import ReviewSections from '$lib/components/review/ReviewSections.svelte';
 	import DiffLineSelection from '$lib/diff/lineSelection.svelte';
+	import { updateFavIcon } from '$lib/utils/faviconUtils';
 	import { UserService } from '$lib/user/userService';
 	import { BranchService } from '@gitbutler/shared/branches/branchService';
 	import { getBranchReview } from '@gitbutler/shared/branches/branchesPreview.svelte';
 	import { lookupLatestBranchUuid } from '@gitbutler/shared/branches/latestBranchLookup.svelte';
 	import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
-	import { PatchService } from '@gitbutler/shared/branches/patchService';
-	import { getPatch, getPatchSections } from '@gitbutler/shared/branches/patchesPreview.svelte';
 	import { getContext } from '@gitbutler/shared/context';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
-	import { combine, map } from '@gitbutler/shared/network/loadable';
+	import { combine, isFound, map } from '@gitbutler/shared/network/loadable';
 	import { lookupProject } from '@gitbutler/shared/organizations/repositoryIdLookupPreview.svelte';
 	import { RepositoryIdLookupService } from '@gitbutler/shared/organizations/repositoryIdLookupService';
+	import { getPatch } from '@gitbutler/shared/patches/patchCommitsPreview.svelte';
 	import { AppState } from '@gitbutler/shared/redux/store.svelte';
 	import {
 		WebRoutesService,
@@ -28,7 +28,7 @@
 	import Markdown from '@gitbutler/ui/markdown/Markdown.svelte';
 	import { goto } from '$app/navigation';
 
-	const DESCRIPTION_PLACE_HOLDER = 'No description provided';
+	const DESCRIPTION_PLACE_HOLDER = 'No commit message description provided';
 
 	interface Props {
 		data: ProjectReviewCommitParameters;
@@ -39,7 +39,6 @@
 	const repositoryIdLookupService = getContext(RepositoryIdLookupService);
 	const latestBranchLookupService = getContext(LatestBranchLookupService);
 	const branchService = getContext(BranchService);
-	const patchService = getContext(PatchService);
 	const appState = getContext(AppState);
 	const routes = getContext(WebRoutesService);
 	const userService = getContext(UserService);
@@ -50,6 +49,7 @@
 	const chatTabletModeBreakpoint = 1024;
 	let isChatTabletMode = $state(window.innerWidth < chatTabletModeBreakpoint);
 	let isTabletModeEntered = $state(false);
+	let chatComponent = $state<ReturnType<typeof ChatComponent>>();
 
 	const repositoryId = $derived(
 		lookupProject(appState, repositoryIdLookupService, data.ownerSlug, data.projectSlug)
@@ -71,35 +71,27 @@
 		})
 	);
 
-	const patchIds = $derived(map(branch?.current, (b) => b.patchIds));
+	const patchCommitIds = $derived(map(branch?.current, (b) => b.patchCommitIds));
 
-	const patch = $derived(
+	const patchCommit = $derived(
 		map(branchUuid?.current, (branchUuid) => {
-			return getPatch(appState, patchService, branchUuid, data.changeId);
+			return getPatch(branchUuid, data.changeId);
 		})
 	);
 
 	const isPatchAuthor = $derived(
-		map(patch?.current, (patch) => {
+		map(patchCommit?.current, (patch) => {
 			return patch.contributors.some(
 				(contributor) => contributor.user?.id !== undefined && contributor.user?.id === $user?.id
 			);
 		})
 	);
 
-	const patchSections = $derived(
-		map(branchUuid?.current, (branchUuid) => {
-			return getPatchSections(appState, patchService, branchUuid, data.changeId);
-		})
-	);
-
 	let headerEl = $state<HTMLDivElement>();
 	let headerHeight = $state(0);
-	let headerIsStuck = $state(false);
-	let metaSectionHidden = $state(false);
-	const HEADER_STUCK_THRESHOLD = 4;
 
-	let metaSectionEl = $state<HTMLDivElement>();
+	let headerIsStuck = $state(false);
+	const HEADER_STUCK_THRESHOLD = 4;
 
 	function handleScroll() {
 		if (headerEl) {
@@ -111,14 +103,6 @@
 			if (headerIsStuck && top > HEADER_STUCK_THRESHOLD) {
 				headerIsStuck = false;
 			}
-		}
-
-		if (metaSectionEl && headerEl) {
-			metaSectionHidden =
-				metaSectionEl.getBoundingClientRect().top -
-					headerEl.clientHeight +
-					metaSectionEl.clientHeight <
-				0;
 		}
 	}
 
@@ -167,13 +151,38 @@
 			chatMinimizer.maximize();
 		}
 	});
+
+	$effect(() => {
+		if (isFound(patchCommit?.current)) {
+			updateFavIcon(patchCommit.current.value?.reviewStatus);
+		}
+	});
 </script>
+
+<svelte:head>
+	{#if isFound(patchCommit?.current)}
+		<title>🔬{patchCommit.current.value?.title}</title>
+		<meta property="og:title" content="Review: {patchCommit.current.value?.title}" />
+		<meta property="og:description" content={patchCommit.current.value?.description} />
+	{:else}
+		<title>GitButler Review</title>
+		<meta property="og:title" content="Butler Review: {data.ownerSlug}/{data.projectSlug}" />
+		<meta property="og:description" content="GitButler code review" />
+	{/if}
+</svelte:head>
 
 <svelte:window onkeydown={handleKeyDown} onscroll={handleScroll} onresize={handleResize} />
 
 <div class="review-page" class:column={chatMinimizer.value}>
-	<Loading loadable={combine([patch?.current, repositoryId.current, branchUuid?.current])}>
-		{#snippet children([patch, repositoryId, branchUuid])}
+	<Loading
+		loadable={combine([
+			patchCommit?.current,
+			repositoryId.current,
+			branchUuid?.current,
+			branch?.current
+		])}
+	>
+		{#snippet children([patchCommit, repositoryId, branchUuid, branch])}
 			<div class="review-main" class:expand={chatMinimizer.value}>
 				<Navigation />
 
@@ -181,45 +190,74 @@
 					class="review-main__header"
 					bind:this={headerEl}
 					bind:clientHeight={headerHeight}
-					class:stucked={headerIsStuck}
-					class:bottom-line={headerIsStuck && !metaSectionHidden}
+					class:bottom-line={headerIsStuck}
 				>
-					<div class="review-main__title-wrapper">
+					<div class="review-main__title">
 						{#if headerIsStuck}
 							<div class="scroll-to-top">
 								<Button kind="outline" icon="arrow-top" onclick={scrollToTop} />
 							</div>
 						{/if}
-						<h3 class="text-18 text-bold review-main-title">{patch.title}</h3>
+						<div class="review-main__title-wrapper">
+							<p class="text-12 review-main__title-wrapper__branch">
+								<span class="">Branch:</span>
+								<a
+									class="truncate"
+									href={routes.projectReviewBranchPath({
+										ownerSlug: data.ownerSlug,
+										projectSlug: data.projectSlug,
+										branchId: data.branchId
+									})}>{branch.title}</a
+								>
+							</p>
+							<h3 class="text-18 text-bold review-main-title">{patchCommit.title}</h3>
+						</div>
 					</div>
 				</div>
 
 				<div class="review-main__patch-navigator">
-					{#if patchIds !== undefined}
-						<ChangeNavigator {goToPatch} currentPatchId={patch.changeId} {patchIds} />
+					{#if patchCommitIds !== undefined}
+						<ChangeNavigator
+							{goToPatch}
+							currentPatchId={patchCommit.changeId}
+							patchIds={patchCommitIds}
+						/>
 					{/if}
 
 					{#if branchUuid !== undefined && isPatchAuthor === false}
-						<ChangeActionButton {branchUuid} {patch} isUserLoggedIn={!!$user} />
+						<ChangeActionButton {branchUuid} patch={patchCommit} isUserLoggedIn={!!$user} />
 					{/if}
 				</div>
 
-				<div class="review-main__meta" bind:this={metaSectionEl}>
-					<p class="review-main-description">
-						<Markdown content={patch.description?.trim() || DESCRIPTION_PLACE_HOLDER} />
-					</p>
-					<ReviewInfo projectId={repositoryId} {patch} />
+				<div class="review-main__meta">
+					<ReviewInfo projectId={repositoryId} {patchCommit} />
+					<div class="review-main-description">
+						<span class="text-12 review-main-description__caption">Commit message:</span>
+						<p class="review-main-description__markdown">
+							{#if patchCommit.description?.trim()}
+								<Markdown content={patchCommit.description} />
+							{:else}
+								<span class="review-main-description__placeholder">
+									{DESCRIPTION_PLACE_HOLDER}</span
+								>
+							{/if}
+						</p>
+					</div>
 				</div>
 
 				<ReviewSections
-					{patch}
-					headerShift={headerHeight}
-					patchSections={patchSections?.current}
+					{branchUuid}
+					{patchCommit}
+					changeId={data.changeId}
+					commitPageHeaderHeight={headerHeight}
 					toggleDiffLine={(f, s, p) => diffLineSelection.toggle(f, s, p)}
 					selectedSha={diffLineSelection.selectedSha}
 					selectedLines={diffLineSelection.selectedLines}
 					onCopySelection={(sections) => diffLineSelection.copy(sections)}
-					onQuoteSelection={() => diffLineSelection.quote()}
+					onQuoteSelection={() => {
+						diffLineSelection.quote();
+						chatComponent?.focus();
+					}}
 					clearLineSelection={(fileName) => diffLineSelection.clear(fileName)}
 				/>
 			</div>
@@ -231,9 +269,11 @@
 					class:tablet-mode={isChatTabletMode}
 				>
 					<ChatComponent
+						bind:this={chatComponent}
 						{isPatchAuthor}
 						isUserLoggedIn={!!$user}
 						{branchUuid}
+						{patchCommit}
 						isTabletMode={isChatTabletMode}
 						messageUuid={data.messageUuid}
 						projectId={repositoryId}
@@ -252,16 +292,20 @@
 
 <style lang="postcss">
 	.review-page {
-		display: flex;
+		display: grid;
+		grid-template-columns: 9fr 7fr;
+		gap: var(--layout-col-gap);
 		width: 100%;
 		flex-grow: 1;
 		gap: 20px;
 
 		&.column {
+			display: flex;
 			flex-direction: column;
 		}
 
 		@media (--tablet-viewport) {
+			display: flex;
 			flex-direction: column;
 		}
 	}
@@ -269,8 +313,8 @@
 	.review-main {
 		display: flex;
 		flex-direction: column;
-		width: 100%;
-		max-width: 50%;
+		flex-shrink: 0;
+		container-type: inline-size;
 
 		&.expand {
 			max-width: 100%;
@@ -292,8 +336,8 @@
 		gap: 12px;
 
 		background-color: var(--clr-bg-2);
-		margin-top: -24px;
-		padding: 24px 0 12px;
+		margin-top: -14px;
+		padding: 16px 0;
 		border-bottom: 1px solid transparent;
 
 		transition:
@@ -303,32 +347,37 @@
 		&.bottom-line {
 			border-bottom: 1px solid var(--clr-border-2);
 		}
-
-		&.stucked {
-			padding: 16px 0;
-		}
 	}
 
 	.scroll-to-top {
 		display: flex;
-		animation: fadeInScrollButton var(--transition-medium) forwards;
 	}
 
-	@keyframes fadeInScrollButton {
-		from {
-			opacity: 0;
-			width: 0;
-		}
-		to {
-			opacity: 1;
-			min-width: var(--size-button);
-		}
+	.review-main__title {
+		display: flex;
+		align-items: flex-end;
+		gap: 16px;
 	}
 
 	.review-main__title-wrapper {
 		display: flex;
-		align-items: center;
-		gap: 16px;
+		flex-direction: column;
+		gap: 6px;
+		overflow: hidden;
+	}
+
+	.review-main__title-wrapper__branch {
+		display: flex;
+		gap: 6px;
+
+		& span {
+			color: var(--clr-text-2);
+			opacity: 0.8;
+		}
+
+		& a:hover {
+			text-decoration: underline;
+		}
 	}
 
 	.review-main-title {
@@ -337,28 +386,40 @@
 
 	.review-main__patch-navigator {
 		display: flex;
-		gap: 6px;
+		flex-wrap: wrap;
+		gap: 16px 20px;
 		padding-bottom: 24px;
-
-		@media (--tablet-viewport) {
-			flex-wrap: wrap;
-			gap: 12px;
-		}
 	}
 
 	.review-main__meta {
 		display: flex;
 		flex-direction: column;
 		gap: 24px;
-		margin-bottom: 40px;
+		margin-bottom: 10px;
 	}
 
 	.review-main-description {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
 		color: var(--text-1);
-		font-family: var(--fontfamily-mono);
-		font-size: 12px;
+		font-size: 13px;
 		font-style: normal;
-		line-height: 160%;
+		line-height: 180%;
+		padding: 16px;
+		background: var(--clr-bg-1);
+		font-family: var(--fontfamily-default);
+		border-radius: 10px;
+		border: 1px solid var(--clr-border-2);
+	}
+
+	.review-main-description__placeholder {
+		color: var(--clr-text-3);
+		font-style: italic;
+	}
+
+	.review-main-description__caption {
+		color: var(--clr-text-2);
 	}
 
 	.review-chat {
@@ -368,11 +429,11 @@
 		display: flex;
 		position: sticky;
 		top: 24px;
-		width: 100%;
-		height: calc(100vh - var(--bottom-margin));
+		height: calc(100dvh - var(--bottom-margin));
 
 		&.minimized {
 			height: fit-content;
+			max-width: unset;
 			position: sticky;
 			top: unset;
 			bottom: var(--top-nav-offset);
@@ -380,17 +441,20 @@
 
 			justify-content: flex-end;
 			align-items: center;
-			box-shadow: var(--fx-shadow-s);
 		}
 
 		&.tablet-mode {
 			z-index: var(--z-floating);
-			position: fixed;
+			width: 100%;
+			max-width: unset;
 			height: 100dvh;
-			top: unset;
+			top: 0;
 			left: 0;
-			bottom: 0;
+			bottom: var(--top-nav-offset);
 			pointer-events: none;
+			display: flex;
+			justify-content: flex-end;
+			align-items: end;
 		}
 	}
 </style>

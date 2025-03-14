@@ -25,6 +25,7 @@
 	import { createForgeListingServiceStore } from '$lib/forge/interface/forgeListingService';
 	import { createForgePrServiceStore } from '$lib/forge/interface/forgePrService';
 	import { createForgeRepoServiceStore } from '$lib/forge/interface/forgeRepoService';
+	import { BrToPrService } from '$lib/forge/shared/prFooter';
 	import { TemplateService } from '$lib/forge/templateService';
 	import { HistoryService } from '$lib/history/history';
 	import { StackPublishingService } from '$lib/history/stackPublishingService';
@@ -33,14 +34,16 @@
 	import { Project } from '$lib/project/project';
 	import { projectCloudSync } from '$lib/project/projectCloudSync.svelte';
 	import { ProjectService } from '$lib/project/projectService';
+	import { IdSelection } from '$lib/selection/idSelection.svelte';
 	import { UpstreamIntegrationService } from '$lib/upstream/upstreamIntegrationService';
 	import { debounce } from '$lib/utils/debounce';
+	import { WorktreeService } from '$lib/worktree/worktreeService.svelte';
 	import { BranchService as CloudBranchService } from '@gitbutler/shared/branches/branchService';
 	import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
 	import { getContext } from '@gitbutler/shared/context';
 	import { HttpClient } from '@gitbutler/shared/network/httpClient';
 	import { ProjectService as CloudProjectService } from '@gitbutler/shared/organizations/projectService';
-	import { AppState } from '@gitbutler/shared/redux/store.svelte';
+	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
 	import { onDestroy, setContext, type Snippet } from 'svelte';
 	import type { ProjectMetrics } from '$lib/metrics/projectMetrics';
 	import type { LayoutData } from './$types';
@@ -106,6 +109,10 @@
 		setContext(SyncedSnapshotService, data.syncedSnapshotService);
 		setContext(StackPublishingService, data.stackPublishingService);
 	});
+
+	const worktreeService = getContext(WorktreeService);
+	const idSelection = new IdSelection(worktreeService);
+	setContext(IdSelection, idSelection);
 
 	let intervalId: any;
 
@@ -203,24 +210,30 @@
 		if (intervalId) clearInterval(intervalId);
 	}
 
-	const appState = getContext(AppState);
 	const httpClient = getContext(HttpClient);
 
 	const settingsService = getContext(SettingsService);
 	const settingsStore = settingsService.appSettings;
 
+	const webRoutesService = getContext(WebRoutesService);
+	const brToPrService = new BrToPrService(
+		webRoutesService,
+		cloudProjectService,
+		latestBranchLookupService,
+		prService
+	);
+	setContext(BrToPrService, brToPrService);
+
 	$effect(() => {
-		projectCloudSync(
-			appState,
-			data.projectsService,
-			data.projectService,
-			cloudProjectService,
-			httpClient
-		);
+		projectCloudSync(data.projectsService, data.projectService, httpClient);
 	});
 
 	onDestroy(() => {
 		clearFetchInterval();
+	});
+
+	$effect(() => {
+		projectsService.setActiveProject(projectId);
 	});
 </script>
 

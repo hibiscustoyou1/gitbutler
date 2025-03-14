@@ -1,10 +1,16 @@
-use crate::stack::branch_integrated;
+use std::collections::HashMap;
+
+use crate::stack::{branch_integrated, stack_as_rebase_steps};
 use crate::{r#virtual::IsCommitIntegrated, BranchManagerExt, VirtualBranchesExt as _};
 use anyhow::{anyhow, bail, Context, Result};
+use but_core::Reference;
+use but_rebase::{RebaseOutput, RebaseStep};
 use gitbutler_cherry_pick::RepositoryExt;
 use gitbutler_command_context::CommandContext;
 use gitbutler_commit::commit_ext::CommitExt as _;
-use gitbutler_oxidize::{git2_to_gix_object_id, gix_to_git2_oid, GixRepositoryExt};
+use gitbutler_oxidize::{
+    git2_to_gix_object_id, gix_to_git2_oid, GixRepositoryExt, ObjectIdExt, OidExt,
+};
 use gitbutler_project::access::WorktreeWritePermission;
 use gitbutler_repo::logging::RepositoryExt as _;
 use gitbutler_repo::RepositoryExt as _;
@@ -141,14 +147,16 @@ impl StackStatus {
 pub struct Resolution {
     // TODO(CTO): Rename to stack_id
     pub branch_id: StackId,
-    /// Used to ensure a given branch hasn't changed since the UI issued the command.
-    #[serde(with = "gitbutler_serde::oid")]
-    pub branch_tree: git2::Oid,
     pub approach: ResolutionApproach,
 }
 
 enum IntegrationResult {
-    UpdatedObjects { head: git2::Oid, tree: git2::Oid },
+    UpdatedObjects {
+        head: git2::Oid,
+        tree: git2::Oid,
+        rebase_output: Option<RebaseOutput>,
+        for_archival: Vec<Reference>,
+    },
     UnapplyBranch,
     DeleteBranch,
 }
@@ -159,6 +167,8 @@ pub struct UpstreamIntegrationContext<'a> {
     stacks_in_workspace: Vec<Stack>,
     new_target: git2::Commit<'a>,
     target: Target,
+    ctx: &'a CommandContext,
+    gix_repo: &'a gix::Repository,
 }
 
 impl<'a> UpstreamIntegrationContext<'a> {
@@ -166,6 +176,7 @@ impl<'a> UpstreamIntegrationContext<'a> {
         command_context: &'a CommandContext,
         target_commit_oid: Option<git2::Oid>,
         permission: &'a mut WorktreeWritePermission,
+        gix_repo: &'a gix::Repository,
     ) -> Result<Self> {
         let virtual_branches_handle = command_context.project().virtual_branches();
         let target = virtual_branches_handle.get_default_target()?;
@@ -187,6 +198,8 @@ impl<'a> UpstreamIntegrationContext<'a> {
             new_target,
             target: target.clone(),
             stacks_in_workspace,
+            ctx: command_context,
+            gix_repo,
         })
     }
 }
@@ -273,13 +286,29 @@ fn get_stack_status(
 
         let rebase_base = last_head;
 
-        let new_head_oid =
-            cherry_rebase_group(repository, rebase_base, &local_commit_ids, false, false)?;
-        let rebased_commits = repository.log(new_head_oid, LogUntil::Commit(rebase_base), false)?;
+        let steps: Vec<RebaseStep> = local_commit_ids
+            .iter()
+            .rev()
+            .map(|commit_id| RebaseStep::Pick {
+                commit_id: commit_id.to_gix(),
+                new_message: None,
+            })
+            .collect();
+        let mut rebase = but_rebase::Rebase::new(gix_repository, Some(rebase_base.to_gix()), None)?;
+        rebase.rebase_noops(false);
+        rebase.steps(steps)?;
+        let output = rebase.rebase()?;
+        let new_head_oid = output.top_commit.to_git2();
+
+        let any_conflicted = output.commit_mapping.iter().any(|(_base, _old, new)| {
+            if let Ok(commit) = gix_repository.find_commit(*new) {
+                commit.is_conflicted()
+            } else {
+                false
+            }
+        });
 
         last_head = new_head_oid;
-
-        let any_conflicted = rebased_commits.iter().any(|commit| commit.is_conflicted());
 
         branch_statuses.push(NameAndStatus {
             name: branch.name().to_owned(),
@@ -307,12 +336,12 @@ fn get_stack_status(
             .find_commit(new_target_commit_id)?
             .tree_id()?;
         let tree_id = git2_to_gix_object_id(stack.tree);
-        let new_head_commit = repository.find_commit(last_head)?;
+        let new_head_commit = gix_repository.find_commit(last_head.to_gix())?;
         let tree_conflicted = gix_repository
             .merge_trees(
                 tree_merge_base,
                 tree_id,
-                git2_to_gix_object_id(new_head_commit.tree_id()),
+                new_head_commit.tree_id()?,
                 gix_repository.default_merge_labels(),
                 merge_options_fail_fast.clone(),
             )?
@@ -376,7 +405,13 @@ pub(crate) fn integrate_upstream(
         .map(|r| (Some(r.target_commit_oid), Some(r.approach)))
         .unwrap_or((None, None));
 
-    let context = UpstreamIntegrationContext::open(command_context, target_commit_oid, permission)?;
+    let gix_repo = command_context.gix_repository()?;
+    let context = UpstreamIntegrationContext::open(
+        command_context,
+        target_commit_oid,
+        permission,
+        &gix_repo,
+    )?;
     let virtual_branches_state = VirtualBranchesHandle::new(command_context.project().gb_dir());
     let default_target = virtual_branches_state.get_default_target()?;
 
@@ -399,19 +434,6 @@ pub(crate) fn integrate_upstream(
         }
 
         let all_resolutions_are_up_to_date = resolutions.iter().all(|resolution| {
-            // This is O(n^2), in reality, n is unlikly to be more than 3 or 4
-            let Some(branch) = context
-                .stacks_in_workspace
-                .iter()
-                .find(|branch| branch.id == resolution.branch_id)
-            else {
-                return false;
-            };
-
-            if resolution.branch_tree != branch.tree {
-                return false;
-            };
-
             let Some(status) = statuses
                 .iter()
                 .find(|status| status.0 == resolution.branch_id)
@@ -467,7 +489,13 @@ pub(crate) fn integrate_upstream(
 
         // Update branch trees
         for (branch_id, integration_result) in &integration_results {
-            let IntegrationResult::UpdatedObjects { head, tree } = integration_result else {
+            let IntegrationResult::UpdatedObjects {
+                head,
+                tree,
+                rebase_output,
+                for_archival,
+            } = integration_result
+            else {
                 continue;
             };
 
@@ -476,7 +504,21 @@ pub(crate) fn integrate_upstream(
             };
 
             stack.set_stack_head(command_context, *head, Some(*tree))?;
-            let mut archived_branches = stack.archive_integrated_heads(command_context)?;
+
+            // Update the branch heads
+            if let Some(output) = rebase_output {
+                let mut new_heads: HashMap<String, git2::Commit<'_>> = HashMap::new();
+                for spec in &output.references {
+                    let commit = command_context
+                        .repo()
+                        .find_commit(spec.commit_id.to_git2())?;
+                    new_heads.insert(spec.reference.to_string(), commit);
+                }
+                stack.set_all_heads(command_context, new_heads)?;
+            }
+
+            let mut archived_branches =
+                stack.archive_integrated_heads(command_context, for_archival)?;
             newly_archived_branches.append(&mut archived_branches);
         }
 
@@ -510,7 +552,8 @@ pub(crate) fn resolve_upstream_integration(
     resolution_approach: BaseBranchResolutionApproach,
     permission: &mut WorktreeWritePermission,
 ) -> Result<git2::Oid> {
-    let context = UpstreamIntegrationContext::open(command_context, None, permission)?;
+    let gix_repo = command_context.gix_repository()?;
+    let context = UpstreamIntegrationContext::open(command_context, None, permission, &gix_repo)?;
     let repo = command_context.repo();
     let new_target_id = context.new_target.id();
     let old_target_id = context.target.sha;
@@ -600,6 +643,8 @@ fn compute_resolutions(
                         IntegrationResult::UpdatedObjects {
                             head: new_head,
                             tree: new_tree,
+                            rebase_output: None,
+                            for_archival: vec![],
                         },
                     ))
                 }
@@ -630,33 +675,54 @@ fn compute_resolutions(
                         new_target.id()
                     };
 
-                    // Rebase virtual branches' commits
-                    let virtual_branch_commits = repository.log(
-                        branch_stack.head(),
-                        LogUntil::Commit(lower_bound),
-                        false,
-                    )?;
-
+                    let all_steps =
+                        stack_as_rebase_steps(context.ctx, context.gix_repo, branch_stack.id)?;
+                    let branches_before = as_buckets(all_steps.clone());
                     // Filter out any integrated commits
-                    let virtual_branch_commits = virtual_branch_commits
+                    let steps = all_steps
                         .into_iter()
-                        .filter_map(|commit| {
-                            let is_integrated = check_commit.is_integrated(&commit).ok()?;
-                            if is_integrated {
-                                None
-                            } else {
-                                Some(commit.id())
+                        .filter_map(|s| match s {
+                            RebaseStep::Pick {
+                                commit_id,
+                                new_message: _,
+                            } => {
+                                let commit = repository.find_commit(commit_id.to_git2()).ok()?;
+                                let is_integrated = check_commit.is_integrated(&commit).ok()?;
+                                if is_integrated {
+                                    None
+                                } else {
+                                    Some(s)
+                                }
                             }
+                            _ => Some(s),
                         })
                         .collect::<Vec<_>>();
 
-                    let new_head = cherry_rebase_group(
-                        repository,
-                        new_target.id(),
-                        &virtual_branch_commits,
-                        false,
-                        false,
+                    let branches_after = as_buckets(steps.clone());
+
+                    // Branches that used to have commits but now don't are marked for archival
+                    let mut for_archival = vec![];
+                    for (ref_before, steps_before) in branches_before {
+                        if let Some((_, steps_after)) = branches_after
+                            .iter()
+                            .find(|(ref_after, _)| ref_after == &ref_before)
+                        {
+                            // if there were steps before and now there are none, this should be marked for archival
+                            if !steps_before.is_empty() && steps_after.is_empty() {
+                                for_archival.push(ref_before);
+                            }
+                        }
+                    }
+
+                    let mut rebase = but_rebase::Rebase::new(
+                        context.gix_repo,
+                        Some(lower_bound.to_gix()),
+                        None,
                     )?;
+                    rebase.rebase_noops(false);
+                    rebase.steps(steps)?;
+                    let output = rebase.rebase()?;
+                    let new_head = output.top_commit.to_git2();
 
                     // Get the updated tree oid
                     let BranchHeadAndTree {
@@ -669,6 +735,8 @@ fn compute_resolutions(
                         IntegrationResult::UpdatedObjects {
                             head: new_head,
                             tree: new_tree,
+                            rebase_output: Some(output),
+                            for_archival,
                         },
                     ))
                 }
@@ -677,4 +745,20 @@ fn compute_resolutions(
         .collect::<Result<Vec<_>>>()?;
 
     Ok(results)
+}
+
+fn as_buckets(steps: Vec<RebaseStep>) -> Vec<(but_core::Reference, Vec<RebaseStep>)> {
+    let mut buckets = vec![];
+    let mut current_steps = vec![];
+    for step in steps {
+        match step {
+            RebaseStep::Reference(reference) => {
+                buckets.push((reference, std::mem::take(&mut current_steps)));
+            }
+            step => {
+                current_steps.push(step);
+            }
+        }
+    }
+    buckets
 }

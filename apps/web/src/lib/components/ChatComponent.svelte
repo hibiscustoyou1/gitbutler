@@ -1,37 +1,41 @@
 <script lang="ts">
+	import ReplyHandler from '$lib/chat/reply.svelte';
 	import ShowChatButton from '$lib/components/ShowChatButton.svelte';
 	import ChatInput from '$lib/components/chat/ChatInput.svelte';
 	import Event from '$lib/components/chat/Event.svelte';
 	import { type DiffSelection } from '$lib/diff/lineSelection.svelte';
 	import blankChat from '$lib/images/blank-chat.svg?raw';
-	import { PatchEventsService } from '@gitbutler/shared/branches/patchEventsService';
-	import { getPatchEvents } from '@gitbutler/shared/branches/patchesPreview.svelte';
 	import { getContext } from '@gitbutler/shared/context';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
 	import { isFound } from '@gitbutler/shared/network/loadable';
+	import { PatchEventsService } from '@gitbutler/shared/patchEvents/patchEventsService';
+	import { getPatchEvents } from '@gitbutler/shared/patches/patchCommitsPreview.svelte';
 	import { AppState } from '@gitbutler/shared/redux/store.svelte';
 	import Button from '@gitbutler/ui/Button.svelte';
+	import type { PatchCommit } from '@gitbutler/shared/patches/types';
 
-	interface Props {
+	type Props = {
 		messageUuid: string | undefined;
 		isPatchAuthor: boolean | undefined;
 		branchUuid: string;
 		projectId: string;
 		branchId: string;
 		changeId: string;
+		patchCommit: PatchCommit;
 		minimized: boolean;
 		isUserLoggedIn: boolean | undefined;
 		isTabletMode: boolean;
 		onMinimizeToggle: () => void;
 		diffSelection: DiffSelection | undefined;
 		clearDiffSelection: () => void;
-	}
+	};
 
 	let {
 		messageUuid,
 		projectId,
 		changeId,
 		branchId,
+		patchCommit,
 		branchUuid,
 		minimized,
 		isPatchAuthor,
@@ -44,14 +48,28 @@
 
 	const appState = getContext(AppState);
 	const patchEventsService = getContext(PatchEventsService);
+	const replyToHandler = new ReplyHandler();
+
+	let highlightedMessageUuid = $state<string>();
+	let chatInput = $state<ReturnType<typeof ChatInput>>();
+
+	$effect(() => {
+		if (changeId) {
+			// Just here to track the changeId
+		}
+		return () => {
+			// Cleanup
+			replyToHandler.clear();
+		};
+	});
 
 	const patchEvents = $derived(getPatchEvents(appState, patchEventsService, projectId, changeId));
 	// This shouldn't be reactive as is just to check if the message was scrolled to already.
 	// Only a hard reload should trigger the scroll again.
 	const scrolledMessages = new Set<string>();
 
-	function scrollToMessageWithDelay(uuid: string, delay: number) {
-		if (scrolledMessages.has(uuid)) {
+	function scrollToMessageWithDelay(uuid: string, delay: number, force?: boolean) {
+		if (scrolledMessages.has(uuid) && !force) {
 			return;
 		}
 		setTimeout(() => {
@@ -59,6 +77,7 @@
 			if (element) {
 				element.scrollIntoView({ behavior: 'smooth', block: 'center' });
 				scrolledMessages.add(uuid);
+				highlightedMessageUuid = uuid;
 			}
 		}, delay);
 	}
@@ -68,6 +87,10 @@
 			scrollToMessageWithDelay(messageUuid, 300);
 		}
 	});
+
+	export function focus() {
+		chatInput?.focusInput();
+	}
 </script>
 
 {#if minimized}
@@ -91,8 +114,15 @@
 				<Loading loadable={patchEvents.current}>
 					{#snippet children(patchEvents)}
 						{#if patchEvents.events.length > 0}
-							{#each patchEvents.events as event}
-								<Event {projectId} {changeId} {event} highlightedMessageUuid={messageUuid} />
+							{#each patchEvents.events as event (event.uuid)}
+								<Event
+									{projectId}
+									{changeId}
+									{event}
+									{highlightedMessageUuid}
+									replyTo={(event) => replyToHandler.replyTo(event.object)}
+									scrollToMessage={(uuid) => scrollToMessageWithDelay(uuid, 0, true)}
+								/>
 							{/each}
 						{:else}
 							<div class="blank-state">
@@ -113,14 +143,18 @@
 				</Loading>
 			</div>
 			<ChatInput
+				bind:this={chatInput}
 				{isUserLoggedIn}
 				{branchUuid}
 				{projectId}
 				{branchId}
 				{changeId}
+				{patchCommit}
 				{isPatchAuthor}
 				{diffSelection}
 				{clearDiffSelection}
+				replyingTo={replyToHandler.inReplyTo}
+				clearReply={() => replyToHandler.clear()}
 			/>
 		</div>
 	</div>
@@ -129,9 +163,11 @@
 <style lang="postcss">
 	.chat-wrapper {
 		pointer-events: all;
+		height: 100%;
 		width: 100%;
 		display: flex;
 		flex-direction: column;
+		overflow: hidden;
 
 		border-radius: var(--radius-ml, 10px);
 		border: 1px solid var(--clr-border-2);
@@ -157,6 +193,8 @@
 		align-items: center;
 		padding: 10px 10px 10px 16px;
 		border-bottom: 1px solid var(--clr-border-2);
+		position: sticky;
+		top: 0;
 	}
 
 	.chat-header-actions {

@@ -4,8 +4,10 @@ use but_hunk_dependency::ui::{
     hunk_dependencies_for_workspace_changes_by_worktree_dir, HunkDependencies,
 };
 use but_settings::AppSettingsWithDiskSync;
+use but_workspace::commit_engine::StackSegmentId;
 use but_workspace::{commit_engine, StackEntry};
 use gitbutler_command_context::CommandContext;
+use gitbutler_oplog::{OplogExt, SnapshotExt};
 use gitbutler_project as projects;
 use gitbutler_project::ProjectId;
 use gitbutler_stack::StackId;
@@ -46,7 +48,8 @@ pub fn stack_branch_local_and_remote_commits(
 ) -> Result<Vec<but_workspace::Commit>, Error> {
     let project = projects.get(project_id)?;
     let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-    but_workspace::stack_branch_local_and_remote_commits(stack_id, branch_name, &ctx)
+    let repo = ctx.gix_repository()?;
+    but_workspace::stack_branch_local_and_remote_commits(stack_id, branch_name, &ctx, &repo)
         .map_err(Into::into)
 }
 
@@ -61,7 +64,8 @@ pub fn stack_branch_upstream_only_commits(
 ) -> Result<Vec<but_workspace::UpstreamCommit>, Error> {
     let project = projects.get(project_id)?;
     let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-    but_workspace::stack_branch_upstream_only_commits(stack_id, branch_name, &ctx)
+    let repo = ctx.gix_repository()?;
+    but_workspace::stack_branch_upstream_only_commits(stack_id, branch_name, &ctx, &repo)
         .map_err(Into::into)
 }
 
@@ -82,13 +86,16 @@ pub fn hunk_dependencies_for_workspace_changes(
 }
 
 /// Create a new commit with `message` on top of `parent_id` that contains all `changes`.
-/// If `parent_id` is `None`, there is not a single commit as the repository is unborn.
+/// If `parent_id` is `None`, this API will infer the parent to be the head of the provided `stack_branch_name`.
 /// `stack_id` is the stack that contains the `parent_id`, and it's fatal if that's not the case.
 /// All `changes` are meant to be relative to the worktree.
 /// Note that submodules *must* be provided as diffspec without hunks, as attempting to generate
 /// hunks would fail.
+/// `stack_branch_name` is the short name of the reference that the UI knows is present in a given segment.
+/// It is needed to insert the new commit into the right bucket.
 #[tauri::command(async)]
 #[instrument(skip(projects, settings), err(Debug))]
+#[allow(clippy::too_many_arguments)]
 pub fn create_commit_from_worktree_changes(
     projects: State<'_, projects::Controller>,
     settings: State<'_, AppSettingsWithDiskSync>,
@@ -97,21 +104,56 @@ pub fn create_commit_from_worktree_changes(
     parent_id: Option<HexHash>,
     worktree_changes: Vec<commit_engine::ui::DiffSpec>,
     message: String,
+    stack_branch_name: String,
 ) -> Result<commit_engine::ui::CreateCommitOutcome, Error> {
     let project = projects.get(project_id)?;
     let repo = but_core::open_repo_for_merging(&project.worktree_path())?;
-    Ok(commit_engine::create_commit_and_update_refs_with_project(
+    // If parent_id was not set but a stack branch name was provided, pick the current head of that branch as parent.
+    let parent_commit_id: Option<gix::ObjectId> = match parent_id {
+        Some(id) => Some(id.into()),
+        None => {
+            let reference = repo
+                .try_find_reference(&stack_branch_name)
+                .map_err(anyhow::Error::from)?;
+            if let Some(mut r) = reference {
+                Some(r.peel_to_commit().map_err(anyhow::Error::from)?.id)
+            } else {
+                None
+            }
+        }
+    };
+    let mut guard = project.exclusive_worktree_access();
+    let snapshot_tree = project.prepare_snapshot(guard.read_permission());
+    let outcome = commit_engine::create_commit_and_update_refs_with_project(
         &repo,
-        Some((&project, Some(stack_id))),
+        &project,
+        Some(stack_id),
         commit_engine::Destination::NewCommit {
-            parent_commit_id: parent_id.map(Into::into),
-            message,
+            parent_commit_id,
+            message: message.clone(),
+            stack_segment: Some(StackSegmentId {
+                stack_id,
+                segment_ref: format!("refs/heads/{stack_branch_name}")
+                    .try_into()
+                    .map_err(anyhow::Error::from)?,
+            }),
         },
         None,
         worktree_changes.into_iter().map(Into::into).collect(),
         settings.get()?.context_lines,
-    )?
-    .into())
+        guard.write_permission(),
+    );
+    let _ = snapshot_tree.and_then(|snapshot_tree| {
+        project.snapshot_commit_creation(
+            snapshot_tree,
+            outcome.as_ref().err(),
+            message.to_owned(),
+            None,
+            guard.write_permission(),
+        )
+    });
+
+    Ok(outcome?.into())
 }
 
 /// Amend all `changes` to `commit_id`, keeping its commit message exactly as is.
@@ -130,14 +172,17 @@ pub fn amend_commit_from_worktree_changes(
     worktree_changes: Vec<commit_engine::ui::DiffSpec>,
 ) -> Result<commit_engine::ui::CreateCommitOutcome, Error> {
     let project = projects.get(project_id)?;
+    let mut guard = project.exclusive_worktree_access();
     let repo = but_core::open_repo_for_merging(&project.worktree_path())?;
     Ok(commit_engine::create_commit_and_update_refs_with_project(
         &repo,
-        Some((&project, Some(stack_id))),
+        &project,
+        Some(stack_id),
         commit_engine::Destination::AmendCommit(commit_id.into()),
         None,
         worktree_changes.into_iter().map(Into::into).collect(),
         settings.get()?.context_lines,
+        guard.write_permission(),
     )?
     .into())
 }

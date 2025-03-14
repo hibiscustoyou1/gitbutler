@@ -119,7 +119,7 @@
 		branchController.undoCommit(branch.id, branch.name, commit.id);
 	}
 
-	let isUndoable = commit instanceof DetailedCommit && type !== 'remote' && type !== 'integrated';
+	let isUndoable = commit instanceof DetailedCommit && type !== 'Remote' && type !== 'Integrated';
 
 	let commitMessageModal: ReturnType<typeof Modal> | undefined;
 	let commitMessageValid = $state(false);
@@ -164,7 +164,7 @@
 
 	async function editPatch() {
 		if (!canEdit()) return;
-		modeService!.enterEditMode(commit.id, branch!.refname);
+		modeService!.enterEditMode(commit.id, branch!.id);
 	}
 
 	async function handleEditPatch() {
@@ -175,8 +175,8 @@
 		await editPatch();
 	}
 
-	const showOpenInBrowser = $derived(commitUrl && (type === 'remote' || type === 'localAndRemote'));
-	const isDraggable = commit instanceof DetailedCommit && !isUnapplied && type !== 'integrated';
+	const showOpenInBrowser = $derived(commitUrl && (type === 'Remote' || type === 'LocalAndRemote'));
+	const isDraggable = commit instanceof DetailedCommit && !isUnapplied && type !== 'Integrated';
 </script>
 
 <Modal bind:this={commitMessageModal} width="small" onSubmit={submitCommitMessageModal}>
@@ -224,7 +224,7 @@
 	baseBranch={$baseBranch}
 	stack={branch}
 	{commit}
-	isRemote={type === 'remote'}
+	isRemote={type === 'Remote'}
 	commitUrl={showOpenInBrowser ? commitUrl : undefined}
 	onUncommitClick={handleUncommit}
 	onEditMessageClick={openCommitMessageModal}
@@ -420,11 +420,11 @@
 
 			<div class="files-container">
 				<BranchFilesList
-					allowMultiple={!isUnapplied && type !== 'remote'}
+					allowMultiple={!isUnapplied && type !== 'Remote'}
 					{files}
 					{isUnapplied}
 					conflictedFiles={commit.conflictedFiles}
-					readonly={type === 'remote' || isUnapplied}
+					readonly={type === 'Remote' || isUnapplied}
 				/>
 			</div>
 		{/if}

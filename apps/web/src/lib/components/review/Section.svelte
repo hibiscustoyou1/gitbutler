@@ -1,6 +1,6 @@
 <script lang="ts">
 	import DiffSection from './DiffSection.svelte';
-	import { type Section } from '@gitbutler/shared/branches/types';
+	import { type Section } from '@gitbutler/shared/patches/types';
 	import type { LineClickParams } from '@gitbutler/ui/HunkDiff.svelte';
 	import type { ContentSection, LineSelector } from '@gitbutler/ui/utils/diffParsing';
 
@@ -9,6 +9,7 @@
 		section: Section;
 		selectedSha: string | undefined;
 		selectedLines: LineSelector[];
+		commitPageHeaderHeight: number;
 		clearLineSelection: (fileName: string) => void;
 		toggleDiffLine: (fileName: string, diffSha: string, params: LineClickParams) => void;
 		onCopySelection: (contentSections: ContentSection[]) => void;
@@ -21,6 +22,7 @@
 		toggleDiffLine,
 		selectedSha,
 		selectedLines,
+		commitPageHeaderHeight,
 		onCopySelection,
 		onQuoteSelection,
 		clearLineSelection
@@ -34,6 +36,7 @@
 		{toggleDiffLine}
 		{selectedSha}
 		{selectedLines}
+		{commitPageHeaderHeight}
 		{onCopySelection}
 		{onQuoteSelection}
 		{clearLineSelection}

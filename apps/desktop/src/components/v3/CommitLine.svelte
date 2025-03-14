@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getColorFromBranchType, isUpstreamCommit } from '$components/v3/lib';
+	import { getColorFromBranchType, isLocalAndRemoteCommit } from '$components/v3/lib';
 	import Tooltip from '@gitbutler/ui/Tooltip.svelte';
 	import { camelCaseToTitleCase } from '@gitbutler/ui/utils/string';
 	import type { Commit, UpstreamCommit } from '$lib/branches/v3';
@@ -15,23 +15,25 @@
 
 	const color = $derived(
 		lineColor ||
-			(isUpstreamCommit(commit)
-				? 'var(--clr-commit-upstream)'
-				: getColorFromBranchType(commit.state?.type ?? 'LocalOnly'))
+			(isLocalAndRemoteCommit(commit)
+				? getColorFromBranchType(commit.state?.type ?? 'LocalOnly')
+				: 'var(--clr-commit-upstream)')
 	);
-	const dotRhombus = $derived(!isUpstreamCommit(commit) && commit.state.type === 'LocalAndRemote');
+	const dotRhombus = $derived(
+		isLocalAndRemoteCommit(commit) && commit.state.type === 'LocalAndRemote'
+	);
 
 	const tooltipText = $derived(
-		isUpstreamCommit(commit) ? 'Upstream' : camelCaseToTitleCase(commit.state.type)
+		!isLocalAndRemoteCommit(commit) ? 'Upstream' : camelCaseToTitleCase(commit.state.type)
 	);
 </script>
 
 <div class="commit-lines" style:--commit-color={color}>
-	<div class="commit-line__top"></div>
+	<div class="top"></div>
 	<Tooltip text={tooltipText}>
-		<div class="commit-line__center" class:rhombus={dotRhombus}></div>
+		<div class="middle" class:rhombus={dotRhombus}></div>
 	</Tooltip>
-	<div class="commit-line__bottom" class:dashed={lastCommit && lastBranch}></div>
+	<div class="bottom" class:dashed={lastCommit && lastBranch}></div>
 </div>
 
 <style>
@@ -43,19 +45,21 @@
 		gap: 3px;
 	}
 
-	.commit-line__top,
-	.commit-line__bottom {
-		height: 14px;
+	.top,
+	.bottom {
 		width: 2px;
 		background-color: var(--commit-color);
-
-		&.dashed {
-			background: linear-gradient(to bottom, var(--commit-color) 50%, transparent 50%);
-			background-size: 4px 4px;
-		}
 	}
 
-	.commit-line__center {
+	.top {
+		height: 14px;
+	}
+
+	.bottom {
+		flex-grow: 1;
+	}
+
+	.middle {
 		border-radius: 100%;
 		width: 10px;
 		height: 10px;

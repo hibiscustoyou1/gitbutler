@@ -2,7 +2,7 @@
 </script>
 
 <script lang="ts">
-	import HunkDiffRow from './HunkDiffRow.svelte';
+	import HunkDiffRow, { type ContextMenuParams } from './HunkDiffRow.svelte';
 	import LineSelection from './lineSelection.svelte';
 	import { clickOutside } from '$lib/utils/clickOutside';
 	import {
@@ -18,6 +18,7 @@
 		content: ContentSection[];
 		tabSize?: number;
 		wrapText?: boolean;
+		diffFont?: string;
 		inlineUnifiedDiffs?: boolean;
 		selectedLines?: LineSelector[];
 		onLineClick?: (params: LineSelectionParams) => void;
@@ -25,6 +26,9 @@
 		onQuoteSelection?: () => void;
 		onCopySelection?: () => void;
 		numberHeaderWidth?: number;
+		staged?: boolean;
+		onToggleStage?: () => void;
+		handleLineContextMenu?: (params: ContextMenuParams) => void;
 	}
 
 	const {
@@ -33,12 +37,16 @@
 		onLineClick,
 		clearLineSelection,
 		wrapText = true,
+		diffFont,
 		tabSize = 4,
 		inlineUnifiedDiffs = false,
 		selectedLines,
 		numberHeaderWidth,
 		onCopySelection,
-		onQuoteSelection
+		onQuoteSelection,
+		staged,
+		onToggleStage,
+		handleLineContextMenu
 	}: Props = $props();
 
 	const lineSelection = $derived(new LineSelection(onLineClick));
@@ -76,11 +84,15 @@
 			{lineSelection}
 			{tabSize}
 			{wrapText}
+			{diffFont}
 			{numberHeaderWidth}
 			{onQuoteSelection}
 			{onCopySelection}
 			clearLineSelection={handleClearSelection}
 			{hoveringOverTable}
+			{staged}
+			{onToggleStage}
+			{handleLineContextMenu}
 		/>
 	{/each}
 </tbody>

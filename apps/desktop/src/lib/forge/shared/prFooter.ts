@@ -1,45 +1,133 @@
+import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
+import { InterestStore } from '@gitbutler/shared/interest/interestStore';
+import { ProjectService } from '@gitbutler/shared/organizations/projectService';
+import { POLLING_REGULAR } from '@gitbutler/shared/polling';
+import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
+import { get, type Readable } from 'svelte/store';
 import type { ForgePrService } from '../interface/forgePrService';
+import type { Branch } from '@gitbutler/shared/branches/types';
+import type { PatchReview } from '@gitbutler/shared/patches/types';
+import type { UserSimple } from '@gitbutler/shared/users/types';
 
 export const STACKING_FOOTER_BOUNDARY_TOP = '<!-- GitButler Footer Boundary Top -->';
 export const STACKING_FOOTER_BOUNDARY_BOTTOM = '<!-- GitButler Footer Boundary Bottom -->';
 
-export const BUT_REQUEST_FOOTER_BOUNDARY_TOP = '<!-- GitButler But Request Footer Boundary Top -->';
-export const BUT_REQUEST_FOOTER_BOUNDARY_BOTTOM =
-	'<!-- GitButler But Request Footer Boundary Bottom -->';
+export const BUT_REVIEW_FOOTER_BOUNDARY_TOP = '<!-- GitButler Review Footer Boundary Top -->';
+export const BUT_REVIEW_FOOTER_BOUNDARY_BOTTOM = '<!-- GitButler Review Footer Boundary Bottom -->';
 
-// ["caleb", "scott", "corbob"]
-// caleb, scott, and corbob
-function joinEnglishly(target: string[]): string {
-	if (target.length === 0) return '';
-	if (target.length === 1) return target[0] as string;
-
-	const end = [target.at(-2), target.at(-1)].join(', and ');
-	return [...target.slice(0, -2), end].join(', ');
+export function unixifyNewlines(target: string): string {
+	return target.split(/\r?\n/).join('\n');
 }
 
-export async function updateButRequestPrDescription(
-	prService: ForgePrService,
-	prNumber: number,
-	prBody: string,
-	butRequestUrl: string,
-	participants: string[]
-) {
-	await prService.update(prNumber, {
-		description: formatButRequestDescription(prBody, butRequestUrl, participants)
-	});
+export class BrToPrService {
+	constructor(
+		private readonly webRoutes: WebRoutesService,
+		private readonly projectService: ProjectService,
+		private readonly latestBranchLookupService: LatestBranchLookupService,
+		private readonly prService: Readable<ForgePrService | undefined>
+	) {}
+
+	private readonly butRequestUpdateInterests = new InterestStore<{
+		prNumber: number;
+		branchId: string;
+		repositoryId: string;
+	}>(POLLING_REGULAR);
+
+	refreshButRequestPrDescription(prNumber: number, branchId: string, repositoryId: string) {
+		this.butRequestUpdateInterests.invalidate({ prNumber, branchId, repositoryId });
+	}
+
+	updateButRequestPrDescription(prNumber: number, branchId: string, repositoryId: string) {
+		return this.butRequestUpdateInterests
+			.findOrCreateSubscribable({ prNumber, branchId, repositoryId }, async () => {
+				const prService = get(this.prService);
+				if (!prService) return;
+
+				const project = await this.projectService.getProject(repositoryId);
+				if (!project) return;
+
+				const butReview = await this.latestBranchLookupService.getBranch(
+					project.owner,
+					project.slug,
+					branchId
+				);
+				if (!butReview) return;
+
+				const butlerRequestUrl = this.webRoutes.projectReviewBranchUrl({
+					branchId,
+					projectSlug: project.slug,
+					ownerSlug: project.owner
+				});
+
+				// Then we can do a more accurate comparison of the latest body
+				const pr = await prService.get(prNumber);
+				const prBody = unixifyNewlines(pr.body || '\n');
+
+				const newBody = unixifyNewlines(
+					formatButRequestDescription(prBody, butlerRequestUrl, butReview)
+				);
+
+				if (prBody === newBody) return;
+
+				await prService.update(prNumber, {
+					description: newBody
+				});
+			})
+			.createInterest();
+	}
+}
+
+function reviewStatusToIcon(status: string) {
+	if (status === 'approved') {
+		return '✅';
+	} else if (status === 'in-discussion') {
+		return '💬';
+	} else if (status === 'changes-requested') {
+		return '⚠️';
+	}
+	return '⏳';
+}
+
+function reviewAllToAvatars(reviewAll: PatchReview) {
+	return [...reviewAll.signedOff, ...reviewAll.rejected]
+		.map((user: UserSimple) => `<img width="20" height="20" src="${user.avatarUrl}">`)
+		.join(' ');
 }
 
 export function formatButRequestDescription(
 	prBody: string,
 	butRequestUrl: string,
-	participants: string[]
+	butReview: Branch
 ): string {
-	const formatedPatricipats = joinEnglishly(participants);
-	const description = `There is an associated [Butler Request](${butRequestUrl}). ${formatedPatricipats} has left feedback.`;
+	const seriesSize = butReview.patches?.length || 0;
+	const patches = butReview.patches
+		?.map(
+			(patch) =>
+				`| ${seriesSize - (patch.position || 0)}/${seriesSize} | [${patch.title}](${butRequestUrl}/commit/${patch.changeId}) | ${reviewStatusToIcon(patch.reviewStatus)} | ${reviewAllToAvatars(patch.reviewAll)} |`
+		)
+		.join('\n');
+
+	let summary = `**${butReview.title}**\n`;
+	if (butReview.description) {
+		summary += `\n\n${butReview.description}`;
+	}
+
+	const description = `---
+⧓ Review in [Butler Review \`#${butReview.branchId}\`](${butRequestUrl})
+
+${summary}
+
+${seriesSize} commit series (version ${butReview.version || 1})
+
+| Series | Commit Title | Status | Reviewers | 
+| --- | --- | --- | --- |
+${patches}
+
+_Please leave review feedback in the [Butler Review](${butRequestUrl})_`;
 
 	const newPrDescription = upsertDescription(
-		BUT_REQUEST_FOOTER_BOUNDARY_TOP,
-		BUT_REQUEST_FOOTER_BOUNDARY_BOTTOM,
+		BUT_REVIEW_FOOTER_BOUNDARY_TOP,
+		BUT_REVIEW_FOOTER_BOUNDARY_BOTTOM,
 		prBody,
 		description
 	);
@@ -52,7 +140,7 @@ function upsertDescription(
 	prDescription: string,
 	injectable: string
 ): string {
-	const descriptionLines = prDescription.split('\r\n');
+	const descriptionLines = prDescription.split('\n');
 	const before = [];
 	const after = [];
 
@@ -81,7 +169,7 @@ function upsertDescription(
 		}
 	}
 
-	return `${before.join('\r\n')}\r\n${header}\r\n${injectable}\r\n${footer}\r\n${after.join('\r\n')}`;
+	return `${before.join('\n')}\n${header}\n${injectable}\n${footer}\n${after.join('\n')}`;
 }
 
 /**

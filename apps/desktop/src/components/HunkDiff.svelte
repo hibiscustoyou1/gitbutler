@@ -1,5 +1,8 @@
+<!-- DEPRECATED! -->
+<!-- This component is only being used in v2, and will be completely replaced in v3 -->
+<!-- by the HunkDiff component inside the @gitbutler/ui package. -->
 <script lang="ts">
-	import ScrollableContainer from '$components/ScrollableContainer.svelte';
+	import ScrollableContainer from '$components/ConfigurableScrollableContainer.svelte';
 	import { SelectedOwnership } from '$lib/branches/ownership';
 	import { type Hunk } from '$lib/hunks/hunk';
 	import {
@@ -250,6 +253,15 @@
 			}
 
 			if (isLineEmpty(prevSection.lines)) {
+				acc.push(...createRowData(nextSection));
+				return acc;
+			}
+
+			// Don't do word diff on super long lines
+			if (
+				prevSection.lines.some((line) => line.content.length > 300) ||
+				nextSection.lines.some((line) => line.content.length > 300)
+			) {
 				acc.push(...createRowData(nextSection));
 				return acc;
 			}

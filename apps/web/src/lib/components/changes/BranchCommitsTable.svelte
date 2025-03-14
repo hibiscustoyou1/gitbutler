@@ -16,6 +16,7 @@
 	<Table
 		headColumns={[
 			{ key: 'status', value: 'Status' },
+			{ key: 'version', value: 'Ver.' },
 			{ key: 'string', value: 'Name' },
 			{ key: 'changes', value: 'Changes' },
 			{ key: 'date', value: 'Updated' },
@@ -25,12 +26,12 @@
 		]}
 	>
 		{#snippet body()}
-			{#each branch.patchIds || [] as changeId, index}
+			{#each branch.patchCommitIds || [] as changeId, index}
 				<BranchCommitsRow
 					{changeId}
 					params={data}
 					branchUuid={branch.uuid}
-					last={index === branch.patchIds.length - 1}
+					last={index === branch.patchCommitIds.length - 1}
 				/>
 			{/each}
 		{/snippet}

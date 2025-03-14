@@ -1,21 +1,17 @@
-import {
-	addBranchReviewListing,
-	upsertBranchReviewListing
-} from '$lib/branches/branchReviewListingsSlice';
-import { addBranch, upsertBranch, upsertBranches } from '$lib/branches/branchesSlice';
-import { upsertPatches } from '$lib/branches/patchesSlice';
+import { branchReviewListingTable } from '$lib/branches/branchReviewListingsSlice';
+import { branchTable } from '$lib/branches/branchesSlice';
 import {
 	apiToBranch,
-	apiToPatch,
 	BranchStatus,
 	toCombineSlug,
 	type ApiBranch,
 	type Branch,
-	type LoadableBranch,
-	type LoadablePatch
+	type LoadableBranch
 } from '$lib/branches/types';
 import { InterestStore, type Interest } from '$lib/interest/interestStore';
 import { errorToLoadable } from '$lib/network/loadable';
+import { patchCommitTable } from '$lib/patches/patchCommitsSlice';
+import { apiToPatch, type LoadablePatchCommit } from '$lib/patches/types';
 import { POLLING_GLACIALLY, POLLING_REGULAR } from '$lib/polling';
 import type { HttpClient } from '$lib/network/httpClient';
 import type { AppDispatch } from '$lib/redux/store.svelte';
@@ -49,7 +45,10 @@ export class BranchService {
 		return this.branchesInterests
 			.findOrCreateSubscribable({ ownerSlug, projectSlug, branchStatus }, async () => {
 				this.appDispatch.dispatch(
-					addBranchReviewListing({ id: toCombineSlug(ownerSlug, projectSlug), status: 'loading' })
+					branchReviewListingTable.addOne({
+						id: toCombineSlug(ownerSlug, projectSlug),
+						status: 'loading'
+					})
 				);
 				try {
 					const apiBranches = await this.httpClient.get<ApiBranch[]>(
@@ -66,18 +65,19 @@ export class BranchService {
 
 					const patches = apiBranches
 						.flatMap((branch) => branch.patches)
-						.map(
-							(api): LoadablePatch => ({
+						.map((api): LoadablePatchCommit => {
+							if (!api) return { status: 'not-found', id: '' };
+							return {
 								status: 'found',
 								id: api.change_id,
 								value: apiToPatch(api)
-							})
-						);
+							};
+						});
 
-					this.appDispatch.dispatch(upsertPatches(patches));
-					this.appDispatch.dispatch(upsertBranches(branches));
+					this.appDispatch.dispatch(patchCommitTable.upsertMany(patches));
+					this.appDispatch.dispatch(branchTable.upsertMany(branches));
 					this.appDispatch.dispatch(
-						upsertBranchReviewListing({
+						branchReviewListingTable.upsertOne({
 							id: toCombineSlug(ownerSlug, projectSlug),
 							status: 'found',
 							value: apiBranches.map((branch) => branch.uuid)
@@ -85,7 +85,9 @@ export class BranchService {
 					);
 				} catch (error: unknown) {
 					this.appDispatch.dispatch(
-						upsertBranchReviewListing(errorToLoadable(error, toCombineSlug(ownerSlug, projectSlug)))
+						branchReviewListingTable.upsertOne(
+							errorToLoadable(error, toCombineSlug(ownerSlug, projectSlug))
+						)
 					);
 				}
 			})
@@ -101,16 +103,17 @@ export class BranchService {
 				value: apiToBranch(apiBranch)
 			};
 
-			const patches = apiBranch.patches.map(
-				(api): LoadablePatch => ({
+			const patches = apiBranch.patches?.map(
+				(api): LoadablePatchCommit => ({
 					status: 'found',
 					id: api.change_id,
 					value: apiToPatch(api)
 				})
 			);
-
-			this.appDispatch.dispatch(upsertBranch(loadableBranch));
-			this.appDispatch.dispatch(upsertPatches(patches));
+			this.appDispatch.dispatch(branchTable.upsertOne(loadableBranch));
+			if (patches) {
+				this.appDispatch.dispatch(patchCommitTable.upsertMany(patches));
+			}
 
 			return apiToBranch(apiBranch);
 		} catch (_: unknown) {
@@ -121,7 +124,7 @@ export class BranchService {
 	getBranchInterest(uuid: string): Interest {
 		return this.branchInterests
 			.findOrCreateSubscribable({ uuid }, async () => {
-				this.appDispatch.dispatch(addBranch({ status: 'loading', id: uuid }));
+				this.appDispatch.dispatch(branchTable.addOne({ status: 'loading', id: uuid }));
 				try {
 					const apiBranch = await this.httpClient.get<ApiBranch>(`patch_stack/${uuid}`);
 					const branch: LoadableBranch = {
@@ -130,18 +133,19 @@ export class BranchService {
 						value: apiToBranch(apiBranch)
 					};
 
-					const patches = apiBranch.patches.map(
-						(api): LoadablePatch => ({
+					const patches = apiBranch.patches?.map(
+						(api): LoadablePatchCommit => ({
 							status: 'found',
 							id: api.change_id,
 							value: apiToPatch(api)
 						})
 					);
-
-					this.appDispatch.dispatch(upsertBranch(branch));
-					this.appDispatch.dispatch(upsertPatches(patches));
+					this.appDispatch.dispatch(branchTable.upsertOne(branch));
+					if (patches) {
+						this.appDispatch.dispatch(patchCommitTable.upsertMany(patches));
+					}
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(upsertBranch(errorToLoadable(error, uuid)));
+					this.appDispatch.dispatch(branchTable.upsertOne(errorToLoadable(error, uuid)));
 				}
 			})
 			.createInterest();
@@ -163,18 +167,18 @@ export class BranchService {
 		});
 		const branch = apiToBranch(apiBranch);
 
-		const patches = apiBranch.patches.map(
-			(api): LoadablePatch => ({ status: 'found', id: api.change_id, value: apiToPatch(api) })
+		const patches = apiBranch.patches?.map(
+			(api): LoadablePatchCommit => ({ status: 'found', id: api.change_id, value: apiToPatch(api) })
 		);
 
 		this.appDispatch.dispatch(
-			upsertBranch({
+			branchTable.upsertOne({
 				status: 'found',
 				id: branch.uuid,
 				value: branch
 			})
 		);
-		this.appDispatch.dispatch(upsertPatches(patches));
+		this.appDispatch.dispatch(patchCommitTable.upsertMany(patches ?? []));
 
 		return branch;
 	}

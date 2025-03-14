@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { eventTimeStamp } from '@gitbutler/shared/branches/utils';
 	import Icon from '@gitbutler/ui/Icon.svelte';
-	import type { PatchStatusEvent } from '@gitbutler/shared/branches/types';
+	import type { PatchStatusEvent } from '@gitbutler/shared/patchEvents/types';
 
 	const UNKNOWN_USER = 'Unknown User';
 
@@ -43,7 +43,7 @@
 	.patch-status {
 		display: flex;
 		padding: 14px 16px;
-		padding-left: 10px;
+		padding-left: 12px;
 		gap: 12px;
 
 		border-left: 4px solid var(--clr-theme-succ-element);

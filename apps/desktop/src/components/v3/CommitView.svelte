@@ -1,57 +1,48 @@
 <script lang="ts">
-	import StackDetailsCommitHeader from './StackDetailsCommitHeader.svelte';
-	import StackDetailsFileList from './StackDetailsFileList.svelte';
+	import ChangedFiles from './ChangedFiles.svelte';
+	import CommitHeader from './CommitHeader.svelte';
+	import ConfigurableScrollableContainer from '$components/ConfigurableScrollableContainer.svelte';
 	import ReduxResult from '$components/ReduxResult.svelte';
 	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { inject } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
 	import type { CommitKey } from '$lib/commits/commit';
 
 	type Props = {
 		projectId: string;
 		commitKey: CommitKey;
-		onClose: () => void;
+		onclick?: () => void;
 	};
 
-	const { projectId, commitKey, onClose }: Props = $props();
+	const { projectId, commitKey, onclick }: Props = $props();
 
 	const [stackService] = inject(StackService);
-	const commit = $derived(stackService.commitById(projectId, commitKey).current);
+	const commitResult = $derived(
+		commitKey.upstream
+			? stackService.upstreamCommitById(projectId, commitKey)
+			: stackService.commitById(projectId, commitKey)
+	);
 </script>
 
-<ReduxResult result={commit}>
+<ReduxResult result={commitResult.current}>
 	{#snippet children(commit)}
-		<div class="commit-view">
-			<div>
-				<Button
-					type="button"
-					kind="ghost"
-					class="exit-btn"
-					icon="cross"
-					size="tag"
-					onclick={onClose}
-				/>
-				<StackDetailsCommitHeader {projectId} {commitKey} {commit} />
+		<ConfigurableScrollableContainer>
+			<div class="commit-view">
+				<CommitHeader {projectId} {commitKey} {commit} {onclick} />
+				<ChangedFiles {projectId} commitId={commitKey.commitId} />
 			</div>
-			<div class="body">
-				<StackDetailsFileList {projectId} {commit} />
-			</div>
-		</div>
+		</ConfigurableScrollableContainer>
 	{/snippet}
 </ReduxResult>
 
 <style>
 	.commit-view {
 		position: relative;
+		padding: 14px 16px;
+		min-height: 100%;
 		flex: 1;
 		display: flex;
 		flex-direction: column;
-
+		gap: 14px;
 		background-color: var(--clr-bg-1);
-	}
-
-	.body {
-		display: flex;
-		flex-direction: column;
 	}
 </style>
