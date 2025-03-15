@@ -1,11 +1,9 @@
+import { apiToBranch } from '$lib/branches/types';
 import { InterestStore, type Interest } from '$lib/interest/interestStore';
 import { errorToLoadable } from '$lib/network/loadable';
-import {
-	addProject,
-	removeProject,
-	upsertProject,
-	upsertProjects
-} from '$lib/organizations/projectsSlice';
+import { projectTable } from '$lib/organizations/projectsSlice';
+import { updateRecentlyInteractedProjectIds } from '$lib/organizations/recentlyInteractedProjectIds';
+import { updateRecentlyPushedProjectIds } from '$lib/organizations/recentlyPushedProjectIds';
 import {
 	type ApiProject,
 	apiToProject,
@@ -13,6 +11,7 @@ import {
 	type Project
 } from '$lib/organizations/types';
 import { POLLING_GLACIALLY, POLLING_REGULAR } from '$lib/polling';
+import type { Branch, ApiBranch } from '$lib/branches/types';
 import type { HttpClient } from '$lib/network/httpClient';
 import type { ShareLevel } from '$lib/permissions';
 import type { AppDispatch } from '$lib/redux/store.svelte';
@@ -21,14 +20,16 @@ type UpdateParams = {
 	slug?: string;
 	name?: string;
 	description?: string;
-	shareLevel?: ShareLevel.Public | ShareLevel.Private;
+	shareLevel?: ShareLevel;
+	readme?: string;
 };
 
 type ApiUpdateParams = {
 	slug?: string;
 	name?: string;
 	description?: string;
-	share_level?: ShareLevel.Public | ShareLevel.Private;
+	share_level?: ShareLevel;
+	readme?: string;
 };
 
 function toApiUpdateParams(real: UpdateParams): ApiUpdateParams {
@@ -36,6 +37,7 @@ function toApiUpdateParams(real: UpdateParams): ApiUpdateParams {
 		slug: real.slug,
 		name: real.name,
 		description: real.description,
+		readme: real.readme,
 		share_level: real.shareLevel
 	};
 }
@@ -43,6 +45,12 @@ function toApiUpdateParams(real: UpdateParams): ApiUpdateParams {
 export class ProjectService {
 	private readonly projectInterests = new InterestStore<{ repositoryId: string }>(POLLING_REGULAR);
 	private readonly userProjectsInterests = new InterestStore<{ unused: 'unused' }>(
+		POLLING_GLACIALLY
+	);
+	private readonly recentProjectsInterests = new InterestStore<{ unused: 'unused' }>(
+		POLLING_GLACIALLY
+	);
+	private readonly recentlyPushedProjectsInterests = new InterestStore<{ unused: 'unused' }>(
 		POLLING_GLACIALLY
 	);
 
@@ -54,16 +62,20 @@ export class ProjectService {
 	getProjectInterest(repositoryId: string): Interest {
 		return this.projectInterests
 			.findOrCreateSubscribable({ repositoryId }, async () => {
-				this.appDispatch.dispatch(addProject({ status: 'loading', id: repositoryId }));
+				this.appDispatch.dispatch(projectTable.addOne({ status: 'loading', id: repositoryId }));
 
 				try {
 					const apiProject = await this.httpClient.get<ApiProject>(`projects/${repositoryId}`);
 
 					this.appDispatch.dispatch(
-						upsertProject({ status: 'found', id: repositoryId, value: apiToProject(apiProject) })
+						projectTable.upsertOne({
+							status: 'found',
+							id: repositoryId,
+							value: apiToProject(apiProject)
+						})
 					);
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(upsertProject(errorToLoadable(error, repositoryId)));
+					this.appDispatch.dispatch(projectTable.upsertOne(errorToLoadable(error, repositoryId)));
 				}
 			})
 			.createInterest();
@@ -74,12 +86,50 @@ export class ProjectService {
 			const apiProject = await this.httpClient.get<ApiProject>(`projects/${repositoryId}`);
 
 			this.appDispatch.dispatch(
-				upsertProject({ status: 'found', id: repositoryId, value: apiToProject(apiProject) })
+				projectTable.upsertOne({
+					status: 'found',
+					id: repositoryId,
+					value: apiToProject(apiProject)
+				})
 			);
 
 			return apiToProject(apiProject);
 		} catch (_: unknown) {
 			/* empty */
+		}
+	}
+
+	async getProjectBySlug(slug: string): Promise<Project | undefined> {
+		try {
+			const apiProject = await this.httpClient.get<ApiProject>(`projects/full/${slug}`);
+
+			this.appDispatch.dispatch(
+				projectTable.upsertOne({
+					status: 'found',
+					id: apiProject.repository_id,
+					value: apiToProject(apiProject)
+				})
+			);
+
+			return apiToProject(apiProject);
+		} catch (_: unknown) {
+			/* empty */
+		}
+	}
+
+	/**
+	 * Get patch stacks for a project by its full slug
+	 * @param slug The project's full slug (owner/project)
+	 * @returns Array of Branch objects
+	 */
+	async getProjectPatchStacks(slug: string): Promise<Branch[]> {
+		try {
+			const apiBranches = await this.httpClient.get<ApiBranch[]>(`patch_stack/${slug}`);
+			console.log('apiBranches', apiBranches);
+			return apiBranches.map(apiToBranch);
+		} catch (error) {
+			console.error(`Error fetching patch stacks for ${slug}:`, error);
+			return [];
 		}
 	}
 
@@ -94,7 +144,45 @@ export class ProjectService {
 					value: apiToProject(apiProject)
 				}));
 
-				this.appDispatch.dispatch(upsertProjects(projects));
+				this.appDispatch.dispatch(projectTable.upsertMany(projects));
+			})
+			.createInterest();
+	}
+
+	getRecentProjectsInterest(): Interest {
+		return this.recentProjectsInterests
+			.findOrCreateSubscribable({ unused: 'unused' }, async () => {
+				const apiProjects = await this.httpClient.get<ApiProject[]>('projects/recently_interacted');
+
+				const projects: LoadableProject[] = apiProjects.map((apiProject) => ({
+					status: 'found',
+					id: apiProject.repository_id,
+					value: apiToProject(apiProject)
+				}));
+
+				this.appDispatch.dispatch(projectTable.upsertMany(projects));
+				this.appDispatch.dispatch(
+					updateRecentlyInteractedProjectIds(projects.map((project) => project.id))
+				);
+			})
+			.createInterest();
+	}
+
+	getRecentlyPushedProjectsInterest(): Interest {
+		return this.recentlyPushedProjectsInterests
+			.findOrCreateSubscribable({ unused: 'unused' }, async () => {
+				const apiProjects = await this.httpClient.get<ApiProject[]>('projects/recently_pushed');
+
+				const projects: LoadableProject[] = apiProjects.map((apiProject) => ({
+					status: 'found',
+					id: apiProject.repository_id,
+					value: apiToProject(apiProject)
+				}));
+
+				this.appDispatch.dispatch(projectTable.upsertMany(projects));
+				this.appDispatch.dispatch(
+					updateRecentlyPushedProjectIds(projects.map((project) => project.id))
+				);
 			})
 			.createInterest();
 	}
@@ -106,7 +194,7 @@ export class ProjectService {
 		const project = apiToProject(apiProject);
 
 		this.appDispatch.dispatch(
-			upsertProject({ status: 'found', id: project.repositoryId, value: project })
+			projectTable.upsertOne({ status: 'found', id: project.repositoryId, value: project })
 		);
 
 		return project;
@@ -126,7 +214,7 @@ export class ProjectService {
 		const project = apiToProject(apiProject);
 
 		this.appDispatch.dispatch(
-			upsertProject({ status: 'found', id: project.repositoryId, value: project })
+			projectTable.upsertOne({ status: 'found', id: project.repositoryId, value: project })
 		);
 
 		return project;
@@ -135,7 +223,7 @@ export class ProjectService {
 	async deleteProject(repositoryId: string) {
 		await this.httpClient.delete(`projects/${repositoryId}`);
 
-		this.appDispatch.dispatch(removeProject(repositoryId));
+		this.appDispatch.dispatch(projectTable.removeOne(repositoryId));
 	}
 
 	async updateProject(repositoryId: string, params: UpdateParams) {
@@ -145,7 +233,7 @@ export class ProjectService {
 		const project = apiToProject(apiProject);
 
 		this.appDispatch.dispatch(
-			upsertProject({ status: 'found', id: project.repositoryId, value: project })
+			projectTable.upsertOne({ status: 'found', id: project.repositoryId, value: project })
 		);
 		return project;
 	}

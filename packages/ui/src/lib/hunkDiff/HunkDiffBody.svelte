@@ -2,7 +2,7 @@
 </script>
 
 <script lang="ts">
-	import HunkDiffRow from './HunkDiffRow.svelte';
+	import HunkDiffRow, { type ContextMenuParams } from './HunkDiffRow.svelte';
 	import LineSelection from './lineSelection.svelte';
 	import { clickOutside } from '$lib/utils/clickOutside';
 	import {
@@ -26,6 +26,9 @@
 		onQuoteSelection?: () => void;
 		onCopySelection?: () => void;
 		numberHeaderWidth?: number;
+		staged?: boolean;
+		onToggleStage?: () => void;
+		handleLineContextMenu?: (params: ContextMenuParams) => void;
 	}
 
 	const {
@@ -40,7 +43,10 @@
 		selectedLines,
 		numberHeaderWidth,
 		onCopySelection,
-		onQuoteSelection
+		onQuoteSelection,
+		staged,
+		onToggleStage,
+		handleLineContextMenu
 	}: Props = $props();
 
 	const lineSelection = $derived(new LineSelection(onLineClick));
@@ -84,6 +90,9 @@
 			{onCopySelection}
 			clearLineSelection={handleClearSelection}
 			{hoveringOverTable}
+			{staged}
+			{onToggleStage}
+			{handleLineContextMenu}
 		/>
 	{/each}
 </tbody>

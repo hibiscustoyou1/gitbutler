@@ -23,7 +23,13 @@ export type StackBranch = {
 	 * This would occur when the branch has been merged at the remote and the workspace has been updated with that change.
 	 * An archived branch will not have any commits associated with it.
 	 */
-	archived: boolean;
+	readonly archived: boolean;
+	/**
+	 * This is the base commit from the perspective of this branch.
+	 * If the branch is part of a stack and is on top of another branch, this is the head of the branch below it.
+	 * If this branch is at the bottom of the stack, this is the merge base of the stack.
+	 */
+	readonly baseCommit: string;
 };
 
 /** Commit that is a part of a [`StackBranch`](gitbutler_stack::StackBranch) and, as such, containing state derived in relation to the specific branch.*/
@@ -48,7 +54,7 @@ export type Commit = {
 	 */
 	readonly state: CommitState;
 	/** Commit creation time in Epoch milliseconds. */
-	readonly createdAt: string;
+	readonly createdAt: number;
 	/** The author of the commit. */
 	readonly author: Author;
 };
@@ -67,6 +73,10 @@ export type UpstreamCommit = {
 	/** The author of the commit. */
 	readonly author: Author;
 };
+
+export function isCommit(something: Commit | UpstreamCommit): something is Commit {
+	return 'state' in something;
+}
 
 /** Represents the author of a commit. */
 export type Author = {

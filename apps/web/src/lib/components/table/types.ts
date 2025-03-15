@@ -13,6 +13,7 @@ export type ChangesType = {
 
 export type ColumnTypes = {
 	status: CommitStatusType;
+	version: string;
 	changes: ChangesType;
 	title: string;
 	string: string;
@@ -25,4 +26,5 @@ export type ColumnTypes = {
 		approvers: Array<AvatarsType>;
 		rejectors: Array<AvatarsType>;
 	};
+	position: string;
 };

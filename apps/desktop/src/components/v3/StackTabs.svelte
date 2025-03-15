@@ -1,21 +1,22 @@
 <script lang="ts">
+	import StackTabMenu from './StackTabMenu.svelte';
 	import ReduxResult from '$components/ReduxResult.svelte';
 	import StackTab from '$components/v3/StackTab.svelte';
 	import StackTabNew from '$components/v3/StackTabNew.svelte';
+	import { stackPath } from '$lib/routes/routes.svelte';
 	import { StackService } from '$lib/stacks/stackService.svelte';
-	import { stacksToTabs } from '$lib/tabs/mapping';
-	import { getContext } from '@gitbutler/shared/context';
+	import { inject } from '@gitbutler/shared/context';
 	import { onMount } from 'svelte';
 
 	type Props = {
 		projectId: string;
-		selectedId: string;
-		previewing: boolean;
+		selectedId?: string;
+		previewing?: boolean;
 		width: number | undefined;
 	};
 	let { projectId, selectedId, width = $bindable() }: Props = $props();
 
-	const stackService = getContext(StackService);
+	const [stackService] = inject(StackService);
 	const result = $derived(stackService.stacks(projectId));
 
 	let tabs = $state<HTMLDivElement>();
@@ -50,12 +51,20 @@
 			<ReduxResult result={result.current}>
 				{#snippet children(result)}
 					{#if result.length > 0}
-						{@const tabs = stacksToTabs(result)}
-						{#each tabs as tab, i (tab.name)}
-							{@const first = i === 0}
-							{@const last = i === tabs.length - 1}
+						{#each result as tab, i (tab.branchNames[0])}
+							{@const last = i === result.length - 1}
 							{@const selected = tab.id === selectedId}
-							<StackTab {projectId} {tab} {first} {last} {selected} />
+							<StackTab
+								name={tab.branchNames[0]!}
+								href={stackPath(projectId, tab.id)}
+								anchors={tab.branchNames.slice(1)}
+								{last}
+								{selected}
+							>
+								{#snippet menu()}
+									<StackTabMenu />
+								{/snippet}
+							</StackTab>
 						{/each}
 					{:else}
 						no stacks

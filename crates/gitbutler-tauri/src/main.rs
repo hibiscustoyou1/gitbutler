@@ -160,6 +160,7 @@ fn main() {
                 .plugin(tauri_plugin_updater::Builder::new().build())
                 .plugin(tauri_plugin_dialog::init())
                 .plugin(tauri_plugin_fs::init())
+                .plugin(tauri_plugin_clipboard_manager::init())
                 // .plugin(tauri_plugin_context_menu::init())
                 .plugin(tauri_plugin_store::Builder::default().build())
                 .plugin(log.build())
@@ -275,6 +276,7 @@ fn main() {
                     workspace::amend_commit_from_worktree_changes,
                     diff::changes_in_worktree,
                     diff::changes_in_commit,
+                    diff::changes_in_branch,
                     diff::tree_change_diffs,
                     // `env_vars` is only supposed to be avaialble in debug mode, not in production.
                     #[cfg(debug_assertions)]

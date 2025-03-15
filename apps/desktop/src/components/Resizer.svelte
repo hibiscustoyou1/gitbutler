@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
+	import { getContextStoreBySymbol } from '@gitbutler/shared/context';
 	import { pxToRem } from '@gitbutler/ui/utils/pxToRem';
 
 	interface Props {
@@ -15,6 +17,7 @@
 		/** Custom z-index in case of overlapping with other elements */
 		zIndex?: string;
 		minWidth?: number;
+		maxWidth?: number;
 		minHeight?: number;
 
 		// Actions
@@ -35,6 +38,7 @@
 		sticky = false,
 		zIndex = 'var(--z-lifted)',
 		minWidth = 0,
+		maxWidth = 80,
 		minHeight = 0,
 
 		onHeight,
@@ -46,6 +50,8 @@
 	}: Props = $props();
 
 	const orientation = $derived(['left', 'right'].includes(direction) ? 'horizontal' : 'vertical');
+	const userSettings = getContextStoreBySymbol<Settings>(SETTINGS);
+	const base = $derived($userSettings.zoom * 16);
 
 	let initial = 0;
 	let dragging = $state(false);
@@ -73,26 +79,26 @@
 	function onMouseMove(e: MouseEvent) {
 		dragging = true;
 		if (direction === 'down') {
-			let height = e.clientY - initial;
+			let height = (e.clientY - initial) / base;
 			onHeight?.(Math.max(height, minHeight));
 
 			onOverflowValue(height, minHeight);
 		}
 		if (direction === 'up') {
-			let height = document.body.scrollHeight - e.clientY - initial;
+			let height = (document.body.scrollHeight - e.clientY - initial) / base;
 			onHeight?.(Math.max(height, minHeight));
 
 			onOverflowValue(height, minHeight);
 		}
 		if (direction === 'right') {
-			let width = e.clientX - initial + 2;
-			onWidth?.(Math.max(width, minWidth));
+			let width = (e.clientX - initial + 2) / base;
+			onWidth?.(Math.min(Math.max(width, minWidth), maxWidth));
 
 			onOverflowValue(width, minWidth);
 		}
 		if (direction === 'left') {
-			let width = document.body.scrollWidth - e.clientX - initial;
-			onWidth?.(Math.max(width, minWidth));
+			let width = (document.body.scrollWidth - e.clientX - initial) / base;
+			onWidth?.(Math.min(Math.max(width, minWidth), maxWidth));
 
 			onOverflowValue(width, minWidth);
 		}

@@ -22,15 +22,20 @@
 	</code>
 </div>
 
-<style>
+<style lang="postcss">
 	.code-wrapper {
 		display: flex;
 		min-width: 0;
+		max-width: 640px;
 		overflow-x: scroll;
 		border-radius: var(--radius-s);
 
 		border: 1px solid var(--clr-border-2);
 		padding: 4px 8px;
+
+		@media (--tablet-viewport) {
+			max-width: 80vw;
+		}
 	}
 	.code {
 		width: 100%;
