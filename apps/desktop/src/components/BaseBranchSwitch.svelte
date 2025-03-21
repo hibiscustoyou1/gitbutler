@@ -1,7 +1,5 @@
 <script lang="ts">
 	import InfoMessage from '$components/InfoMessage.svelte';
-	import Select from '$components/Select.svelte';
-	import SelectItem from '$components/SelectItem.svelte';
 	import { BaseBranch } from '$lib/baseBranch/baseBranch';
 	import { getRemoteBranches } from '$lib/baseBranch/baseBranchService';
 	import { BranchController } from '$lib/branches/branchController';
@@ -10,6 +8,8 @@
 	import { getContext, getContextStore } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
+	import Select from '@gitbutler/ui/select/Select.svelte';
+	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
 
 	const baseBranch = getContextStore(BaseBranch);
 	const vbranchService = getContext(VirtualBranchService);
@@ -71,6 +71,7 @@
 			<Select
 				value={selectedBranch.name}
 				options={remoteBranches.map((b) => ({ label: b.name, value: b.name }))}
+				wide
 				onselect={(value) => {
 					selectedBranch = { name: value };
 				}}
@@ -89,6 +90,7 @@
 				<Select
 					value={selectedRemote.name}
 					options={uniqueRemotes(remoteBranches).map((r) => ({ label: r.name!, value: r.name! }))}
+					wide
 					onselect={(value) => {
 						selectedRemote = { name: value };
 					}}

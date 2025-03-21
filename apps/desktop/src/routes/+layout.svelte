@@ -25,12 +25,9 @@
 	import { GitConfigService } from '$lib/config/gitConfigService';
 	import { FileService } from '$lib/files/fileService';
 	import { ButRequestDetailsService } from '$lib/forge/butRequestDetailsService';
-	import {
-		createGitHubUserServiceStore as createGitHubUserServiceStore,
-		GitHubAuthenticationService,
-		GitHubUserService
-	} from '$lib/forge/github/githubUserService';
-	import { octokitFromAccessToken } from '$lib/forge/github/octokit';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
+	import { GitHubClient } from '$lib/forge/github/githubClient';
+	import { GitHubUserService } from '$lib/forge/github/githubUserService';
 	import { HooksService } from '$lib/hooks/hooksService';
 	import { DiffService } from '$lib/hunks/diffService.svelte';
 	import { platformName } from '$lib/platform/platform';
@@ -43,7 +40,9 @@
 	import { ShortcutService } from '$lib/shortcuts/shortcutService.svelte';
 	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { ClientState } from '$lib/state/clientState.svelte';
+	import { UiState } from '$lib/state/uiState.svelte';
 	import { UpdaterService } from '$lib/updater/updater';
+	import { UpstreamIntegrationService } from '$lib/upstream/upstreamIntegrationService.svelte';
 	import { User } from '$lib/user/user';
 	import { UserService } from '$lib/user/userService';
 	import * as events from '$lib/utils/events';
@@ -58,7 +57,7 @@
 	import { OrganizationService } from '@gitbutler/shared/organizations/organizationService';
 	import { ProjectService as CloudProjectService } from '@gitbutler/shared/organizations/projectService';
 	import { RepositoryIdLookupService } from '@gitbutler/shared/organizations/repositoryIdLookupService';
-	import { PatchService as CloudPatchService } from '@gitbutler/shared/patches/patchService';
+	import { PatchCommitService as CloudPatchCommitService } from '@gitbutler/shared/patches/patchCommitService';
 	import { AppDispatch, AppState } from '@gitbutler/shared/redux/store.svelte';
 	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
 	import { reactive } from '@gitbutler/shared/storeUtils';
@@ -81,20 +80,29 @@
 	setContext(SETTINGS, userSettings);
 
 	const appState = new AppState();
-	const clientState = new ClientState(data.tauri);
+
+	const github = new GitHubClient();
+	setContext(GitHubClient, github);
+	const user = data.userService.user;
+	const accessToken = $derived($user?.github_access_token);
+	$effect(() => github.setToken(accessToken));
+
+	const clientState = new ClientState(data.tauri, github);
+
 	const changeSelection = $derived(clientState.changeSelection);
 	const changeSelectionService = new ChangeSelectionService(
 		reactive(() => changeSelection),
 		clientState.dispatch
 	);
-	const stackService = new StackService(clientState);
+	const stackService = new StackService(clientState, data.posthog);
 	const worktreeService = new WorktreeService(clientState);
 	const feedService = new FeedService(data.cloud, appState.appDispatch);
 	const organizationService = new OrganizationService(data.cloud, appState.appDispatch);
 	const cloudUserService = new CloudUserService(data.cloud, appState.appDispatch);
 	const cloudProjectService = new CloudProjectService(data.cloud, appState.appDispatch);
+
 	const cloudBranchService = new CloudBranchService(data.cloud, appState.appDispatch);
-	const cloudPatchService = new CloudPatchService(data.cloud, appState.appDispatch);
+	const cloudPatchService = new CloudPatchCommitService(data.cloud, appState.appDispatch);
 	const repositoryIdLookupService = new RepositoryIdLookupService(data.cloud, appState.appDispatch);
 	const latestBranchLookupService = new LatestBranchLookupService(data.cloud, appState.appDispatch);
 	const webRoutesService = new WebRoutesService(env.PUBLIC_CLOUD_BASE_URL);
@@ -105,6 +113,28 @@
 		cloudBranchService,
 		latestBranchLookupService
 	);
+	const upstreamIntegrationService = new UpstreamIntegrationService(
+		clientState,
+		stackService,
+		data.projectsService,
+		cloudProjectService,
+		cloudBranchService,
+		latestBranchLookupService
+	);
+
+	const uiStateSlice = $derived(clientState.uiState);
+	const uiState = new UiState(
+		reactive(() => uiStateSlice),
+		clientState.dispatch
+	);
+	setContext(UiState, uiState);
+
+	const forgeFactory = new DefaultForgeFactory(
+		clientState['githubApi'],
+		data.posthog,
+		data.projectMetrics
+	);
+	setContext(DefaultForgeFactory, forgeFactory);
 
 	shortcutService.listen();
 
@@ -119,7 +149,7 @@
 	setContext(CloudUserService, cloudUserService);
 	setContext(CloudProjectService, cloudProjectService);
 	setContext(CloudBranchService, cloudBranchService);
-	setContext(CloudPatchService, cloudPatchService);
+	setContext(CloudPatchCommitService, cloudPatchService);
 	setContext(RepositoryIdLookupService, repositoryIdLookupService);
 	setContext(LatestBranchLookupService, latestBranchLookupService);
 	setContext(WebRoutesService, webRoutesService);
@@ -146,8 +176,8 @@
 	setContext(LineManagerFactory, data.lineManagerFactory);
 	setContext(StackingLineManagerFactory, data.stackingLineManagerFactory);
 	setContext(AppSettings, data.appSettings);
-	setContext(GitHubAuthenticationService, data.githubAuthenticationService);
 	setContext(StackService, stackService);
+	setContext(UpstreamIntegrationService, upstreamIntegrationService);
 	setContext(WorktreeService, worktreeService);
 	setContext(ShortcutService, shortcutService);
 	setContext(DiffService, diffService);
@@ -156,10 +186,6 @@
 
 	const settingsService = data.settingsService;
 	const settingsStore = settingsService.appSettings;
-
-	const user = data.userService.user;
-	const accessToken = $derived($user?.github_access_token);
-	const octokit = $derived(accessToken ? octokitFromAccessToken(accessToken) : undefined);
 
 	// Special initialization to capture pageviews for single page apps.
 	if (browser) {
@@ -170,11 +196,8 @@
 	// This store is literally only used once, on GitHub oauth, to set the
 	// gh username on the user object. Furthermore, it isn't used anywhere.
 	// TODO: Remove the gh username completely?
-	const githubUserService = $derived(octokit ? new GitHubUserService(octokit) : undefined);
-	const ghUserServiceStore = createGitHubUserServiceStore(undefined);
-	$effect(() => {
-		ghUserServiceStore.set(githubUserService);
-	});
+	const githubUserService = new GitHubUserService(data.tauri, clientState['githubApi']);
+	setContext(GitHubUserService, githubUserService);
 
 	let shareIssueModal: ShareIssueModal;
 
@@ -193,8 +216,10 @@
 		// This is a debug tool to learn about environment variables actually present - only available if the backend is in debug mode.
 		'e n v': async () => {
 			let env = await invoke('env_vars');
+			// eslint-disable-next-line no-console
 			console.log(env);
 			(window as any).tauriEnv = env;
+			// eslint-disable-next-line no-console
 			console.log('Also written to window.tauriEnv');
 		}
 	});

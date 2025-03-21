@@ -2,24 +2,23 @@
 	import { ChatMinimize } from '$lib/chat/minimize.svelte';
 	import ChatComponent from '$lib/components/ChatComponent.svelte';
 	import Navigation from '$lib/components/Navigation.svelte';
+	import PrivateProjectError from '$lib/components/errors/PrivateProjectError.svelte';
 	import ChangeActionButton from '$lib/components/review/ChangeActionButton.svelte';
 	import ChangeNavigator from '$lib/components/review/ChangeNavigator.svelte';
+	import Minimap from '$lib/components/review/Minimap.svelte';
 	import ReviewInfo from '$lib/components/review/ReviewInfo.svelte';
 	import ReviewSections from '$lib/components/review/ReviewSections.svelte';
 	import DiffLineSelection from '$lib/diff/lineSelection.svelte';
 	import { updateFavIcon } from '$lib/utils/faviconUtils';
 	import { UserService } from '$lib/user/userService';
-	import { BranchService } from '@gitbutler/shared/branches/branchService';
 	import { getBranchReview } from '@gitbutler/shared/branches/branchesPreview.svelte';
 	import { lookupLatestBranchUuid } from '@gitbutler/shared/branches/latestBranchLookup.svelte';
 	import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
 	import { getContext } from '@gitbutler/shared/context';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
-	import { combine, isFound, map } from '@gitbutler/shared/network/loadable';
+	import { combine, isFound, map, isError } from '@gitbutler/shared/network/loadable';
 	import { lookupProject } from '@gitbutler/shared/organizations/repositoryIdLookupPreview.svelte';
-	import { RepositoryIdLookupService } from '@gitbutler/shared/organizations/repositoryIdLookupService';
-	import { PatchService } from '@gitbutler/shared/patches/patchService';
-	import { getPatch, getPatchSections } from '@gitbutler/shared/patches/patchesPreview.svelte';
+	import { getPatch } from '@gitbutler/shared/patches/patchCommitsPreview.svelte';
 	import { AppState } from '@gitbutler/shared/redux/store.svelte';
 	import {
 		WebRoutesService,
@@ -37,10 +36,7 @@
 
 	let { data }: Props = $props();
 
-	const repositoryIdLookupService = getContext(RepositoryIdLookupService);
 	const latestBranchLookupService = getContext(LatestBranchLookupService);
-	const branchService = getContext(BranchService);
-	const patchService = getContext(PatchService);
 	const appState = getContext(AppState);
 	const routes = getContext(WebRoutesService);
 	const userService = getContext(UserService);
@@ -51,10 +47,9 @@
 	const chatTabletModeBreakpoint = 1024;
 	let isChatTabletMode = $state(window.innerWidth < chatTabletModeBreakpoint);
 	let isTabletModeEntered = $state(false);
+	let chatComponent = $state<ReturnType<typeof ChatComponent>>();
 
-	const repositoryId = $derived(
-		lookupProject(appState, repositoryIdLookupService, data.ownerSlug, data.projectSlug)
-	);
+	const repositoryId = $derived(lookupProject(data.ownerSlug, data.projectSlug));
 
 	const branchUuid = $derived(
 		lookupLatestBranchUuid(
@@ -68,39 +63,31 @@
 
 	const branch = $derived(
 		map(branchUuid?.current, (branchUuid) => {
-			return getBranchReview(appState, branchService, branchUuid);
+			return getBranchReview(branchUuid);
 		})
 	);
 
-	const patchIds = $derived(map(branch?.current, (b) => b.patchIds));
+	const patchCommitIds = $derived(map(branch?.current, (b) => b.patchCommitIds));
 
-	const patch = $derived(
+	const patchCommit = $derived(
 		map(branchUuid?.current, (branchUuid) => {
-			return getPatch(appState, patchService, branchUuid, data.changeId);
+			return getPatch(branchUuid, data.changeId);
 		})
 	);
 
 	const isPatchAuthor = $derived(
-		map(patch?.current, (patch) => {
+		map(patchCommit?.current, (patch) => {
 			return patch.contributors.some(
 				(contributor) => contributor.user?.id !== undefined && contributor.user?.id === $user?.id
 			);
 		})
 	);
 
-	const patchSections = $derived(
-		map(branchUuid?.current, (branchUuid) => {
-			return getPatchSections(appState, patchService, branchUuid, data.changeId);
-		})
-	);
-
 	let headerEl = $state<HTMLDivElement>();
 	let headerHeight = $state(0);
-	let headerIsStuck = $state(false);
-	let metaSectionHidden = $state(false);
-	const HEADER_STUCK_THRESHOLD = 4;
 
-	let metaSectionEl = $state<HTMLDivElement>();
+	let headerIsStuck = $state(false);
+	const HEADER_STUCK_THRESHOLD = 4;
 
 	function handleScroll() {
 		if (headerEl) {
@@ -112,14 +99,6 @@
 			if (headerIsStuck && top > HEADER_STUCK_THRESHOLD) {
 				headerIsStuck = false;
 			}
-		}
-
-		if (metaSectionEl && headerEl) {
-			metaSectionHidden =
-				metaSectionEl.getBoundingClientRect().top -
-					headerEl.clientHeight +
-					metaSectionEl.clientHeight <
-				0;
 		}
 	}
 
@@ -170,17 +149,40 @@
 	});
 
 	$effect(() => {
-		if (isFound(patch?.current)) {
-			updateFavIcon(patch.current.value?.reviewStatus);
+		if (isFound(patchCommit?.current)) {
+			updateFavIcon(patchCommit.current.value?.reviewStatus);
 		}
 	});
+
+	// Check if there's a 403 error in either branchUuid or branch
+	function isForbiddenError(data: any) {
+		if (!isError(data)) return false;
+
+		const errorMessage = data.error.message || '';
+		return (
+			(data.error.name === 'ApiError' && errorMessage.includes('403')) ||
+			errorMessage.includes('Forbidden') ||
+			errorMessage.includes('Access denied') ||
+			(typeof errorMessage === 'string' && errorMessage.includes('403'))
+		);
+	}
+
+	// Check for forbidden error in either the branchUuid lookup or the branch data
+	const hasForbiddenError = $derived(
+		isForbiddenError(patchCommit?.current) || isForbiddenError(branch?.current)
+	);
+	// Check for any error in the combined loadable
+	const combinedLoadable = $derived(
+		combine([patchCommit?.current, repositoryId.current, branchUuid?.current, branch?.current])
+	);
+	const hasAnyError = $derived(isError(combinedLoadable));
 </script>
 
 <svelte:head>
-	{#if isFound(patch?.current)}
-		<title>🔬{patch.current.value?.title}</title>
-		<meta property="og:title" content="Review: {patch.current.value?.title}" />
-		<meta property="og:description" content={patch.current.value?.description} />
+	{#if isFound(patchCommit?.current)}
+		<title>🔬{patchCommit.current.value?.title}</title>
+		<meta property="og:title" content="Review: {patchCommit.current.value?.title}" />
+		<meta property="og:description" content={patchCommit.current.value?.description} />
 	{:else}
 		<title>GitButler Review</title>
 		<meta property="og:title" content="Butler Review: {data.ownerSlug}/{data.projectSlug}" />
@@ -188,110 +190,133 @@
 	{/if}
 </svelte:head>
 
-<svelte:window onkeydown={handleKeyDown} onscroll={handleScroll} onresize={handleResize} />
+<svelte:window onscroll={handleScroll} onresize={handleResize} onkeydown={handleKeyDown} />
 
-<div class="review-page" class:column={chatMinimizer.value}>
-	<Loading
-		loadable={combine([patch?.current, repositoryId.current, branchUuid?.current, branch?.current])}
-	>
-		{#snippet children([patch, repositoryId, branchUuid, branch])}
-			<div class="review-main" class:expand={chatMinimizer.value}>
-				<Navigation />
+{#if hasForbiddenError}
+	<PrivateProjectError />
+{:else if hasAnyError && combinedLoadable}
+	{#if isForbiddenError(combinedLoadable)}
+		<PrivateProjectError />
+	{:else if isError(combinedLoadable)}
+		<div class="error-container">
+			<h2 class="text-15 text-body text-bold">Error loading project data</h2>
+			<p class="text-13 text-body">{combinedLoadable.error.message}</p>
+		</div>
+	{/if}
+{:else}
+	<div class="review-page" class:column={chatMinimizer.value}>
+		<Loading loadable={combinedLoadable}>
+			{#snippet children([patchCommit, repositoryId, branchUuid, branch])}
+				<Minimap {branchUuid} ownerSlug={data.ownerSlug} projectSlug={data.projectSlug} />
 
-				<div
-					class="review-main__header"
-					bind:this={headerEl}
-					bind:clientHeight={headerHeight}
-					class:stucked={headerIsStuck}
-					class:bottom-line={headerIsStuck && !metaSectionHidden}
-				>
-					<div class="review-main__title">
-						{#if headerIsStuck}
-							<div class="scroll-to-top">
-								<Button kind="outline" icon="arrow-top" onclick={scrollToTop} />
+				<div class="review-main" class:expand={chatMinimizer.value}>
+					<Navigation />
+
+					<div
+						class="review-main__header"
+						bind:this={headerEl}
+						bind:clientHeight={headerHeight}
+						class:bottom-line={headerIsStuck}
+					>
+						<div class="review-main__title">
+							{#if headerIsStuck}
+								<div class="scroll-to-top">
+									<Button kind="outline" icon="arrow-top" onclick={scrollToTop} />
+								</div>
+							{/if}
+							<div class="review-main__title-wrapper">
+								<p class="text-12 review-main__title-wrapper__branch">
+									<span class="">Branch:</span>
+									<a
+										class="truncate"
+										href={routes.projectReviewBranchPath({
+											ownerSlug: data.ownerSlug,
+											projectSlug: data.projectSlug,
+											branchId: data.branchId
+										})}>{branch.title}</a
+									>
+								</p>
+								<h3 class="text-18 text-bold review-main-title">{patchCommit.title}</h3>
 							</div>
-						{/if}
-						<div class="review-main__title-wrapper">
-							<p class="text-12 review-main__title-wrapper__branch">
-								<span class="">Branch:</span>
-								<a
-									class="truncate"
-									href={routes.projectReviewBranchPath({
-										ownerSlug: data.ownerSlug,
-										projectSlug: data.projectSlug,
-										branchId: data.branchId
-									})}>{branch.title}</a
-								>
-							</p>
-							<h3 class="text-18 text-bold review-main-title">{patch.title}</h3>
 						</div>
 					</div>
-				</div>
 
-				<div class="review-main__patch-navigator">
-					{#if patchIds !== undefined}
-						<ChangeNavigator {goToPatch} currentPatchId={patch.changeId} {patchIds} />
-					{/if}
+					<div class="review-main__patch-navigator">
+						{#if patchCommitIds !== undefined}
+							<ChangeNavigator
+								{goToPatch}
+								currentPatchId={patchCommit.changeId}
+								patchIds={patchCommitIds}
+							/>
+						{/if}
 
-					{#if branchUuid !== undefined && isPatchAuthor === false}
-						<ChangeActionButton {branchUuid} {patch} isUserLoggedIn={!!$user} />
-					{/if}
-				</div>
-
-				<div class="review-main__meta" bind:this={metaSectionEl}>
-					<ReviewInfo projectId={repositoryId} {patch} />
-					<div class="review-main-description">
-						<span class="text-12 review-main-description__caption">Commit message:</span>
-						<p class="review-main-description__markdown">
-							{#if patch.description?.trim()}
-								<Markdown content={patch.description} />
-							{:else}
-								<span class="review-main-description__placeholder">
-									{DESCRIPTION_PLACE_HOLDER}</span
-								>
-							{/if}
-						</p>
+						{#if branchUuid !== undefined && isPatchAuthor === false}
+							<ChangeActionButton {branchUuid} patch={patchCommit} isUserLoggedIn={!!$user} />
+						{/if}
 					</div>
-				</div>
 
-				<ReviewSections
-					{patch}
-					headerShift={headerHeight}
-					patchSections={patchSections?.current}
-					toggleDiffLine={(f, s, p) => diffLineSelection.toggle(f, s, p)}
-					selectedSha={diffLineSelection.selectedSha}
-					selectedLines={diffLineSelection.selectedLines}
-					onCopySelection={(sections) => diffLineSelection.copy(sections)}
-					onQuoteSelection={() => diffLineSelection.quote()}
-					clearLineSelection={(fileName) => diffLineSelection.clear(fileName)}
-				/>
-			</div>
+					<div class="review-main__meta">
+						<ReviewInfo projectId={repositoryId} {patchCommit} />
+						<div class="review-main-description">
+							<span class="text-12 review-main-description__caption">Commit message:</span>
+							<p class="review-main-description__markdown">
+								{#if patchCommit.description?.trim()}
+									<Markdown content={patchCommit.description} />
+								{:else}
+									<span class="review-main-description__placeholder">
+										{DESCRIPTION_PLACE_HOLDER}</span
+									>
+								{/if}
+							</p>
+						</div>
+					</div>
 
-			{#if branchUuid !== undefined}
-				<div
-					class="review-chat"
-					class:minimized={chatMinimizer.value}
-					class:tablet-mode={isChatTabletMode}
-				>
-					<ChatComponent
-						{isPatchAuthor}
-						isUserLoggedIn={!!$user}
+					<ReviewSections
 						{branchUuid}
-						isTabletMode={isChatTabletMode}
-						messageUuid={data.messageUuid}
-						projectId={repositoryId}
-						branchId={data.branchId}
+						{patchCommit}
 						changeId={data.changeId}
-						minimized={chatMinimizer.value}
-						onMinimizeToggle={() => chatMinimizer.toggle()}
-						diffSelection={diffLineSelection.diffSelection}
-						clearDiffSelection={() => diffLineSelection.clear()}
+						commitPageHeaderHeight={headerHeight}
+						toggleDiffLine={(f, s, p) => diffLineSelection.toggle(f, s, p)}
+						selectedSha={diffLineSelection.selectedSha}
+						selectedLines={diffLineSelection.selectedLines}
+						onCopySelection={(sections) => diffLineSelection.copy(sections)}
+						onQuoteSelection={() => {
+							diffLineSelection.quote();
+							chatComponent?.focus();
+						}}
+						clearLineSelection={(fileName) => diffLineSelection.clear(fileName)}
 					/>
 				</div>
-			{/if}
-		{/snippet}
-	</Loading>
-</div>
+
+				{#if branchUuid !== undefined}
+					<div
+						id="chat-panel"
+						class="review-chat"
+						class:minimized={chatMinimizer.value}
+						class:tablet-mode={isChatTabletMode}
+					>
+						<ChatComponent
+							bind:this={chatComponent}
+							{isPatchAuthor}
+							isUserLoggedIn={!!$user}
+							{branchUuid}
+							{patchCommit}
+							isTabletMode={isChatTabletMode}
+							messageUuid={data.messageUuid}
+							projectId={repositoryId}
+							branchId={data.branchId}
+							changeId={data.changeId}
+							minimized={chatMinimizer.value}
+							onMinimizeToggle={() => chatMinimizer.toggle()}
+							diffSelection={diffLineSelection.diffSelection}
+							clearDiffSelection={() => diffLineSelection.clear()}
+						/>
+					</div>
+				{/if}
+			{/snippet}
+		</Loading>
+	</div>
+{/if}
 
 <style lang="postcss">
 	.review-page {
@@ -311,6 +336,28 @@
 			display: flex;
 			flex-direction: column;
 		}
+	}
+
+	.error-container {
+		padding: 32px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 12px;
+		width: 100%;
+	}
+
+	.error-message {
+		font-size: 16px;
+		font-weight: bold;
+		color: var(--clr-text-1);
+	}
+
+	.error-details {
+		font-size: 14px;
+		color: var(--clr-text-2);
+		max-width: 800px;
+		text-align: center;
 	}
 
 	.review-main {
@@ -339,8 +386,8 @@
 		gap: 12px;
 
 		background-color: var(--clr-bg-2);
-		margin-top: -24px;
-		padding: 24px 0 12px;
+		margin-top: -14px;
+		padding: 16px 0;
 		border-bottom: 1px solid transparent;
 
 		transition:
@@ -350,26 +397,10 @@
 		&.bottom-line {
 			border-bottom: 1px solid var(--clr-border-2);
 		}
-
-		&.stucked {
-			padding: 16px 0;
-		}
 	}
 
 	.scroll-to-top {
 		display: flex;
-		animation: fadeInScrollButton var(--transition-medium) forwards;
-	}
-
-	@keyframes fadeInScrollButton {
-		from {
-			opacity: 0;
-			width: 0;
-		}
-		to {
-			opacity: 1;
-			min-width: var(--size-button);
-		}
 	}
 
 	.review-main__title {
@@ -448,7 +479,7 @@
 		display: flex;
 		position: sticky;
 		top: 24px;
-		height: calc(100vh - var(--bottom-margin));
+		height: calc(100dvh - var(--bottom-margin));
 
 		&.minimized {
 			height: fit-content;
@@ -460,18 +491,20 @@
 
 			justify-content: flex-end;
 			align-items: center;
-			box-shadow: var(--fx-shadow-s);
 		}
 
 		&.tablet-mode {
 			z-index: var(--z-floating);
-			position: fixed;
+			width: 100%;
 			max-width: unset;
 			height: 100dvh;
-			top: unset;
+			top: 0;
 			left: 0;
-			bottom: 0;
+			bottom: var(--top-nav-offset);
 			pointer-events: none;
+			display: flex;
+			justify-content: flex-end;
+			align-items: end;
 		}
 	}
 </style>

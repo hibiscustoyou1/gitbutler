@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::stack::{branch_integrated, stack_as_rebase_steps};
 use crate::{r#virtual::IsCommitIntegrated, BranchManagerExt, VirtualBranchesExt as _};
 use anyhow::{anyhow, bail, Context, Result};
+use but_core::Reference;
 use but_rebase::{RebaseOutput, RebaseStep};
 use gitbutler_cherry_pick::RepositoryExt;
 use gitbutler_command_context::CommandContext;
@@ -17,10 +18,11 @@ use gitbutler_repo::{
     logging::LogUntil,
     rebase::{cherry_rebase_group, gitbutler_merge_commits},
 };
-use gitbutler_repo_actions::RepoActionsExt as _;
+use gitbutler_serde::BStringForFrontend;
 use gitbutler_stack::stack_context::StackContext;
 use gitbutler_stack::{Stack, StackId, Target, VirtualBranchesHandle};
 use gitbutler_workspace::{checkout_branch_trees, compute_updated_branch_head, BranchHeadAndTree};
+use gix::merge::tree::TreatAsUnresolved;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, PartialEq, Debug)]
@@ -61,7 +63,11 @@ pub enum BranchStatus {
 #[serde(tag = "type", content = "subject", rename_all = "camelCase")]
 pub enum StackStatuses {
     UpToDate,
-    UpdatesRequired(Vec<(StackId, StackStatus)>),
+    UpdatesRequired {
+        #[serde(rename = "worktreeConflicts")]
+        worktree_conflicts: Vec<BStringForFrontend>,
+        statuses: Vec<(StackId, StackStatus)>,
+    },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -146,10 +152,8 @@ impl StackStatus {
 pub struct Resolution {
     // TODO(CTO): Rename to stack_id
     pub branch_id: StackId,
-    /// Used to ensure a given branch hasn't changed since the UI issued the command.
-    #[serde(with = "gitbutler_serde::oid")]
-    pub branch_tree: git2::Oid,
     pub approach: ResolutionApproach,
+    pub delete_integrated_branches: bool,
 }
 
 enum IntegrationResult {
@@ -157,6 +161,7 @@ enum IntegrationResult {
         head: git2::Oid,
         tree: git2::Oid,
         rebase_output: Option<RebaseOutput>,
+        for_archival: Vec<Reference>,
     },
     UnapplyBranch,
     DeleteBranch,
@@ -337,12 +342,12 @@ fn get_stack_status(
             .find_commit(new_target_commit_id)?
             .tree_id()?;
         let tree_id = git2_to_gix_object_id(stack.tree);
-        let new_head_commit = repository.find_commit(last_head)?;
+        let new_head_commit = gix_repository.find_commit(last_head.to_gix())?;
         let tree_conflicted = gix_repository
             .merge_trees(
                 tree_merge_base,
                 tree_id,
-                git2_to_gix_object_id(new_head_commit.tree_id()),
+                new_head_commit.tree_id()?,
                 gix_repository.default_merge_labels(),
                 merge_options_fail_fast.clone(),
             )?
@@ -377,6 +382,48 @@ pub fn upstream_integration_statuses(
         return Ok(StackStatuses::UpToDate);
     };
 
+    // The merge base tree of all of the applied stacks plus the new target
+    let merge_base_tree = gix_repository
+        .merge_base_octopus(
+            stacks_in_workspace
+                .iter()
+                .map(|b| b.head().to_gix())
+                .chain(Some(new_target.id().to_gix())),
+        )?
+        .object()?
+        .into_commit()
+        .tree_id()?;
+
+    // The working directory tree
+    let workdir_tree = context
+        .ctx
+        .repo()
+        .create_wd_tree(gitbutler_project::AUTO_TRACK_LIMIT_BYTES)?
+        .id()
+        .to_gix();
+
+    // The target tree
+    let target_tree = gix_repository
+        .find_commit(new_target.id().to_gix())?
+        .tree_id()?;
+
+    let (merge_options_fail_fast, _conflict_kind) =
+        gix_repository.merge_options_no_rewrites_fail_fast()?;
+
+    let worktree_conflicts = gix_repository
+        .merge_trees(
+            merge_base_tree,
+            workdir_tree,
+            target_tree,
+            gix_repository.default_merge_labels(),
+            merge_options_fail_fast.clone(),
+        )?
+        .conflicts
+        .iter()
+        .filter(|c| c.is_unresolved(TreatAsUnresolved::git()))
+        .map(|c| c.ours.location().into())
+        .collect::<Vec<BStringForFrontend>>();
+
     let statuses = stacks_in_workspace
         .iter()
         .map(|stack| {
@@ -393,7 +440,10 @@ pub fn upstream_integration_statuses(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(StackStatuses::UpdatesRequired(statuses))
+    Ok(StackStatuses::UpdatesRequired {
+        worktree_conflicts,
+        statuses,
+    })
 }
 
 pub(crate) fn integrate_upstream(
@@ -422,7 +472,7 @@ pub(crate) fn integrate_upstream(
     {
         let statuses = upstream_integration_statuses(&context)?;
 
-        let StackStatuses::UpdatesRequired(statuses) = statuses else {
+        let StackStatuses::UpdatesRequired { statuses, .. } = statuses else {
             bail!("Branches are all up to date")
         };
 
@@ -435,19 +485,6 @@ pub(crate) fn integrate_upstream(
         }
 
         let all_resolutions_are_up_to_date = resolutions.iter().all(|resolution| {
-            // This is O(n^2), in reality, n is unlikly to be more than 3 or 4
-            let Some(branch) = context
-                .stacks_in_workspace
-                .iter()
-                .find(|branch| branch.id == resolution.branch_id)
-            else {
-                return false;
-            };
-
-            if resolution.branch_tree != branch.tree {
-                return false;
-            };
-
             let Some(status) = statuses
                 .iter()
                 .find(|status| status.0 == resolution.branch_id)
@@ -478,7 +515,16 @@ pub(crate) fn integrate_upstream(
 
             let stack = virtual_branches_state.get_stack(*stack_id)?;
             virtual_branches_state.delete_branch_entry(stack_id)?;
-            command_context.delete_branch_reference(&stack)?;
+            let delete_local_refs = resolutions
+                .iter()
+                .find(|r| r.branch_id == *stack_id)
+                .map(|r| r.delete_integrated_branches)
+                .unwrap_or(false);
+            if delete_local_refs {
+                for head in stack.heads {
+                    head.delete_reference(&gix_repo).ok();
+                }
+            }
         }
 
         let permission = context._permission.expect("Permission provided above");
@@ -507,6 +553,7 @@ pub(crate) fn integrate_upstream(
                 head,
                 tree,
                 rebase_output,
+                for_archival,
             } = integration_result
             else {
                 continue;
@@ -515,8 +562,6 @@ pub(crate) fn integrate_upstream(
             let Some(stack) = stacks.iter_mut().find(|branch| branch.id == *branch_id) else {
                 continue;
             };
-
-            stack.set_stack_head(command_context, *head, Some(*tree))?;
 
             // Update the branch heads
             if let Some(output) = rebase_output {
@@ -529,8 +574,20 @@ pub(crate) fn integrate_upstream(
                 }
                 stack.set_all_heads(command_context, new_heads)?;
             }
+            stack.set_stack_head(command_context, *head, Some(*tree))?;
 
-            let mut archived_branches = stack.archive_integrated_heads(command_context)?;
+            let delete_local_refs = resolutions
+                .iter()
+                .find(|r| r.branch_id == *branch_id)
+                .map(|r| r.delete_integrated_branches)
+                .unwrap_or(false);
+
+            let mut archived_branches = stack.archive_integrated_heads(
+                command_context,
+                &gix_repo,
+                for_archival,
+                delete_local_refs,
+            )?;
             newly_archived_branches.append(&mut archived_branches);
         }
 
@@ -656,6 +713,7 @@ fn compute_resolutions(
                             head: new_head,
                             tree: new_tree,
                             rebase_output: None,
+                            for_archival: vec![],
                         },
                     ))
                 }
@@ -686,10 +744,11 @@ fn compute_resolutions(
                         new_target.id()
                     };
 
-                    let steps =
+                    let all_steps =
                         stack_as_rebase_steps(context.ctx, context.gix_repo, branch_stack.id)?;
+                    let branches_before = as_buckets(all_steps.clone());
                     // Filter out any integrated commits
-                    let steps = steps
+                    let steps = all_steps
                         .into_iter()
                         .filter_map(|s| match s {
                             RebaseStep::Pick {
@@ -707,6 +766,22 @@ fn compute_resolutions(
                             _ => Some(s),
                         })
                         .collect::<Vec<_>>();
+
+                    let branches_after = as_buckets(steps.clone());
+
+                    // Branches that used to have commits but now don't are marked for archival
+                    let mut for_archival = vec![];
+                    for (ref_before, steps_before) in branches_before {
+                        if let Some((_, steps_after)) = branches_after
+                            .iter()
+                            .find(|(ref_after, _)| ref_after == &ref_before)
+                        {
+                            // if there were steps before and now there are none, this should be marked for archival
+                            if !steps_before.is_empty() && steps_after.is_empty() {
+                                for_archival.push(ref_before);
+                            }
+                        }
+                    }
 
                     let mut rebase = but_rebase::Rebase::new(
                         context.gix_repo,
@@ -730,6 +805,7 @@ fn compute_resolutions(
                             head: new_head,
                             tree: new_tree,
                             rebase_output: Some(output),
+                            for_archival,
                         },
                     ))
                 }
@@ -738,4 +814,20 @@ fn compute_resolutions(
         .collect::<Result<Vec<_>>>()?;
 
     Ok(results)
+}
+
+fn as_buckets(steps: Vec<RebaseStep>) -> Vec<(but_core::Reference, Vec<RebaseStep>)> {
+    let mut buckets = vec![];
+    let mut current_steps = vec![];
+    for step in steps {
+        match step {
+            RebaseStep::Reference(reference) => {
+                buckets.push((reference, std::mem::take(&mut current_steps)));
+            }
+            step => {
+                current_steps.push(step);
+            }
+        }
+    }
+    buckets
 }

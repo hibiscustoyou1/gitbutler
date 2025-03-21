@@ -1,5 +1,6 @@
 <!-- TODO: Delete this file after V3 has shipped. -->
 <script lang="ts">
+	import { writeClipboard } from '$lib/backend/clipboard';
 	import { BranchController } from '$lib/branches/branchController';
 	import { LocalFile } from '$lib/files/file';
 	import { isAnyFile } from '$lib/files/file';
@@ -77,29 +78,18 @@
 					<ContextMenuItem
 						label="Copy Path"
 						onclick={async () => {
-							try {
-								if (!project) return;
-								const absPath = await join(project.path, item.files[0].path);
-								navigator.clipboard.writeText(absPath);
-								contextMenu.close();
-								// dismiss();
-							} catch (err) {
-								console.error('Failed to copy path', err);
-								toasts.error('Failed to copy path');
-							}
+							if (!project) return;
+							const absPath = await join(project.path, item.files[0].path);
+							await writeClipboard(absPath, 'Failed to copy path');
+							contextMenu.close();
 						}}
 					/>
 					<ContextMenuItem
 						label="Copy Relative Path"
-						onclick={() => {
-							try {
-								if (!project) return;
-								navigator.clipboard.writeText(item.files[0].path);
-								contextMenu.close();
-							} catch (err) {
-								console.error('Failed to copy relative path', err);
-								toasts.error('Failed to copy relative path');
-							}
+						onclick={async () => {
+							if (!project) return;
+							await writeClipboard(item.files[0].path, 'Failed to copy relative path');
+							contextMenu.close();
 						}}
 					/>
 				{/if}

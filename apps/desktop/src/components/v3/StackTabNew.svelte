@@ -1,6 +1,5 @@
 <script lang="ts">
 	import RadioButton from '$components/RadioButton.svelte';
-	import { showError } from '$lib/notifications/toasts';
 	import { stackPath } from '$lib/routes/routes.svelte';
 	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { getContext } from '@gitbutler/shared/context';
@@ -14,12 +13,14 @@
 	type Props = {
 		projectId: string;
 		// Currently selected stack id.
-		stackId: string;
+		stackId?: string;
 		overflow?: boolean;
 	};
 
 	const { projectId, stackId, overflow = false }: Props = $props();
 	const stackService = getContext(StackService);
+	const [createNewStack, stackCreation] = stackService.newStack();
+	const [createNewBranch, branchCreation] = stackService.newBranch();
 
 	let createRefModal = $state<ReturnType<typeof Modal>>();
 	let createRefName: string | undefined = $state();
@@ -40,27 +41,28 @@
 
 	async function addNew() {
 		if (createRefType === 'stack') {
-			const { data, error } = await stackService.newStack(projectId, { name: createRefName });
-			if (data) {
-				goto(stackPath(projectId, data.id));
-				createRefModal?.close();
-			} else {
-				showError('Failed to add new stack', error);
-			}
+			const data = await createNewStack({
+				projectId,
+				branch: { name: createRefName }
+			});
+			goto(stackPath(projectId, data.id));
+			createRefModal?.close();
 		} else {
-			if (!createRefName) {
+			if (!stackId || !createRefName) {
 				// TODO: Add input validation.
 				return;
 			}
-			const { error } = await stackService.newBranch(projectId, stackId, createRefName);
-			if (error) {
-				showError('Failed to add new branch', error);
-			} else {
-				goto(stackPath(projectId, stackId));
-				createRefModal?.close();
-			}
+			await createNewBranch({
+				projectId,
+				stackId,
+				request: { targetPatch: undefined, name: createRefName }
+			});
+			goto(stackPath(projectId, stackId));
+			createRefModal?.close();
 		}
 	}
+
+	const isAddingNew = $derived(stackCreation.current.isLoading || branchCreation.current.isLoading);
 
 	// TODO: it would be nice to remember the last selected option for the next time the modal is opened
 </script>
@@ -232,7 +234,13 @@
 
 			<div class="footer__controls">
 				<Button kind="outline" type="reset" onclick={close}>Cancel</Button>
-				<Button style="pop" type="submit" onclick={addNew} disabled={!createRefName}>
+				<Button
+					style="pop"
+					type="submit"
+					onclick={addNew}
+					disabled={!createRefName}
+					loading={isAddingNew}
+				>
 					{#if createRefType === 'stack'}
 						Add new stack
 					{:else}

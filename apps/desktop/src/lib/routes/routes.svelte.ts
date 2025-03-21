@@ -27,7 +27,7 @@ export function workspacePath(projectId: string) {
 }
 
 export function isWorkspacePath() {
-	return isUrl<{ projectId: string; branchId?: string }>('/[projectId]/workspace/[[stackId]]');
+	return isUrl<{ projectId: string; branchId?: string }>('/[projectId]/workspace/');
 }
 
 export function branchesPath(projectId: string) {
@@ -55,9 +55,7 @@ export function isHistoryPath() {
 }
 
 export function isCommitPath() {
-	return isUrl<{ projectId: string; stackId: string }>(
-		'/[projectId]/workspace/[stackId]/[branchName]/commit'
-	);
+	return page.url.searchParams.has('create');
 }
 
 export function settingsPath() {
@@ -68,29 +66,6 @@ export function stackPath(projectId: string, stackId: string) {
 	return `/${projectId}/workspace/${stackId}`;
 }
 
-export function createCommitPath(
-	projectId: string,
-	stackId: string,
-	branchName: string,
-	commitId?: string
-) {
-	const url = `/${projectId}/workspace/${stackId}/${branchName}/commit`;
-	return commitId ? url + '?commitId=' + commitId : url;
-}
-
 export function clonePath() {
 	return '/onboarding/clone';
-}
-
-export function branchPath(projectId: string, stackId: string, branchName: string) {
-	return `/${projectId}/workspace/${stackId}/${branchName}`;
-}
-
-export function commitPath(
-	projectId: string,
-	commitKey: { stackId: string; branchName: string; commitId: string; upstream: boolean }
-) {
-	const { stackId, branchName, commitId, upstream } = commitKey;
-	const url = `/${projectId}/workspace/${stackId}/${branchName}?commitId=${commitId}`;
-	return upstream ? url + '&upstream' : url;
 }

@@ -1,5 +1,5 @@
 import { apiToChatMessage, type ApiChatMessage, type ChatMessage } from '$lib/chat/types';
-import { apiToPatch, type ApiPatch, type Patch } from '$lib/patches/types';
+import { apiToPatch, type ApiPatchCommit, type PatchCommit } from '$lib/patches/types';
 import {
 	apiToUserSimple,
 	isApiUserSimple,
@@ -38,15 +38,47 @@ export function isApiChatEvent(data: unknown): data is ApiChatEvent {
 	return isApiPatchEventBase(data) && (data as any).event_type === 'chat';
 }
 
+export type ApiChatReactionEvent = ApiPatchEventBase & {
+	event_type: 'chat_reaction';
+	object: ApiChatMessage;
+	data: { reaction: string };
+};
+
+export function isApiChatReactionEvent(data: unknown): data is ApiChatReactionEvent {
+	return (
+		isApiPatchEventBase(data) &&
+		(data as any).event_type === 'chat_reaction' &&
+		typeof (data as any).data === 'object' &&
+		(data as any).data !== null &&
+		typeof (data as any).data.reaction === 'string'
+	);
+}
+
+export type ApiChatReplyEvent = ApiPatchEventBase & {
+	event_type: 'chat_reply';
+	object: ApiChatMessage;
+	data: { in_reply_to: string };
+};
+
+export function isApiChatReplyEvent(data: unknown): data is ApiChatReplyEvent {
+	return (
+		isApiPatchEventBase(data) &&
+		(data as any).event_type === 'chat_reply' &&
+		typeof (data as any).data === 'object' &&
+		(data as any).data !== null &&
+		typeof (data as any).data.in_reply_to === 'string'
+	);
+}
+
 export type ApiPatchVersionEvent = ApiPatchEventBase & {
 	event_type: 'patch_version';
-	object: ApiPatch;
+	object: ApiPatchCommit;
 };
 
 export type ApiPatchStatusEvent = ApiPatchEventBase & {
 	data: { status: boolean; message: string | null };
 	event_type: 'patch_status';
-	object: ApiPatch;
+	object: ApiPatchCommit;
 };
 
 export function isApiPatchVersionEvent(data: unknown): data is ApiPatchVersionEvent {
@@ -84,6 +116,8 @@ export function isApiIssueUpdateEvent(data: unknown): data is ApiIssueUpdateEven
 
 export type ApiPatchEvent =
 	| ApiChatEvent
+	| ApiChatReactionEvent
+	| ApiChatReplyEvent
 	| ApiPatchVersionEvent
 	| ApiPatchStatusEvent
 	| ApiIssueUpdateEvent;
@@ -91,6 +125,8 @@ export type ApiPatchEvent =
 export function isApiPatchEvent(data: unknown): data is ApiPatchEvent {
 	return (
 		isApiChatEvent(data) ||
+		isApiChatReactionEvent(data) ||
+		isApiChatReplyEvent(data) ||
 		isApiPatchVersionEvent(data) ||
 		isApiPatchStatusEvent(data) ||
 		isApiIssueUpdateEvent(data)
@@ -112,15 +148,27 @@ export type ChatEvent = PatchEventBase & {
 	object: ChatMessage;
 };
 
+export type ChatReactionEvent = PatchEventBase & {
+	eventType: 'chat_reaction';
+	object: ChatMessage;
+	data: { reaction: string };
+};
+
+export type ChatReplyEvent = PatchEventBase & {
+	eventType: 'chat_reply';
+	object: ChatMessage;
+	data: { inReplyTo: string };
+};
+
 export type PatchVersionEvent = PatchEventBase & {
 	eventType: 'patch_version';
-	object: Patch;
+	object: PatchCommit;
 };
 
 export type PatchStatusEvent = PatchEventBase & {
 	data: { status: boolean; message: string | undefined };
 	eventType: 'patch_status';
-	object: Patch;
+	object: PatchCommit;
 };
 
 export function apiToPatchStatusData(api: ApiPatchStatusEvent['data']): PatchStatusEvent['data'] {
@@ -169,12 +217,18 @@ export type IssueUpdateEvent = PatchEventBase & {
 	object: IssueUpdate;
 };
 
-export type PatchEvent = ChatEvent | PatchVersionEvent | PatchStatusEvent | IssueUpdateEvent;
+export type PatchEvent =
+	| ChatEvent
+	| ChatReactionEvent
+	| ChatReplyEvent
+	| PatchVersionEvent
+	| PatchStatusEvent
+	| IssueUpdateEvent;
 
-export function apiToPatchEvent(api: ApiPatchEvent): PatchEvent | undefined {
+export function apiToPatchEvent(api: ApiPatchEvent): PatchEvent | null {
 	switch (api.event_type) {
 		case 'chat':
-			if (!api.object) return undefined;
+			if (!api.object) return null;
 			return {
 				eventType: api.event_type,
 				uuid: api.uuid,
@@ -184,9 +238,29 @@ export function apiToPatchEvent(api: ApiPatchEvent): PatchEvent | undefined {
 				createdAt: api.created_at,
 				updatedAt: api.updated_at
 			};
+		case 'chat_reaction':
+			return {
+				eventType: api.event_type,
+				uuid: api.uuid,
+				user: api.user ? apiToUserSimple(api.user) : undefined,
+				data: { reaction: api.data.reaction },
+				object: apiToChatMessage(api.object),
+				createdAt: api.created_at,
+				updatedAt: api.updated_at
+			};
+		case 'chat_reply':
+			return {
+				eventType: api.event_type,
+				uuid: api.uuid,
+				user: api.user ? apiToUserSimple(api.user) : undefined,
+				data: { inReplyTo: api.data.in_reply_to },
+				object: apiToChatMessage(api.object),
+				createdAt: api.created_at,
+				updatedAt: api.updated_at
+			};
 		case 'patch_version':
 			// Ignore version 1 patches
-			if (api.object.version === 1) return undefined;
+			if (api.object.version === 1) return null;
 			return {
 				eventType: api.event_type,
 				uuid: api.uuid,

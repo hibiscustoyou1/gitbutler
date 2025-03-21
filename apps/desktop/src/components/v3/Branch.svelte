@@ -1,14 +1,23 @@
 <script lang="ts">
-	import BranchDividerLine from './BranchDividerLine.svelte';
-	import CommitRow from './CommitRow.svelte';
 	import ReduxResult from '$components/ReduxResult.svelte';
+	import SeriesHeaderContextMenu from '$components/SeriesHeaderContextMenu.svelte';
 	import BranchCommitList from '$components/v3/BranchCommitList.svelte';
+	import BranchDividerLine from '$components/v3/BranchDividerLine.svelte';
 	import BranchHeader from '$components/v3/BranchHeader.svelte';
-	import { branchPath, commitPath } from '$lib/routes/routes.svelte';
+	import CommitGoesHere from '$components/v3/CommitGoesHere.svelte';
+	import CommitRow from '$components/v3/CommitRow.svelte';
+	import EmptyBranch from '$components/v3/EmptyBranch.svelte';
+	import NewBranchModal from '$components/v3/NewBranchModal.svelte';
+	import { BaseBranchService } from '$lib/baseBranch/baseBranchService';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
 	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { combineResults } from '$lib/state/helpers';
+	import { UiState } from '$lib/state/uiState.svelte';
+	import { openExternalUrl } from '$lib/utils/url';
 	import { inject } from '@gitbutler/shared/context';
-	import { goto } from '$app/navigation';
+	import ContextMenu from '@gitbutler/ui/ContextMenu.svelte';
+	import PopoverActionsContainer from '@gitbutler/ui/popoverActions/PopoverActionsContainer.svelte';
+	import PopoverActionsItem from '@gitbutler/ui/popoverActions/PopoverActionsItem.svelte';
 
 	interface Props {
 		projectId: string;
@@ -16,62 +25,192 @@
 		branchName: string;
 		first: boolean;
 		last: boolean;
-		selected: boolean;
-		selectedCommitId?: string;
 	}
 
-	let {
-		projectId,
-		stackId,
-		branchName,
-		first,
-		last: lastBranch,
-		selected,
-		selectedCommitId = $bindable()
-	}: Props = $props();
+	let { projectId, stackId, branchName, first, last: lastBranch }: Props = $props();
 
-	const [stackService] = inject(StackService);
-	const branchResult = $derived(stackService.branchByName(projectId, stackId, branchName).current);
-	const commitResult = $derived(stackService.commitAt(projectId, stackId, branchName, 0).current);
+	const [stackService, baseBranchService, uiState, forge] = inject(
+		StackService,
+		BaseBranchService,
+		UiState,
+		DefaultForgeFactory
+	);
+
+	const branchResult = $derived(stackService.branchByName(projectId, stackId, branchName));
+	const branchesResult = $derived(stackService.branches(projectId, stackId));
+	const commitResult = $derived(stackService.commitAt(projectId, stackId, branchName, 0));
+	const base = $derived(baseBranchService.base);
+	const baseSha = $derived($base?.baseSha);
+
+	const drawer = $derived(uiState.project(projectId).drawerPage.get());
+	const isCommitting = $derived(drawer.current === 'new-commit');
+	const selection = $derived(uiState.stack(stackId).selection.get());
+	const selectedCommitId = $derived(selection.current?.commitId);
+
+	const forgeBranch = $derived(forge.current?.branch(branchName));
+
+	let headerContextMenu = $state<ReturnType<typeof SeriesHeaderContextMenu>>();
+	let kebabContextMenu = $state<ReturnType<typeof ContextMenu>>();
+	let kebabContextMenuTrigger = $state<HTMLButtonElement>();
+
+	let newBranchModal = $state<ReturnType<typeof NewBranchModal>>();
+	let branchElement = $state<HTMLDivElement>();
+	let contextMenuOpened = $state(false);
 </script>
 
-<ReduxResult result={combineResults(branchResult, commitResult)}>
-	{#snippet children([branch, commit])}
+<ReduxResult
+	result={combineResults(branchResult.current, branchesResult.current, commitResult.current)}
+>
+	{#snippet children([branch, branches, commit])}
+		{@const parentIsPushed = !!parent}
+		{@const hasParent = !!parent}
+		{@const selected = selection.current?.branchName === branch.name}
 		{#if !first}
 			<BranchDividerLine topPatchStatus={commit?.state.type ?? 'LocalOnly'} />
 		{/if}
-		<div class="branch" class:selected data-series-name={branchName}>
+		<div class="branch" class:selected data-series-name={branchName} bind:this={branchElement}>
 			<BranchHeader
 				{projectId}
 				{stackId}
 				{branch}
+				selected={selected && selection.current?.commitId === undefined}
 				isTopBranch={first}
-				readonly={false}
-				onclick={() => goto(branchPath(projectId, stackId, branch.name))}
-			/>
-			<BranchCommitList {projectId} {stackId} {branchName} {lastBranch} {selectedCommitId}>
-				{#snippet upstreamTemplate({ commit, commitKey, first, last: lastCommit, selected })}
-					<CommitRow
+				readonly={!!forgeBranch}
+				onclick={() => {
+					uiState.stack(stackId).selection.set({ branchName });
+					uiState.project(projectId).drawerPage.set('branch');
+				}}
+				onLabelDblClick={() => headerContextMenu?.showSeriesRenameModal?.()}
+			>
+				{#snippet children()}
+					<PopoverActionsContainer class="branch-actions-menu" stayOpen={contextMenuOpened}>
+						{#if first}
+							<PopoverActionsItem
+								icon="plus-small"
+								tooltip="Add dependent branch"
+								onclick={() => {
+									newBranchModal?.show();
+								}}
+							/>
+						{/if}
+						{#if forgeBranch}
+							<PopoverActionsItem
+								icon="open-link"
+								tooltip="Open in browser"
+								onclick={() => {
+									const url = forgeBranch?.url;
+									if (url) openExternalUrl(url);
+								}}
+							/>
+						{/if}
+						<PopoverActionsItem
+							bind:el={kebabContextMenuTrigger}
+							activated={contextMenuOpened}
+							icon="kebab"
+							tooltip="More options"
+							onclick={() => {
+								kebabContextMenu?.toggle();
+							}}
+						/>
+					</PopoverActionsContainer>
+					<NewBranchModal
 						{projectId}
-						{commitKey}
-						{first}
-						{lastCommit}
-						{commit}
-						{selected}
-						onclick={() => goto(commitPath(projectId, commitKey))}
+						{stackId}
+						bind:this={newBranchModal}
+						parentSeriesName={branch.name}
+					/>
+
+					<SeriesHeaderContextMenu
+						bind:this={headerContextMenu}
+						bind:contextMenuEl={kebabContextMenu}
+						{stackId}
+						leftClickTrigger={kebabContextMenuTrigger}
+						rightClickTrigger={branchElement}
+						headName={branch.name}
+						seriesCount={branches.length}
+						isTopBranch={true}
+						toggleDescription={async () => {}}
+						description={branch.description ?? ''}
+						onGenerateBranchName={() => {
+							throw new Error('Not implemented!');
+						}}
+						onAddDependentSeries={() => newBranchModal?.show()}
+						onOpenInBrowser={() => {
+							const url = forgeBranch?.url;
+							if (url) openExternalUrl(url);
+						}}
+						openPrDetailsModal={() => {}}
+						hasForgeBranch={!!forgeBranch}
+						onCreateNewPr={async () => uiState.project(projectId).drawerPage.set('pr')}
+						branchType={commit?.state.type || 'LocalOnly'}
+						onMenuToggle={(isOpen, isLeftClick) => {
+							if (isLeftClick) {
+								contextMenuOpened = isOpen;
+							}
+						}}
+						{parentIsPushed}
+						{hasParent}
 					/>
 				{/snippet}
-				{#snippet localAndRemoteTemplate({ commit, commitKey, first, last: lastCommit, selected })}
+			</BranchHeader>
+			<BranchCommitList {projectId} {stackId} {branchName} {selectedCommitId}>
+				{#snippet emptyPlaceholder()}
+					<EmptyBranch {lastBranch} />
+				{/snippet}
+				{#snippet upstreamTemplate({ commit, first, lastCommit, selected })}
+					{@const commitId = commit.id}
+					{#if !isCommitting}
+						<CommitRow
+							{stackId}
+							{branchName}
+							{projectId}
+							{first}
+							lastCommit={lastCommit && !commit}
+							{commit}
+							{selected}
+							onclick={() => {
+								uiState.stack(stackId).selection.set({ branchName, commitId, upstream: true });
+								uiState.project(projectId).drawerPage.set(undefined);
+							}}
+						/>
+					{/if}
+				{/snippet}
+				{#snippet localAndRemoteTemplate({ commit, first, last, lastCommit, selected })}
+					{@const commitId = commit.id}
+					{#if isCommitting}
+						<!-- Only commits to the base can be `last`, see next `CommitGoesHere`. -->
+						<CommitGoesHere
+							{commitId}
+							{selected}
+							{first}
+							last={false}
+							onclick={() => uiState.stack(stackId).selection.set({ branchName, commitId })}
+						/>
+					{/if}
 					<CommitRow
+						{stackId}
+						{branchName}
 						{projectId}
-						{commitKey}
 						{first}
 						{lastCommit}
 						{lastBranch}
 						{commit}
 						{selected}
-						onclick={() => goto(commitPath(projectId, commitKey))}
+						onclick={() => {
+							uiState.stack(stackId).selection.set({ branchName, commitId });
+							uiState.project(projectId).drawerPage.set(undefined);
+						}}
 					/>
+					{#if isCommitting && last && lastBranch}
+						<CommitGoesHere
+							{commitId}
+							{first}
+							{last}
+							selected={selectedCommitId === baseSha}
+							onclick={() =>
+								uiState.stack(stackId).selection.set({ branchName, commitId: baseSha })}
+						/>
+					{/if}
 				{/snippet}
 			</BranchCommitList>
 		</div>
@@ -82,6 +221,7 @@
 	.branch {
 		display: flex;
 		flex-direction: column;
+		width: 100%;
 		position: relative;
 		border: 1px solid var(--clr-border-2);
 		border-radius: var(--radius-ml);

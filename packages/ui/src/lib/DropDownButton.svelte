@@ -1,5 +1,5 @@
 <script lang="ts">
-	import ContextMenu from './ContextMenu.svelte';
+	import ContextMenu from '$lib/ContextMenu.svelte';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import Tooltip from '@gitbutler/ui/Tooltip.svelte';
 	import type iconsJson from '@gitbutler/ui/data/icons.json';
@@ -14,6 +14,7 @@
 		loading?: boolean;
 		wide?: boolean;
 		grow?: boolean;
+		autoClose?: boolean;
 		tooltip?: string;
 		type?: 'button' | 'submit' | 'reset';
 		menuPosition?: 'top' | 'bottom';
@@ -30,6 +31,7 @@
 		loading = false,
 		wide = false,
 		grow = false,
+		autoClose = false,
 		type,
 		tooltip,
 		menuPosition = 'bottom',
@@ -95,6 +97,16 @@
 			verticalAlign={menuPosition}
 			onclose={() => {
 				visible = false;
+			}}
+			onclick={() => {
+				if (autoClose) {
+					contextMenu?.close();
+				}
+			}}
+			onkeypress={() => {
+				if (autoClose) {
+					contextMenu?.close();
+				}
 			}}
 		>
 			{@render contextMenuSlot()}

@@ -101,6 +101,12 @@ impl StackBranch {
         &self.head
     }
 
+    pub fn full_name(&self) -> Result<gix::refs::FullName> {
+        qualified_reference_name(&self.name)
+            .try_into()
+            .map_err(Into::into)
+    }
+
     /// This will update the commit that this points to (the virtual reference in virtual_branches.toml) as well as update of create a real git reference.
     /// If this points to a change id, it's a noop operation. In practice, moving forward, new CommitOrChangeId entries will always be CommitId and ChangeId may only appear in deserialized data.
     pub fn set_head(
@@ -219,7 +225,6 @@ impl StackBranch {
                 let merge_base = stack.merge_base(stack_context)?;
                 let head_commit =
                     commit_by_oid_or_change_id(&self.head, repository, stack.head(), merge_base)?
-                        .head
                         .id();
                 Ok(head_commit)
             }
@@ -256,7 +261,7 @@ impl StackBranch {
                 upstream_only: vec![],
             });
         }
-        let head_commit = head_commit?.head.id();
+        let head_commit = head_commit?.id();
 
         // Find the previous head in the stack - if it is not archived, use it as base
         // Otherwise use the merge base
@@ -265,7 +270,7 @@ impl StackBranch {
             .filter(|predacessor| !predacessor.archived)
             .map_or(merge_base, |predacessor| {
                 commit_by_oid_or_change_id(&predacessor.head, repository, stack.head(), merge_base)
-                    .map(|commit| commit.head.id())
+                    .map(|commit| commit.id())
                     .unwrap_or(merge_base)
             });
 

@@ -1,19 +1,25 @@
 <script lang="ts">
-	import CommitAction from './CommitAction.svelte';
-	import CommitCard from './CommitCard.svelte';
-	import CommitDragItem from './CommitDragItem.svelte';
-	import CommitsAccordion from './CommitsAccordion.svelte';
+	import CardOverlay from '$components/CardOverlay.svelte';
+	import CommitAction from '$components/CommitAction.svelte';
+	import CommitCard from '$components/CommitCard.svelte';
+	import CommitsAccordion from '$components/CommitsAccordion.svelte';
 	import Dropzone from '$components/Dropzone.svelte';
 	import LineOverlay from '$components/LineOverlay.svelte';
 	import { BranchStack } from '$lib/branches/branch';
 	import { PatchSeries } from '$lib/branches/branch';
 	import { BranchController, type SeriesIntegrationStrategy } from '$lib/branches/branchController';
+	import { Commit, DetailedCommit } from '$lib/commits/commit';
+	import {
+		AmendCommitDzHandler,
+		SquashCommitDzHandler,
+		type DzCommitData
+	} from '$lib/commits/dropHandler';
 	import { findLastDivergentCommit } from '$lib/commits/utils';
 	import {
-		StackingReorderDropzoneManager,
-		type StackingReorderDropzone
+		ReorderCommitDzFactory,
+		type ReorderCommitDzHandler
 	} from '$lib/dragging/stackingReorderDropzoneManager';
-	import { getForge } from '$lib/forge/interface/forge';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
 	import { getContext } from '@gitbutler/shared/context';
 	import { getContextStore } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
@@ -41,15 +47,17 @@
 	type IntegrationStrategy = keyof typeof integrationStrategies;
 
 	interface Props {
+		stackId: string;
 		currentSeries: PatchSeries;
 		isUnapplied: boolean;
-		stackingReorderDropzoneManager: StackingReorderDropzoneManager;
+		stackingReorderDropzoneManager: ReorderCommitDzFactory;
 		isBottom?: boolean;
 	}
 	const {
+		stackId,
 		currentSeries,
 		isUnapplied,
-		stackingReorderDropzoneManager,
+		stackingReorderDropzoneManager: commitReorderDzFactory,
 		isBottom = false
 	}: Props = $props();
 
@@ -57,7 +65,7 @@
 	const branchController = getContext(BranchController);
 	const lineManagerFactory = getContext(LineManagerFactory);
 
-	const forge = getForge();
+	const forge = getContext(DefaultForgeFactory);
 
 	const localAndRemoteCommits = $derived(
 		currentSeries.patches.filter((patch) => patch.status === 'LocalAndRemote')
@@ -113,8 +121,8 @@
 	}
 </script>
 
-{#snippet stackingReorderDropzone(dropzone: StackingReorderDropzone)}
-	<Dropzone accepts={dropzone.accepts.bind(dropzone)} ondrop={dropzone.onDrop.bind(dropzone)}>
+{#snippet commitReorderDz(dropzone: ReorderCommitDzHandler)}
+	<Dropzone handlers={[dropzone]}>
 		{#snippet overlay({ hovered, activated })}
 			<LineOverlay {hovered} {activated} />
 		{/snippet}
@@ -152,12 +160,12 @@
 				{#each remoteOnlyPatches as commit, idx (commit.id)}
 					<CommitCard
 						type="Remote"
-						branch={$stack}
+						stack={$stack}
 						{commit}
 						{isUnapplied}
 						{currentSeries}
 						noBorder={idx === currentSeries.upstreamPatches.length - 1}
-						commitUrl={$forge?.commitUrl(commit.id)}
+						commitUrl={forge.current.commitUrl(commit.id)}
 						isHeadCommit={commit.id === headCommit?.id}
 					>
 						{#snippet lines()}
@@ -180,9 +188,7 @@
 		<!-- REMAINING LOCAL, LOCALANDREMOTE, AND INTEGRATED COMMITS -->
 		{#if currentSeries.patches.length > 0}
 			<div class="commits-group">
-				{@render stackingReorderDropzone(
-					stackingReorderDropzoneManager.topDropzone(currentSeries.name)
-				)}
+				{@render commitReorderDz(commitReorderDzFactory.top(currentSeries.name))}
 
 				{#each currentSeries.patches as commit, idx (commit.id)}
 					{@const isResetAction =
@@ -191,17 +197,38 @@
 							lastDivergentCommit.commit.id === commit.id) ||
 							(lastDivergentCommit.type === 'onlyRemoteDiverged' &&
 								idx === currentSeries.patches.length - 1))}
-					<CommitDragItem {commit}>
+					{@const dzCommit: DzCommitData = {
+						id: commit.id,
+						isRemote: commit instanceof Commit,
+						isIntegrated: commit instanceof DetailedCommit && commit.isIntegrated,
+						isConflicted: commit instanceof DetailedCommit && commit.conflicted
+					}}
+					{@const amendHandler = new AmendCommitDzHandler({
+						branchController,
+						stackId,
+						commit: dzCommit,
+						okWithForce: true
+					})}
+					{@const squashHandler = new SquashCommitDzHandler({
+						branchController,
+						stackId,
+						commit: dzCommit
+					})}
+					<Dropzone handlers={[amendHandler, squashHandler]}>
+						{#snippet overlay({ hovered, activated, handler })}
+							{@const label = handler instanceof AmendCommitDzHandler ? 'Amend' : 'Squash'}
+							<CardOverlay {hovered} {activated} {label} />
+						{/snippet}
 						<CommitCard
 							type={commit.status}
-							branch={$stack}
+							stack={$stack}
 							{commit}
 							{isUnapplied}
 							{currentSeries}
 							noBorder={idx === currentSeries.patches.length - 1}
 							last={idx === currentSeries.patches.length - 1 && !isResetAction}
 							isHeadCommit={commit.id === headCommit?.id}
-							commitUrl={$forge?.commitUrl(commit.id)}
+							commitUrl={forge.current.commitUrl(commit.id)}
 						>
 							{#snippet lines()}
 								<Line
@@ -210,10 +237,10 @@
 								/>
 							{/snippet}
 						</CommitCard>
-					</CommitDragItem>
+					</Dropzone>
 
-					{@render stackingReorderDropzone(
-						stackingReorderDropzoneManager.dropzoneBelowCommit(currentSeries.name, commit.id)
+					{@render commitReorderDz(
+						commitReorderDzFactory.belowCommit(currentSeries.name, commit.id)
 					)}
 
 					<!-- RESET TO REMOTE BUTTON -->
@@ -247,14 +274,14 @@
 				{#each remoteIntegratedPatches as commit, idx (commit.id)}
 					<CommitCard
 						type={commit.status}
-						branch={$stack}
+						stack={$stack}
 						{commit}
 						{currentSeries}
 						{isUnapplied}
 						noBorder={idx === remoteIntegratedPatches.length - 1}
 						last={idx === remoteIntegratedPatches.length - 1}
 						isHeadCommit={commit.id === headCommit?.id}
-						commitUrl={$forge?.commitUrl(commit.id)}
+						commitUrl={forge.current.commitUrl(commit.id)}
 						disableCommitActions={true}
 					>
 						{#snippet lines()}

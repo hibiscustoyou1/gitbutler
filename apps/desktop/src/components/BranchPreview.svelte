@@ -1,20 +1,19 @@
 <script lang="ts">
 	import BranchPreviewHeader from '$components/BranchPreviewHeader.svelte';
 	import CommitCard from '$components/CommitCard.svelte';
+	import ScrollableContainer from '$components/ConfigurableScrollableContainer.svelte';
 	import FileCard from '$components/FileCard.svelte';
 	import Resizer from '$components/Resizer.svelte';
-	import ScrollableContainer from '$components/ScrollableContainer.svelte';
 	import { BranchData } from '$lib/branches/branch';
 	import { transformAnyCommit } from '$lib/commits/transformers';
-	import { getForge } from '$lib/forge/interface/forge';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
 	import { FileIdSelection } from '$lib/selection/fileIdSelection';
-	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
-	import { getContext, getContextStoreBySymbol } from '@gitbutler/shared/context';
+	import { getContext } from '@gitbutler/shared/context';
+	import { persistWithExpiration } from '@gitbutler/shared/persisted';
 	import Line from '@gitbutler/ui/commitLines/Line.svelte';
 	import { LineManagerFactory } from '@gitbutler/ui/commitLines/lineManager';
 	import Markdown from '@gitbutler/ui/markdown/Markdown.svelte';
-	import lscache from 'lscache';
-	import { onMount, setContext } from 'svelte';
+	import { setContext } from 'svelte';
 	import type { PullRequest } from '$lib/forge/interface/types';
 
 	interface Props {
@@ -25,7 +24,7 @@
 
 	const { localBranch = undefined, remoteBranch = undefined, pr }: Props = $props();
 
-	const forge = getForge();
+	const forge = getContext(DefaultForgeFactory);
 
 	const fileIdSelection = new FileIdSelection();
 	setContext(FileIdSelection, fileIdSelection);
@@ -34,9 +33,7 @@
 	const commitId = $derived($selectedFile?.commitId);
 	const selected = $derived($selectedFile?.file);
 
-	const defaultBranchWidthRem = 30;
-	const laneWidthKey = 'branchPreviewLaneWidth';
-	const userSettings = getContextStoreBySymbol<Settings>(SETTINGS);
+	const width = persistWithExpiration<number>(30, 'branchPreviewLaneWidth', 7 * 1440);
 	const lineManagerFactory = getContext(LineManagerFactory);
 
 	const remoteCommitShas = $derived(
@@ -70,20 +67,11 @@
 	);
 
 	let rsViewport = $state<HTMLDivElement>();
-	let laneWidth = $state<number>();
-
-	onMount(() => {
-		laneWidth = lscache.get(laneWidthKey);
-	});
 </script>
 
 {#if remoteBranch || localBranch}
 	<div class="base">
-		<div
-			class="base__left"
-			bind:this={rsViewport}
-			style:width={`${laneWidth || defaultBranchWidthRem}rem`}
-		>
+		<div class="base__left" bind:this={rsViewport} style:width={$width + 'rem'}>
 			<ScrollableContainer wide>
 				<div class="branch-preview">
 					<BranchPreviewHeader {localBranch} {remoteBranch} {pr} />
@@ -104,7 +92,7 @@
 									isUnapplied
 									last={index === remoteCommits.length - 1}
 									{commit}
-									commitUrl={$forge?.commitUrl(commit.id)}
+									commitUrl={forge.current.commitUrl(commit.id)}
 									type="Remote"
 									disableCommitActions={true}
 								>
@@ -120,7 +108,7 @@
 									isUnapplied
 									last={index === localCommits.length - 1}
 									{commit}
-									commitUrl={$forge?.commitUrl(commit.id)}
+									commitUrl={forge.current.commitUrl(commit.id)}
 									type="LocalOnly"
 									disableCommitActions={true}
 								>
@@ -136,7 +124,7 @@
 									isUnapplied
 									last={index === localAndRemoteCommits.length - 1}
 									{commit}
-									commitUrl={$forge?.commitUrl(commit.id)}
+									commitUrl={forge.current.commitUrl(commit.id)}
 									type="LocalAndRemote"
 									disableCommitActions={true}
 								>
@@ -152,11 +140,8 @@
 			<Resizer
 				viewport={rsViewport}
 				direction="right"
-				minWidth={320}
-				onWidth={(value) => {
-					laneWidth = value / (16 * $userSettings.zoom);
-					lscache.set(laneWidthKey, laneWidth, 7 * 1440); // 7 day ttl
-				}}
+				minWidth={20}
+				onWidth={(value) => ($width = value)}
 			/>
 		</div>
 		<div class="base__right">

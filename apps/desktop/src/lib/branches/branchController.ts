@@ -3,11 +3,12 @@ import { showError, showToast } from '$lib/notifications/toasts';
 import * as toasts from '@gitbutler/ui/toasts';
 import type { PostHogWrapper } from '$lib/analytics/posthog';
 import type { BaseBranchService } from '$lib/baseBranch/baseBranchService';
+import type { StackOrder } from '$lib/branches/branch';
 import type { BranchListingService } from '$lib/branches/branchListing';
+import type { VirtualBranchService } from '$lib/branches/virtualBranchService';
 import type { LocalFile } from '$lib/files/file';
+import type { TreeChange } from '$lib/hunks/change';
 import type { DiffSpec, Hunk } from '$lib/hunks/hunk';
-import type { StackOrder } from './branch';
-import type { VirtualBranchService } from './virtualBranchService';
 
 export type CommitIdOrChangeId = { CommitId: string } | { ChangeId: string };
 export type SeriesIntegrationStrategy = 'merge' | 'rebase' | 'hardreset';
@@ -301,6 +302,20 @@ export class BranchController {
 		}
 	}
 
+	async unapplyChanges(branchId: string | undefined, changes: TreeChange[]) {
+		// TODO: this won't for changes.
+		// There are some changes required on the rust side to make this work.
+		try {
+			await invoke<void>('reset_files', {
+				projectId: this.projectId,
+				branchId,
+				files: changes.map((c) => c.path)
+			});
+		} catch (err) {
+			showError('Failed to unapply changes', err);
+		}
+	}
+
 	async saveAndUnapply(branchId: string) {
 		try {
 			await invoke<void>('save_and_unapply_virtual_branch', {
@@ -436,11 +451,11 @@ export class BranchController {
 		}
 	}
 
-	async squashBranchCommit(branchId: string, sourceCommitOid: string, targetCommitOid: string) {
+	async squashBranchCommit(stackId: string, sourceCommitOid: string, targetCommitOid: string) {
 		try {
 			await invoke<void>('squash_commits', {
 				projectId: this.projectId,
-				branchId,
+				stackId,
 				sourceCommitOids: [sourceCommitOid], // The API has the ability to squash multiple commits, but currently the UI only squashes one at a time
 				targetCommitOid
 			});
@@ -519,13 +534,13 @@ export class BranchController {
 		}
 	}
 
-	async moveCommit(targetBranchId: string, commitOid: string, sourceBranchId: string) {
+	async moveCommit(targetStackId: string, commitOid: string, sourceStackId: string) {
 		try {
 			await invoke<void>('move_commit', {
 				projectId: this.projectId,
-				targetBranchId,
+				targetStackId,
 				commitOid,
-				sourceBranchId
+				sourceStackId
 			});
 		} catch (err: any) {
 			showError('Failed to move commit', err);

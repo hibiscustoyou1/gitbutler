@@ -2,8 +2,8 @@
 </script>
 
 <script lang="ts">
-	import HunkDiffRow from './HunkDiffRow.svelte';
-	import LineSelection from './lineSelection.svelte';
+	import HunkDiffRow, { type ContextMenuParams } from '$lib/hunkDiff/HunkDiffRow.svelte';
+	import LineSelection from '$lib/hunkDiff/lineSelection.svelte';
 	import { clickOutside } from '$lib/utils/clickOutside';
 	import {
 		type ContentSection,
@@ -11,7 +11,7 @@
 		type LineSelector,
 		parserFromFilename
 	} from '$lib/utils/diffParsing';
-	import type { LineSelectionParams } from './lineSelection.svelte';
+	import type { LineSelectionParams } from '$lib/hunkDiff/lineSelection.svelte';
 
 	interface Props {
 		filePath: string;
@@ -26,6 +26,10 @@
 		onQuoteSelection?: () => void;
 		onCopySelection?: () => void;
 		numberHeaderWidth?: number;
+		staged?: boolean;
+		onToggleStage?: () => void;
+		handleLineContextMenu?: (params: ContextMenuParams) => void;
+		clickOutsideExcludeElement?: HTMLElement;
 	}
 
 	const {
@@ -40,7 +44,11 @@
 		selectedLines,
 		numberHeaderWidth,
 		onCopySelection,
-		onQuoteSelection
+		onQuoteSelection,
+		staged,
+		onToggleStage,
+		handleLineContextMenu,
+		clickOutsideExcludeElement
 	}: Props = $props();
 
 	const lineSelection = $derived(new LineSelection(onLineClick));
@@ -67,7 +75,8 @@
 	ontouchmove={(ev) => lineSelection.onTouchMove(ev)}
 	ontouchend={() => lineSelection.onEnd()}
 	use:clickOutside={{
-		handler: handleClearSelection
+		handler: handleClearSelection,
+		excludeElement: clickOutsideExcludeElement
 	}}
 >
 	{#each renderRows as row, idx}
@@ -84,6 +93,9 @@
 			{onCopySelection}
 			clearLineSelection={handleClearSelection}
 			{hoveringOverTable}
+			{staged}
+			{onToggleStage}
+			{handleLineContextMenu}
 		/>
 	{/each}
 </tbody>

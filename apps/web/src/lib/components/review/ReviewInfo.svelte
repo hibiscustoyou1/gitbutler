@@ -1,7 +1,7 @@
 <script lang="ts">
-	import ChangeStatus from '../changes/ChangeStatus.svelte';
-	import Factoid from '../infoFlexRow/Factoid.svelte';
-	import InfoFlexRow from '../infoFlexRow/InfoFlexRow.svelte';
+	import ChangeStatus from '$lib/components/changes/ChangeStatus.svelte';
+	import Factoid from '$lib/components/infoFlexRow/Factoid.svelte';
+	import InfoFlexRow from '$lib/components/infoFlexRow/InfoFlexRow.svelte';
 	import { getChatChannelParticipants } from '@gitbutler/shared/chat/chatChannelsPreview.svelte';
 	import { ChatChannelsService } from '@gitbutler/shared/chat/chatChannelsService';
 	import { getContext } from '@gitbutler/shared/context';
@@ -11,7 +11,7 @@
 		getPatchContributorsWithAvatars,
 		getPatchRejectorsWithAvatars
 	} from '@gitbutler/shared/contributors';
-	import { type Patch } from '@gitbutler/shared/patches/types';
+	import { type PatchCommit } from '@gitbutler/shared/patches/types';
 	import { AppState } from '@gitbutler/shared/redux/store.svelte';
 	import AvatarGroup from '@gitbutler/ui/avatar/AvatarGroup.svelte';
 
@@ -21,15 +21,15 @@
 
 	interface Props {
 		projectId: string;
-		patch: Patch;
+		patchCommit: PatchCommit;
 	}
 
-	const { patch, projectId }: Props = $props();
+	const { patchCommit, projectId }: Props = $props();
 	const appState = getContext(AppState);
 	const chatChannelService = getContext(ChatChannelsService);
 
 	const chatParticipants = $derived(
-		getChatChannelParticipants(appState, chatChannelService, projectId, patch.changeId)
+		getChatChannelParticipants(appState, chatChannelService, projectId, patchCommit.changeId)
 	);
 
 	const commenters = $derived(
@@ -37,14 +37,14 @@
 			? Promise.resolve([])
 			: getUsersWithAvatars(chatParticipants.current)
 	);
-	const contributors = $derived(getPatchContributorsWithAvatars(patch));
-	const approvers = $derived(getPatchApproversWithAvatars(patch));
-	const rejectors = $derived(getPatchRejectorsWithAvatars(patch));
+	const contributors = $derived(getPatchContributorsWithAvatars(patchCommit));
+	const approvers = $derived(getPatchApproversWithAvatars(patchCommit));
+	const rejectors = $derived(getPatchRejectorsWithAvatars(patchCommit));
 </script>
 
 <InfoFlexRow>
 	<Factoid label="Status">
-		<ChangeStatus {patch} />
+		<ChangeStatus {patchCommit} />
 	</Factoid>
 	<Factoid label="Reviewed by" placeholderText={NO_REVIEWERS}>
 		{#await Promise.all([approvers, rejectors]) then [approvers, rejectors]}
@@ -67,5 +67,8 @@
 				<AvatarGroup avatars={contributors} />
 			{/if}
 		{/await}
+	</Factoid>
+	<Factoid label="Version">
+		v{patchCommit.version}
 	</Factoid>
 </InfoFlexRow>

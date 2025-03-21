@@ -2,6 +2,7 @@
 	import Chrome from '$components/Chrome.svelte';
 	import FileMenuAction from '$components/FileMenuAction.svelte';
 	import History from '$components/History.svelte';
+	import MetricsReporter from '$components/MetricsReporter.svelte';
 	import Navigation from '$components/Navigation.svelte';
 	import NoBaseBranch from '$components/NoBaseBranch.svelte';
 	import NotOnGitButlerBranch from '$components/NotOnGitButlerBranch.svelte';
@@ -11,20 +12,15 @@
 	import { BaseBranchService } from '$lib/baseBranch/baseBranchService';
 	import { BranchController } from '$lib/branches/branchController';
 	import { BranchListingService, CombinedBranchListingService } from '$lib/branches/branchListing';
-	import { BranchDragActionsFactory } from '$lib/branches/dragActions';
 	import { GitBranchService } from '$lib/branches/gitBranch';
 	import { VirtualBranchService } from '$lib/branches/virtualBranchService';
-	import { CommitDragActionsFactory } from '$lib/commits/dragActions';
 	import { SettingsService } from '$lib/config/appSettingsV2';
 	import { showHistoryView } from '$lib/config/config';
 	import { StackingReorderDropzoneManagerFactory } from '$lib/dragging/stackingReorderDropzoneManager';
 	import { UncommitedFilesWatcher } from '$lib/files/watcher';
-	import { DefaultForgeFactory } from '$lib/forge/forgeFactory';
-	import { octokitFromAccessToken } from '$lib/forge/github/octokit';
-	import { createForgeStore } from '$lib/forge/interface/forge';
-	import { createForgeListingServiceStore } from '$lib/forge/interface/forgeListingService';
-	import { createForgePrServiceStore } from '$lib/forge/interface/forgePrService';
-	import { createForgeRepoServiceStore } from '$lib/forge/interface/forgeRepoService';
+	import { DefaultForgeFactory, type ForgeConfig } from '$lib/forge/forgeFactory.svelte';
+	import { GitHubClient } from '$lib/forge/github/githubClient';
+	import { BrToPrService } from '$lib/forge/shared/prFooter';
 	import { TemplateService } from '$lib/forge/templateService';
 	import { HistoryService } from '$lib/history/history';
 	import { StackPublishingService } from '$lib/history/stackPublishingService';
@@ -33,14 +29,16 @@
 	import { Project } from '$lib/project/project';
 	import { projectCloudSync } from '$lib/project/projectCloudSync.svelte';
 	import { ProjectService } from '$lib/project/projectService';
+	import { IdSelection } from '$lib/selection/idSelection.svelte';
 	import { UpstreamIntegrationService } from '$lib/upstream/upstreamIntegrationService';
 	import { debounce } from '$lib/utils/debounce';
+	import { WorktreeService } from '$lib/worktree/worktreeService.svelte';
 	import { BranchService as CloudBranchService } from '@gitbutler/shared/branches/branchService';
 	import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
 	import { getContext } from '@gitbutler/shared/context';
 	import { HttpClient } from '@gitbutler/shared/network/httpClient';
 	import { ProjectService as CloudProjectService } from '@gitbutler/shared/organizations/projectService';
-	import { AppState } from '@gitbutler/shared/redux/store.svelte';
+	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
 	import { onDestroy, setContext, type Snippet } from 'svelte';
 	import type { ProjectMetrics } from '$lib/metrics/projectMetrics';
 	import type { LayoutData } from './$types';
@@ -68,6 +66,11 @@
 	const forkInfo = $derived(baseBranchService.pushRepo);
 	const user = $derived(userService.user);
 	const accessToken = $derived($user?.github_access_token);
+
+	const gitHubClient = getContext(GitHubClient);
+	$effect(() => gitHubClient.setToken(accessToken));
+	$effect(() => gitHubClient.setRepo({ owner: $repoInfo?.owner, repo: $repoInfo?.name }));
+
 	const baseError = $derived(baseBranchService.error);
 	const projectError = $derived(projectsService.error);
 
@@ -93,8 +96,6 @@
 		setContext(TemplateService, data.templateService);
 		setContext(BaseBranch, baseBranch);
 		setContext(Project, project);
-		setContext(BranchDragActionsFactory, data.branchDragActionsFactory);
-		setContext(CommitDragActionsFactory, data.commitDragActionsFactory);
 		setContext(StackingReorderDropzoneManagerFactory, data.stackingReorderDropzoneManagerFactory);
 		setContext(GitBranchService, data.gitBranchService);
 		setContext(BranchListingService, data.branchListingService);
@@ -107,21 +108,18 @@
 		setContext(StackPublishingService, data.stackPublishingService);
 	});
 
+	const worktreeService = getContext(WorktreeService);
+	const idSelection = new IdSelection(worktreeService);
+	setContext(IdSelection, idSelection);
+
 	let intervalId: any;
 
-	const octokit = $derived(accessToken ? octokitFromAccessToken(accessToken) : undefined);
-	const forgeFactory = $derived(new DefaultForgeFactory(octokit, posthog, projectMetrics));
 	const baseBranchName = $derived($baseBranch?.shortName);
 
-	const listServiceStore = createForgeListingServiceStore(undefined);
-	const forgeStore = createForgeStore(undefined);
-	const prService = createForgePrServiceStore(undefined);
-	const repoService = createForgeRepoServiceStore(undefined);
-
+	const forgeFactory = getContext(DefaultForgeFactory);
 	$effect.pre(() => {
 		const combinedBranchListingService = new CombinedBranchListingService(
 			data.branchListingService,
-			listServiceStore,
 			projectId
 		);
 
@@ -150,15 +148,22 @@
 	});
 
 	$effect(() => {
-		const forge =
-			$repoInfo && baseBranchName
-				? forgeFactory.build($repoInfo, baseBranchName, $forkInfo)
-				: undefined;
-		const ghListService = forge?.listService();
-		listServiceStore.set(ghListService);
-		forgeStore.set(forge);
-		prService.set(forge ? forge.prService() : undefined);
-		repoService.set(forge ? forge.repoService() : undefined);
+		setConfig({
+			repo: $repoInfo,
+			pushRepo: $forkInfo,
+			baseBranch: baseBranchName
+		});
+	});
+
+	let number = 0;
+	function setConfig(config: ForgeConfig) {
+		number++;
+		if (number < 8) {
+			return forgeFactory.setConfig(config);
+		}
+	}
+
+	$effect(() => {
 		posthog.setPostHogRepo($repoInfo);
 		return () => {
 			posthog.setPostHogRepo(undefined);
@@ -203,24 +208,30 @@
 		if (intervalId) clearInterval(intervalId);
 	}
 
-	const appState = getContext(AppState);
 	const httpClient = getContext(HttpClient);
 
 	const settingsService = getContext(SettingsService);
 	const settingsStore = settingsService.appSettings;
 
+	const webRoutesService = getContext(WebRoutesService);
+	const brToPrService = new BrToPrService(
+		webRoutesService,
+		cloudProjectService,
+		latestBranchLookupService,
+		forgeFactory
+	);
+	setContext(BrToPrService, brToPrService);
+
 	$effect(() => {
-		projectCloudSync(
-			appState,
-			data.projectsService,
-			data.projectService,
-			cloudProjectService,
-			httpClient
-		);
+		projectCloudSync(data.projectsService, data.projectService, httpClient);
 	});
 
 	onDestroy(() => {
 		clearFetchInterval();
+	});
+
+	$effect(() => {
+		projectsService.setActiveProject(projectId);
 	});
 </script>
 
@@ -243,11 +254,11 @@
 		{#if $mode?.type === 'OpenWorkspace' || $mode?.type === 'Edit'}
 			<div class="view-wrap" role="group" ondragover={(e) => e.preventDefault()}>
 				{#if $settingsStore?.featureFlags.v3}
-					<Chrome>
+					<Chrome {projectId}>
 						{@render children()}
 					</Chrome>
 				{:else}
-					<Navigation />
+					<Navigation {projectId} />
 					{@render children()}
 				{/if}
 				{#if $showHistoryView}
@@ -259,6 +270,9 @@
 		{/if}
 	{/if}
 {/key}
+
+<!-- Mounting metrics reporter in the board ensures dependent services are subscribed to. -->
+<MetricsReporter {projectId} {projectMetrics} />
 
 <style>
 	.view-wrap {

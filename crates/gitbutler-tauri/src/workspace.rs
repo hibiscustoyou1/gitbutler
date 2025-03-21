@@ -4,8 +4,10 @@ use but_hunk_dependency::ui::{
     hunk_dependencies_for_workspace_changes_by_worktree_dir, HunkDependencies,
 };
 use but_settings::AppSettingsWithDiskSync;
+use but_workspace::commit_engine::StackSegmentId;
 use but_workspace::{commit_engine, StackEntry};
 use gitbutler_command_context::CommandContext;
+use gitbutler_oplog::{OplogExt, SnapshotExt};
 use gitbutler_project as projects;
 use gitbutler_project::ProjectId;
 use gitbutler_stack::StackId;
@@ -20,6 +22,19 @@ pub fn stacks(
 ) -> Result<Vec<StackEntry>, Error> {
     let project = projects.get(project_id)?;
     but_workspace::stacks(&project.gb_dir()).map_err(Into::into)
+}
+
+#[tauri::command(async)]
+#[instrument(skip(projects, settings), err(Debug))]
+pub fn stack_info(
+    projects: State<'_, projects::Controller>,
+    settings: State<'_, AppSettingsWithDiskSync>,
+    project_id: ProjectId,
+    stack_id: StackId,
+) -> Result<but_workspace::StackDetails, Error> {
+    let project = projects.get(project_id)?;
+    let ctx = CommandContext::open(&project, settings.get()?.clone())?;
+    but_workspace::stack_info(&project.gb_dir(), stack_id, &ctx).map_err(Into::into)
 }
 
 #[tauri::command(async)]
@@ -120,23 +135,38 @@ pub fn create_commit_from_worktree_changes(
             }
         }
     };
-    Ok(commit_engine::create_commit_and_update_refs_with_project(
+    let mut guard = project.exclusive_worktree_access();
+    let snapshot_tree = project.prepare_snapshot(guard.read_permission());
+    let outcome = commit_engine::create_commit_and_update_refs_with_project(
         &repo,
-        Some((&project, Some(stack_id))),
+        &project,
+        Some(stack_id),
         commit_engine::Destination::NewCommit {
             parent_commit_id,
-            message,
-            stack_segment_ref: Some(
-                format!("refs/heads/{stack_branch_name}")
+            message: message.clone(),
+            stack_segment: Some(StackSegmentId {
+                stack_id,
+                segment_ref: format!("refs/heads/{stack_branch_name}")
                     .try_into()
                     .map_err(anyhow::Error::from)?,
-            ),
+            }),
         },
         None,
         worktree_changes.into_iter().map(Into::into).collect(),
         settings.get()?.context_lines,
-    )?
-    .into())
+        guard.write_permission(),
+    );
+    let _ = snapshot_tree.and_then(|snapshot_tree| {
+        project.snapshot_commit_creation(
+            snapshot_tree,
+            outcome.as_ref().err(),
+            message.to_owned(),
+            None,
+            guard.write_permission(),
+        )
+    });
+
+    Ok(outcome?.into())
 }
 
 /// Amend all `changes` to `commit_id`, keeping its commit message exactly as is.
@@ -155,14 +185,47 @@ pub fn amend_commit_from_worktree_changes(
     worktree_changes: Vec<commit_engine::ui::DiffSpec>,
 ) -> Result<commit_engine::ui::CreateCommitOutcome, Error> {
     let project = projects.get(project_id)?;
+    let mut guard = project.exclusive_worktree_access();
     let repo = but_core::open_repo_for_merging(&project.worktree_path())?;
     Ok(commit_engine::create_commit_and_update_refs_with_project(
         &repo,
-        Some((&project, Some(stack_id))),
+        &project,
+        Some(stack_id),
         commit_engine::Destination::AmendCommit(commit_id.into()),
         None,
         worktree_changes.into_iter().map(Into::into).collect(),
         settings.get()?.context_lines,
+        guard.write_permission(),
     )?
     .into())
+}
+
+/// Discard all worktree changes that match the specs in `worktree_changes`.
+///
+/// If whole files should be discarded, be sure to not pass any [hunks](but_workspace::discard::ui::DiscardSpec::hunk_headers)
+///
+/// Returns the `worktree_changes` that couldn't be applied,
+#[tauri::command(async)]
+#[instrument(skip(projects), err(Debug))]
+pub fn discard_worktree_changes(
+    projects: State<'_, projects::Controller>,
+    project_id: ProjectId,
+    worktree_changes: Vec<but_workspace::discard::ui::DiscardSpec>,
+) -> Result<Vec<but_workspace::discard::ui::DiscardSpec>, Error> {
+    let project = projects.get(project_id)?;
+    let repo = but_core::open_repo(&project.worktree_path())?;
+    let _guard = project.exclusive_worktree_access();
+
+    let refused = but_workspace::discard_workspace_changes(
+        &repo,
+        worktree_changes.into_iter().map(|change| {
+            but_workspace::discard::DiscardSpec::from(but_workspace::commit_engine::DiffSpec::from(
+                change,
+            ))
+        }),
+    )?;
+    Ok(refused
+        .into_iter()
+        .map(|change| commit_engine::DiffSpec::from(change).into())
+        .collect())
 }
