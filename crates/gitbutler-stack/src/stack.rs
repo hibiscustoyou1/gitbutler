@@ -6,10 +6,13 @@ use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use but_core::Reference;
+use but_rebase::ReferenceSpec;
 use git2::Commit;
 use gitbutler_command_context::CommandContext;
 use gitbutler_commit::commit_ext::CommitExt;
 use gitbutler_id::id::Id;
+use gitbutler_oxidize::ObjectIdExt;
 use gitbutler_reference::{normalize_branch_name, Refname, RemoteRefname, VirtualRefname};
 use gitbutler_repo::logging::LogUntil;
 use gitbutler_repo::logging::RepositoryExt as _;
@@ -179,6 +182,14 @@ impl Stack {
 
     fn set_head(&mut self, head: git2::Oid) {
         self.head = head;
+    }
+
+    /// This is the name of the top-most branch, provided by the API for convinience
+    pub fn derived_name(&self) -> Result<String> {
+        self.heads
+            .last()
+            .map(|head| head.name.clone())
+            .ok_or_else(|| anyhow!("Stack is uninitialized"))
     }
 
     // TODO: When this is stable, make it error out on initialization failure
@@ -414,7 +425,7 @@ impl Stack {
     /// those commits are moved to the branch underneath it (or more accurately, the preceding it)
     ///
     /// This operation mutates the gitbutler::Branch.heads list and updates the state in `virtual_branches.toml`
-    pub fn remove_series(&mut self, ctx: &CommandContext, branch_name: String) -> Result<()> {
+    pub fn remove_branch(&mut self, ctx: &CommandContext, branch_name: String) -> Result<()> {
         self.ensure_initialized()?;
         (self.heads, _) = remove_head(self.heads.clone(), branch_name, &ctx.gix_repository()?)?;
         let state = branch_state(ctx);
@@ -426,7 +437,7 @@ impl Stack {
     /// If the branch name is updated, the pr_number will be reset to None.
     ///
     /// This operation mutates the gitbutler::Branch.heads list and updates the state in `virtual_branches.toml`
-    pub fn update_series(
+    pub fn update_branch(
         &mut self,
         ctx: &CommandContext,
         branch_name: String,
@@ -533,18 +544,35 @@ impl Stack {
     }
 
     /// Removes any heads that are refering to commits that are no longer between the stack head and the merge base
-    pub fn archive_integrated_heads(&mut self, ctx: &CommandContext) -> Result<Vec<String>> {
+    pub fn archive_integrated_heads(
+        &mut self,
+        ctx: &CommandContext,
+        repo: &gix::Repository,
+        for_archival: &[Reference],
+        delete_local_refs: bool,
+    ) -> Result<(Vec<String>, Vec<String>)> {
         self.ensure_initialized()?;
 
         let mut newly_archived_branches = vec![];
+        let mut review_ids_to_close = vec![];
 
         self.updated_timestamp_ms = gitbutler_time::time::now_ms();
         let state = branch_state(ctx);
-        let commit_ids = self.stack_patches(&ctx.to_stack_context()?, false)?;
         for head in self.heads.iter_mut() {
-            if !commit_ids.contains(head.head()) {
+            let full_name = head.full_name()?;
+            if for_archival.iter().any(|reference| match reference {
+                Reference::Git(r) => r == &full_name,
+                Reference::Virtual(r) => r == head.name(),
+            }) {
                 head.archived = true;
                 newly_archived_branches.push(head.name().clone());
+                if let Some(review_id) = head.review_id.clone() {
+                    review_ids_to_close.push(review_id);
+                }
+
+                if delete_local_refs {
+                    head.delete_reference(repo).ok(); // Fail silently because interrupting this is worse
+                }
             }
         }
 
@@ -560,7 +588,7 @@ impl Stack {
 
         state.set_stack(self.clone())?;
 
-        Ok(newly_archived_branches)
+        Ok((newly_archived_branches, review_ids_to_close))
     }
 
     /// Prepares push details according to the series to be pushed (picking out the correct sha and remote refname)
@@ -573,8 +601,7 @@ impl Stack {
             ctx.repo(),
             self.head(),
             self.merge_base(&ctx.to_stack_context()?)?,
-        )?
-        .head;
+        )?;
         let remote_name = branch_state(ctx).get_default_target()?.push_remote_name();
         let upstream_refname =
             RemoteRefname::from_str(&reference.remote_reference(remote_name.as_str()))?;
@@ -688,17 +715,63 @@ impl Stack {
         {
             return Err(anyhow!("The new head names do not match the current heads"));
         }
-        let stack_head = self.head();
         let gix_repo = ctx.gix_repository()?;
         for head in &mut self.heads {
             if let Some(commit) = new_heads.get(head.name()) {
-                let new_head = commit.clone().into();
-                validate_target(&new_head, ctx.repo(), stack_head, &state)?;
                 head.set_head(commit.clone().into(), &gix_repo)?;
             }
         }
         state.set_stack(self.clone())?;
         Ok(())
+    }
+
+    /// Sets the stack heads according to the output from the rebase of a `but-rebase` rebase operation
+    pub fn set_heads_from_rebase_output(
+        &mut self,
+        ctx: &CommandContext,
+        references: Vec<ReferenceSpec>,
+    ) -> anyhow::Result<()> {
+        let mut new_heads: HashMap<String, Commit<'_>> = HashMap::new();
+        for spec in &references {
+            let commit = ctx.repo().find_commit(spec.commit_id.to_git2())?;
+            new_heads.insert(spec.reference.to_string(), commit);
+        }
+
+        self.set_all_heads(ctx, new_heads)
+    }
+
+    /// Migrates all change IDs in stack heads to commit IDs.
+    #[allow(deprecated)]
+    pub fn migrate_change_ids(&mut self, ctx: &CommandContext) -> Result<()> {
+        // If all of the heads are already commit IDs, there is nothing to do
+        if self
+            .heads
+            .iter()
+            .all(|h| matches!(h.head(), CommitOrChangeId::CommitId(_)))
+        {
+            return Ok(());
+        }
+
+        let stack_head = self.head();
+        let stack_ctx = ctx.to_stack_context()?;
+        let merge_base = self.merge_base(&stack_ctx)?;
+
+        for head in self.heads.iter_mut() {
+            #[allow(deprecated)]
+            if let CommitOrChangeId::ChangeId(_) = &head.head {
+                if let Ok(commit) = commit_by_oid_or_change_id(
+                    &head.head.clone(),
+                    ctx.repo(),
+                    stack_head,
+                    merge_base,
+                ) {
+                    head.head = CommitOrChangeId::CommitId(commit.id().to_string());
+                };
+            }
+        }
+
+        let state = branch_state(ctx);
+        state.set_stack(self.clone())
     }
 
     /// Sets the forge identifier for a given series/branch.
@@ -710,18 +783,18 @@ impl Stack {
     pub fn set_pr_number(
         &mut self,
         ctx: &CommandContext,
-        series_name: &str,
+        branch_name: &str,
         new_pr_number: Option<usize>,
     ) -> Result<()> {
         self.ensure_initialized()?;
-        match self.heads.iter_mut().find(|r| r.name() == series_name) {
+        match self.heads.iter_mut().find(|r| r.name() == branch_name) {
             Some(head) => {
                 head.pr_number = new_pr_number;
                 branch_state(ctx).set_stack(self.clone())
             }
             None => bail!(
                 "Series {} does not exist on stack {}",
-                series_name,
+                branch_name,
                 self.name
             ),
         }
@@ -820,7 +893,7 @@ fn validate_target(
 ) -> Result<()> {
     let default_target = state.get_default_target()?;
     let merge_base = repo.merge_base(stack_head, default_target.sha)?;
-    let commit = commit_by_oid_or_change_id(reference, repo, stack_head, merge_base)?.head;
+    let commit = commit_by_oid_or_change_id(reference, repo, stack_head, merge_base)?;
 
     let merge_base = repo.merge_base(stack_head, default_target.sha)?;
     let mut stack_commits = repo
@@ -867,7 +940,7 @@ fn commit_by_branch_id_and_change_id<'a>(
     stack_head: git2::Oid, // branch.head
     merge_base: git2::Oid,
     change_id: &str,
-) -> Result<CommitsForId<'a>> {
+) -> Result<Commit<'a>> {
     let commits = if stack_head == merge_base {
         vec![repo.find_commit(stack_head)?]
     } else {
@@ -882,11 +955,7 @@ fn commit_by_branch_id_and_change_id<'a>(
         .filter(|c| c.change_id().as_deref() == Some(change_id))
         .collect_vec();
     if let Some(head) = commits.first() {
-        let commits_for_id = CommitsForId {
-            head: head.clone(),
-            tail: commits.iter().skip(1).cloned().collect_vec(),
-        };
-        Ok(commits_for_id)
+        Ok(head.clone())
     } else {
         Err(anyhow!("No commit with change id {} found", change_id))
     }
@@ -904,29 +973,14 @@ pub fn commit_by_oid_or_change_id<'a>(
     repo: &'a git2::Repository,
     stack_head: git2::Oid,
     merge_base: git2::Oid,
-) -> Result<CommitsForId<'a>> {
+) -> Result<Commit<'a>> {
     Ok(match reference_target {
-        CommitOrChangeId::CommitId(commit_id) => CommitsForId {
-            head: repo.find_commit(commit_id.parse()?)?,
-            tail: vec![],
-        },
+        CommitOrChangeId::CommitId(commit_id) => repo.find_commit(commit_id.parse()?)?,
         #[allow(deprecated)]
         CommitOrChangeId::ChangeId(change_id) => {
             commit_by_branch_id_and_change_id(repo, stack_head, merge_base, change_id)?
         }
     })
-}
-
-/// Returns the commits associated with a id.
-/// In most cases this is exactly one commit. Hoever there is an error state where it is possible to have
-/// multiple commits with the same change id on the same stack.
-#[derive(Debug, Clone)]
-pub struct CommitsForId<'a> {
-    /// The newest commit with the change id.
-    pub head: Commit<'a>,
-    /// There may be multiple commits with the same change id - if so they are ordered newest to oldest.
-    /// The tails does not include the head.
-    pub tail: Vec<Commit<'a>>,
 }
 
 fn patch_reference_exists(state: &VirtualBranchesHandle, name: &str) -> Result<bool> {

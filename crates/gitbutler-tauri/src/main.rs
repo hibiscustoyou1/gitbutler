@@ -160,6 +160,7 @@ fn main() {
                 .plugin(tauri_plugin_updater::Builder::new().build())
                 .plugin(tauri_plugin_dialog::init())
                 .plugin(tauri_plugin_fs::init())
+                .plugin(tauri_plugin_clipboard_manager::init())
                 // .plugin(tauri_plugin_context_menu::init())
                 .plugin(tauri_plugin_store::Builder::default().build())
                 .plugin(log.build())
@@ -232,11 +233,11 @@ fn main() {
                     virtual_branches::commands::integrate_upstream,
                     virtual_branches::commands::resolve_upstream_integration,
                     virtual_branches::commands::find_commit,
-                    stack::create_series,
-                    stack::remove_series,
-                    stack::update_series_name,
-                    stack::update_series_description,
-                    stack::update_series_pr_number,
+                    stack::create_branch,
+                    stack::remove_branch,
+                    stack::update_branch_name,
+                    stack::update_branch_description,
+                    stack::update_branch_pr_number,
                     stack::push_stack,
                     stack::push_stack_to_review,
                     secret::secret_get_global,
@@ -267,14 +268,17 @@ fn main() {
                     settings::update_telemetry,
                     settings::update_feature_flags,
                     workspace::stacks,
+                    workspace::stack_info,
                     workspace::stack_branches,
                     workspace::stack_branch_local_and_remote_commits,
                     workspace::stack_branch_upstream_only_commits,
                     workspace::hunk_dependencies_for_workspace_changes,
                     workspace::create_commit_from_worktree_changes,
                     workspace::amend_commit_from_worktree_changes,
+                    workspace::discard_worktree_changes,
                     diff::changes_in_worktree,
                     diff::changes_in_commit,
+                    diff::changes_in_branch,
                     diff::tree_change_diffs,
                     // `env_vars` is only supposed to be avaialble in debug mode, not in production.
                     #[cfg(debug_assertions)]

@@ -1,11 +1,8 @@
 <script lang="ts">
-	import {
-		getGitHubUserServiceStore,
-		GitHubAuthenticationService
-	} from '$lib/forge/github/githubUserService';
+	import { writeClipboard } from '$lib/backend/clipboard';
+	import { GitHubUserService } from '$lib/forge/github/githubUserService.svelte';
 	import { UserService } from '$lib/user/userService';
 	import { openExternalUrl } from '$lib/utils/url';
-	import { copyToClipboard } from '@gitbutler/shared/clipboard';
 	import { getContext } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import Icon from '@gitbutler/ui/Icon.svelte';
@@ -21,8 +18,7 @@
 
 	const { minimal = false, disabled = false }: Props = $props();
 
-	const githubUserService = getGitHubUserServiceStore();
-	const githubAuthenticationService = getContext(GitHubAuthenticationService);
+	const githubUserService = getContext(GitHubUserService);
 	const userService = getContext(UserService);
 	const user = userService.user;
 
@@ -37,7 +33,7 @@
 	let gitHubOauthModal: ReturnType<typeof Modal> | undefined = $state();
 
 	function gitHubStartOauth() {
-		githubAuthenticationService.initDeviceOauth().then((verification) => {
+		githubUserService.initDeviceOauth().then((verification) => {
 			userCode = verification.user_code;
 			deviceCode = verification.device_code;
 			gitHubOauthModal?.show();
@@ -48,7 +44,7 @@
 		loading = true;
 		if (!$user) return;
 		try {
-			const accessToken = await githubAuthenticationService.checkAuthStatus({ deviceCode });
+			const accessToken = await githubUserService.checkAuthStatus({ deviceCode });
 			// We don't want to directly modify $user because who knows what state that puts you in
 			let mutableUser = structuredClone($user);
 			mutableUser.github_access_token = accessToken;
@@ -57,7 +53,8 @@
 			// After we call setUser, we want to re-clone the user store, as the userService itself sets the user store
 			mutableUser = structuredClone($user);
 			// TODO: Remove setting of gh username since it isn't used anywhere.
-			mutableUser.github_username = await $githubUserService?.fetchGitHubLogin();
+			const githubUsername = await githubUserService.fetchGitHubLogin();
+			mutableUser.github_username = githubUsername.data?.name || undefined;
 			userService.setUser(mutableUser);
 			toasts.success('GitHub authenticated');
 		} catch (err: any) {
@@ -144,7 +141,7 @@
 						icon="copy"
 						disabled={codeCopied}
 						onclick={() => {
-							copyToClipboard(userCode);
+							writeClipboard(userCode);
 							codeCopied = true;
 						}}
 					>

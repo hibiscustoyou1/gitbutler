@@ -7,33 +7,40 @@
 	import { getFilename } from '$lib/files/utils';
 	import { ChangeSelectionService } from '$lib/selection/changeSelection.svelte';
 	import { IdSelection } from '$lib/selection/idSelection.svelte';
-	import { key } from '$lib/selection/key';
+	import { key, type SelectionId } from '$lib/selection/key';
+	import { UiState } from '$lib/state/uiState.svelte';
 	import { computeChangeStatus } from '$lib/utils/fileStatus';
 	import { getContext, maybeGetContextStore } from '@gitbutler/shared/context';
-	import FileListItem from '@gitbutler/ui/file/FileListItemV3.svelte';
+	import FileListItemV3 from '@gitbutler/ui/file/FileListItemV3.svelte';
+	import FileViewHeader from '@gitbutler/ui/file/FileViewHeader.svelte';
 	import type { TreeChange } from '$lib/hunks/change';
-	import type { Snippet } from 'svelte';
 
 	interface Props {
-		change: TreeChange;
-		commitId?: string;
 		projectId: string;
-		selected: boolean;
-		showCheckbox?: boolean;
-		onclick: (e: MouseEvent) => void;
+		change: TreeChange;
+		selectedFile: SelectionId;
+		selected?: boolean;
+		isHeader?: boolean;
+		listActive?: boolean;
+		listMode: 'list' | 'tree';
+		linesAdded?: number;
+		linesRemoved?: number;
+		onclick?: (e: MouseEvent) => void;
 		onkeydown?: (e: KeyboardEvent) => void;
-		children: Snippet;
 	}
 
 	const {
-		change: change,
-		commitId,
+		change,
+		selectedFile,
 		projectId,
 		selected,
-		showCheckbox,
+		isHeader,
+		listActive,
+		listMode,
+		linesAdded,
+		linesRemoved,
 		onclick,
-		onkeydown,
-		children
+		onkeydown
 	}: Props = $props();
 
 	const stack = maybeGetContextStore(BranchStack);
@@ -43,34 +50,52 @@
 
 	let contextMenu = $state<ReturnType<typeof FileContextMenu>>();
 	let draggableEl: HTMLDivElement | undefined = $state();
-	let open = $state(false);
 
-	const selection = $derived(changeSelection.getById(change.path).current);
-	let indeterminate = $derived(selection && selection.type === 'partial');
+	const selection = $derived(changeSelection.getById(change.path));
+	const indeterminate = $derived(selection.current && selection.current.type === 'partial');
+	const selectedChanges = $derived(idSelection.treeChanges(projectId, selectedFile));
+
+	const uiState = getContext(UiState);
+
+	const projectState = $derived(uiState.project(projectId));
+	const drawerPage = $derived(projectState.drawerPage.get());
+	const isCommitting = $derived(drawerPage.current === 'new-commit');
 
 	function onCheck() {
-		if (selection) {
+		if (selection.current) {
 			changeSelection.remove(change.path);
 		} else {
-			const { path, pathBytes, previousPathBytes } = change;
+			const { path, pathBytes } = change;
 			changeSelection.add({
 				type: 'full',
 				path,
-				pathBytes,
-				previousPathBytes
+				pathBytes
 			});
 		}
+	}
+
+	function onContextMenu(e: MouseEvent) {
+		if (selectedChanges.current.isSuccess && idSelection.has(change.path, selectedFile)) {
+			const changes: TreeChange[] = selectedChanges.current.data;
+			contextMenu?.open(e, { changes });
+			return;
+		}
+
+		contextMenu?.open(e, { changes: [change] });
 	}
 </script>
 
 <div
+	class="filelistitem-wrapper"
 	bind:this={draggableEl}
+	class:sticky={isHeader}
 	use:draggableChips={{
 		label: getFilename(change.path),
 		filePath: change.path,
-		data: new ChangeDropData(stackId || '', change, idSelection, commitId),
+		data: new ChangeDropData(stackId || '', change, idSelection, selectedFile),
 		viewportId: 'board-viewport',
-		selector: '.selected-draggable'
+		selector: '.selected-draggable',
+		disabled: isCommitting
 	}}
 >
 	<FileContextMenu
@@ -80,45 +105,51 @@
 		branchId={$stack?.id}
 		isBinary={false}
 	/>
-
-	<FileListItem
-		bind:open
-		id={key(change.path, commitId)}
-		filePath={change.path}
-		fileStatus={computeChangeStatus(change)}
-		{selected}
-		{showCheckbox}
-		checked={!!selection}
-		{indeterminate}
-		draggable={true}
-		{onkeydown}
-		locked={false}
-		conflicted={false}
-		onclick={(e) => {
-			onclick(e);
-		}}
-		ondblclick={() => {
-			open = !open;
-		}}
-		oncheck={onCheck}
-		oncontextmenu={(e) => {
-			const changes = idSelection.treeChanges(projectId);
-			if (idSelection.has(change.path, commitId)) {
-				contextMenu?.open(e, { files: changes });
-			} else {
-				contextMenu?.open(e, { files: [change] });
-			}
-		}}
-	/>
+	{#if isHeader}
+		<FileViewHeader
+			filePath={change.path}
+			fileStatus={computeChangeStatus(change)}
+			draggable={!isCommitting}
+			{linesAdded}
+			{linesRemoved}
+			oncontextmenu={(e) => {
+				e.stopPropagation();
+				e.preventDefault();
+				onContextMenu(e);
+			}}
+		/>
+	{:else}
+		<FileListItemV3
+			id={key({ ...selectedFile, path: change.path })}
+			filePath={change.path}
+			fileStatus={computeChangeStatus(change)}
+			{selected}
+			showCheckbox={isCommitting}
+			{listMode}
+			checked={!!selection.current}
+			{listActive}
+			{indeterminate}
+			draggable={!isCommitting}
+			{onkeydown}
+			locked={false}
+			conflicted={false}
+			onclick={(e) => {
+				onclick?.(e);
+			}}
+			oncheck={onCheck}
+			oncontextmenu={onContextMenu}
+		/>
+	{/if}
 </div>
-{#if open}
-	<div class:diff-selected={selected}>
-		{@render children()}
-	</div>
-{/if}
 
 <style lang="postcss">
-	.diff-selected {
-		background-color: var(--clr-theme-pop-bg-muted);
+	.filelistitem-wrapper {
+		display: block;
+
+		&.sticky {
+			position: sticky;
+			top: -1px;
+			z-index: 1;
+		}
 	}
 </style>

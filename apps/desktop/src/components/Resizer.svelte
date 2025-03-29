@@ -1,20 +1,23 @@
 <script lang="ts">
-	import { pxToRem } from '@gitbutler/ui/utils/pxToRem';
+	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
+	import { getContextStoreBySymbol } from '@gitbutler/shared/context';
 
 	interface Props {
 		/** The element that is being resized */
 		viewport: HTMLElement;
 		/** Sets direction of resizing for viewport */
 		direction: 'left' | 'right' | 'up' | 'down';
-		/** Sets the color of the line */
-		defaultLineColor?: string;
-		defaultLineThickness?: number;
-		hoverLineThickness?: number;
-		/** Needed when overflow is hidden */
-		sticky?: boolean;
+		/** Border radius for cases when the resizable element has rounded corners */
+		borderRadius?: 's' | 'm' | 'ml' | 'l' | 'none';
 		/** Custom z-index in case of overlapping with other elements */
 		zIndex?: string;
+		/** imitate border */
+		imitateBorder?: boolean;
+		imitateBorderColor?: string;
+
+		/** Minimum width for the resizable element */
 		minWidth?: number;
+		maxWidth?: number;
 		minHeight?: number;
 
 		// Actions
@@ -29,13 +32,13 @@
 	const {
 		viewport,
 		direction,
-		defaultLineColor = 'none',
-		defaultLineThickness = 1,
-		hoverLineThickness = 2,
-		sticky = false,
 		zIndex = 'var(--z-lifted)',
 		minWidth = 0,
+		maxWidth = 40,
 		minHeight = 0,
+		borderRadius = 'none',
+		imitateBorder,
+		imitateBorderColor = 'var(--clr-border-2)',
 
 		onHeight,
 		onWidth,
@@ -46,6 +49,8 @@
 	}: Props = $props();
 
 	const orientation = $derived(['left', 'right'].includes(direction) ? 'horizontal' : 'vertical');
+	const userSettings = getContextStoreBySymbol<Settings>(SETTINGS);
+	const base = $derived($userSettings.zoom * 16);
 
 	let initial = 0;
 	let dragging = $state(false);
@@ -73,26 +78,26 @@
 	function onMouseMove(e: MouseEvent) {
 		dragging = true;
 		if (direction === 'down') {
-			let height = e.clientY - initial;
+			let height = (e.clientY - initial) / base;
 			onHeight?.(Math.max(height, minHeight));
 
 			onOverflowValue(height, minHeight);
 		}
 		if (direction === 'up') {
-			let height = document.body.scrollHeight - e.clientY - initial;
+			let height = (document.body.scrollHeight - e.clientY - initial) / base;
 			onHeight?.(Math.max(height, minHeight));
 
 			onOverflowValue(height, minHeight);
 		}
 		if (direction === 'right') {
-			let width = e.clientX - initial + 2;
-			onWidth?.(Math.max(width, minWidth));
+			let width = (e.clientX - initial + 2) / base;
+			onWidth?.(Math.min(Math.max(width, minWidth), maxWidth));
 
 			onOverflowValue(width, minWidth);
 		}
 		if (direction === 'left') {
-			let width = document.body.scrollWidth - e.clientX - initial;
-			onWidth?.(Math.max(width, minWidth));
+			let width = (document.body.scrollWidth - e.clientX - initial) / base;
+			onWidth?.(Math.min(Math.max(width, minWidth), maxWidth));
 
 			onOverflowValue(width, minWidth);
 		}
@@ -127,72 +132,64 @@
 	class:down={direction === 'down'}
 	class:left={direction === 'left'}
 	class:right={direction === 'right'}
-	class:sticky
 	style:z-index={zIndex}
+	style:--resizer-border-radius="var(--radius-{borderRadius})"
+	style:--border-imitation-color={imitateBorderColor}
 >
-	<div
-		class="resizer-line"
-		style="--resizer-default-line-color: {defaultLineColor}; --resizer-default-line-thickness: {pxToRem(
-			defaultLineThickness
-		)}; --resizer-hover-line-thickness: {pxToRem(hoverLineThickness)}"
-	></div>
+	<div class="resizer-line"></div>
+
+	{#if imitateBorder}
+		<div class="border-imitation"></div>
+	{/if}
 </div>
 
 <style lang="postcss">
 	.resizer {
-		--resizer-frame-thickness: 4px;
-		--resizer-default-line-thickness: 2px;
-		--resizer-hover-line-thickness: 8px;
-		--resizer-default-line-color: none;
+		--resizer-line-thickness: 0;
+		--resizer-line-color: transparent;
+		/* should be big for large radius */
+		--resizer-line-frame: 20px;
 		position: absolute;
+		outline: none;
+		/* background-color: rgba(255, 0, 0, 0.2); */
 
 		&:hover,
 		&:focus,
 		&.dragging {
-			outline: none;
+			--resizer-line-color: var(--resizer-color);
+			--resizer-line-thickness: 0.15rem;
 
 			& .resizer-line {
 				transition-delay: 0.1s;
-				background-color: var(--resizer-color);
-			}
-
-			&:not(.vertical) {
-				& .resizer-line {
-					width: var(--resizer-hover-line-thickness);
-				}
-			}
-
-			&:not(.horizontal) {
-				& .resizer-line {
-					height: var(--resizer-hover-line-thickness);
-				}
 			}
 		}
 	}
+
 	.resizer-line {
 		position: absolute;
 		top: 0;
 		left: 0;
 		right: 0;
 		bottom: 0;
-		background-color: var(--resizer-default-line-color);
 		pointer-events: none;
-		transition:
-			background-color 0.1s ease-out,
-			width 0.1s ease-out,
-			height 0.1s ease-out;
+		transition: border 0.1s ease;
 	}
 
 	.horizontal {
-		width: 4px;
+		width: 8px;
 		height: 100%;
 		cursor: col-resize;
 		top: 0;
 
 		& .resizer-line {
-			width: var(--resizer-default-line-thickness);
+			width: var(--resizer-line-frame);
+		}
+
+		& .border-imitation {
+			width: 1px;
 		}
 	}
+
 	.vertical {
 		height: 4px;
 		width: 100%;
@@ -200,7 +197,11 @@
 		left: 0;
 
 		& .resizer-line {
-			height: var(--resizer-default-line-thickness);
+			height: var(--resizer-line-frame);
+		}
+
+		& .border-imitation {
+			height: 1px;
 		}
 	}
 
@@ -209,12 +210,26 @@
 
 		& .resizer-line {
 			left: auto;
+			border-right: var(--resizer-line-thickness) solid var(--resizer-line-color);
+			border-top-right-radius: var(--resizer-border-radius);
+			border-bottom-right-radius: var(--resizer-border-radius);
+		}
+
+		& .border-imitation {
+			left: auto;
 		}
 	}
 	.left {
 		left: 0;
 
 		& .resizer-line {
+			right: auto;
+			border-left: var(--resizer-line-thickness) solid var(--resizer-line-color);
+			border-top-left-radius: var(--resizer-border-radius);
+			border-bottom-left-radius: var(--resizer-border-radius);
+		}
+
+		& .border-imitation {
 			right: auto;
 		}
 	}
@@ -223,6 +238,9 @@
 
 		& .resizer-line {
 			bottom: auto;
+			border-top: var(--resizer-line-thickness) solid var(--resizer-line-color);
+			border-top-left-radius: var(--resizer-border-radius);
+			border-top-right-radius: var(--resizer-border-radius);
 		}
 	}
 	.down {
@@ -230,11 +248,21 @@
 
 		& .resizer-line {
 			top: auto;
+			border-bottom: var(--resizer-line-thickness) solid var(--resizer-line-color);
+			border-bottom-left-radius: var(--resizer-border-radius);
+			border-bottom-right-radius: var(--resizer-border-radius);
 		}
 	}
 
-	.sticky {
-		position: sticky;
+	.border-imitation {
+		position: absolute;
+		width: 100%;
+		height: 100%;
 		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: var(--border-imitation-color);
+		z-index: -1;
 	}
 </style>

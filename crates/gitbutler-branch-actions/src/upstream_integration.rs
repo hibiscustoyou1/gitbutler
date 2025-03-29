@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-
-use crate::stack::{branch_integrated, stack_as_rebase_steps};
+use crate::stack::branch_integrated;
 use crate::{r#virtual::IsCommitIntegrated, BranchManagerExt, VirtualBranchesExt as _};
 use anyhow::{anyhow, bail, Context, Result};
+use but_core::Reference;
 use but_rebase::{RebaseOutput, RebaseStep};
+use but_workspace::stack_ext::StackExt;
 use gitbutler_cherry_pick::RepositoryExt;
 use gitbutler_command_context::CommandContext;
 use gitbutler_commit::commit_ext::CommitExt as _;
@@ -17,10 +17,13 @@ use gitbutler_repo::{
     logging::LogUntil,
     rebase::{cherry_rebase_group, gitbutler_merge_commits},
 };
-use gitbutler_repo_actions::RepoActionsExt as _;
+use gitbutler_serde::BStringForFrontend;
 use gitbutler_stack::stack_context::StackContext;
 use gitbutler_stack::{Stack, StackId, Target, VirtualBranchesHandle};
-use gitbutler_workspace::{checkout_branch_trees, compute_updated_branch_head, BranchHeadAndTree};
+use gitbutler_workspace::branch_trees::{update_uncommited_changes, WorkspaceState};
+#[allow(deprecated)]
+use gitbutler_workspace::{checkout_branch_trees, compute_updated_branch_head};
+use gix::merge::tree::TreatAsUnresolved;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, PartialEq, Debug)]
@@ -61,7 +64,11 @@ pub enum BranchStatus {
 #[serde(tag = "type", content = "subject", rename_all = "camelCase")]
 pub enum StackStatuses {
     UpToDate,
-    UpdatesRequired(Vec<(StackId, StackStatus)>),
+    UpdatesRequired {
+        #[serde(rename = "worktreeConflicts")]
+        worktree_conflicts: Vec<BStringForFrontend>,
+        statuses: Vec<(StackId, StackStatus)>,
+    },
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -94,6 +101,8 @@ pub struct BaseBranchResolution {
 pub struct IntegrationOutcome {
     /// This is the list of branch names that have become archived as a result of the upstream integration
     archived_branches: Vec<String>,
+    /// This is the list of review ids that have been closed as a result of the upstream integration
+    review_ids_to_close: Vec<String>,
 }
 
 impl StackStatus {
@@ -146,17 +155,16 @@ impl StackStatus {
 pub struct Resolution {
     // TODO(CTO): Rename to stack_id
     pub branch_id: StackId,
-    /// Used to ensure a given branch hasn't changed since the UI issued the command.
-    #[serde(with = "gitbutler_serde::oid")]
-    pub branch_tree: git2::Oid,
     pub approach: ResolutionApproach,
+    pub delete_integrated_branches: bool,
 }
 
 enum IntegrationResult {
     UpdatedObjects {
         head: git2::Oid,
-        tree: git2::Oid,
+        tree: Option<git2::Oid>,
         rebase_output: Option<RebaseOutput>,
+        for_archival: Vec<Reference>,
     },
     UnapplyBranch,
     DeleteBranch,
@@ -214,6 +222,7 @@ fn get_stack_status(
     target: Target,
     new_target_commit_id: gix::ObjectId,
     stack: &Stack,
+    v3: bool,
 ) -> Result<StackStatus> {
     let cache = gix_repository.commit_graph_if_enabled()?;
     let mut graph = gix_repository.revision_graph(cache.as_ref());
@@ -323,12 +332,17 @@ fn get_stack_status(
 
     let stack_head = repository.find_commit(stack.head())?;
 
-    let tree_status = if stack.tree
+    let tree_status;
+    if v3 {
+        // If we are in v3 then we don't care about the trees and we should
+        // assume they are empty
+        tree_status = TreeStatus::Empty;
+    } else if stack.tree
         == repository
             .find_real_tree(&stack_head, Default::default())?
             .id()
     {
-        TreeStatus::Empty
+        tree_status = TreeStatus::Empty;
     } else {
         let (merge_options_fail_fast, conflict_kind) =
             gix_repository.merge_options_no_rewrites_fail_fast()?;
@@ -337,23 +351,23 @@ fn get_stack_status(
             .find_commit(new_target_commit_id)?
             .tree_id()?;
         let tree_id = git2_to_gix_object_id(stack.tree);
-        let new_head_commit = repository.find_commit(last_head)?;
+        let new_head_commit = gix_repository.find_commit(last_head.to_gix())?;
         let tree_conflicted = gix_repository
             .merge_trees(
                 tree_merge_base,
                 tree_id,
-                git2_to_gix_object_id(new_head_commit.tree_id()),
+                new_head_commit.tree_id()?,
                 gix_repository.default_merge_labels(),
                 merge_options_fail_fast.clone(),
             )?
             .has_unresolved_conflicts(conflict_kind);
 
         if tree_conflicted {
-            TreeStatus::Conflicted
+            tree_status = TreeStatus::Conflicted;
         } else {
-            TreeStatus::SaflyUpdatable
+            tree_status = TreeStatus::SaflyUpdatable;
         }
-    };
+    }
 
     StackStatus::create(tree_status, branch_statuses)
 }
@@ -377,6 +391,50 @@ pub fn upstream_integration_statuses(
         return Ok(StackStatuses::UpToDate);
     };
 
+    // The merge base tree of all of the applied stacks plus the new target
+    let merge_base_tree = gix_repository
+        .merge_base_octopus(
+            stacks_in_workspace
+                .iter()
+                .map(|b| b.head().to_gix())
+                .chain(Some(new_target.id().to_gix())),
+        )?
+        .object()?
+        .into_commit()
+        .tree_id()?;
+
+    // The working directory tree
+    let workdir_tree = context
+        .ctx
+        .repo()
+        .create_wd_tree(gitbutler_project::AUTO_TRACK_LIMIT_BYTES)?
+        .id()
+        .to_gix();
+
+    // The target tree
+    let target_tree = gix_repository
+        .find_commit(new_target.id().to_gix())?
+        .tree_id()?;
+
+    let (merge_options_fail_fast, _conflict_kind) =
+        gix_repository.merge_options_no_rewrites_fail_fast()?;
+
+    let worktree_conflicts = gix_repository
+        .merge_trees(
+            merge_base_tree,
+            workdir_tree,
+            target_tree,
+            gix_repository.default_merge_labels(),
+            merge_options_fail_fast.clone(),
+        )?
+        .conflicts
+        .iter()
+        .filter(|c| c.is_unresolved(TreatAsUnresolved::git()))
+        .map(|c| c.ours.location().into())
+        .collect::<Vec<BStringForFrontend>>();
+
+    let v3 = context.ctx.app_settings().feature_flags.v3;
+
     let statuses = stacks_in_workspace
         .iter()
         .map(|stack| {
@@ -388,12 +446,16 @@ pub fn upstream_integration_statuses(
                     target.clone(),
                     git2_to_gix_object_id(new_target.id()),
                     stack,
+                    v3,
                 )?,
             ))
         })
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(StackStatuses::UpdatesRequired(statuses))
+    Ok(StackStatuses::UpdatesRequired {
+        worktree_conflicts,
+        statuses,
+    })
 }
 
 pub(crate) fn integrate_upstream(
@@ -402,6 +464,8 @@ pub(crate) fn integrate_upstream(
     base_branch_resolution: Option<BaseBranchResolution>,
     permission: &mut WorktreeWritePermission,
 ) -> Result<IntegrationOutcome> {
+    let old_workspace = WorkspaceState::create(command_context, permission.read_permission())?;
+
     let (target_commit_oid, base_branch_resolution_approach) = base_branch_resolution
         .map(|r| (Some(r.target_commit_oid), Some(r.approach)))
         .unwrap_or((None, None));
@@ -417,12 +481,13 @@ pub(crate) fn integrate_upstream(
     let default_target = virtual_branches_state.get_default_target()?;
 
     let mut newly_archived_branches = vec![];
+    let mut to_be_closed_review_ids = vec![];
 
     // Ensure resolutions match current statuses
     {
         let statuses = upstream_integration_statuses(&context)?;
 
-        let StackStatuses::UpdatesRequired(statuses) = statuses else {
+        let StackStatuses::UpdatesRequired { statuses, .. } = statuses else {
             bail!("Branches are all up to date")
         };
 
@@ -435,19 +500,6 @@ pub(crate) fn integrate_upstream(
         }
 
         let all_resolutions_are_up_to_date = resolutions.iter().all(|resolution| {
-            // This is O(n^2), in reality, n is unlikly to be more than 3 or 4
-            let Some(branch) = context
-                .stacks_in_workspace
-                .iter()
-                .find(|branch| branch.id == resolution.branch_id)
-            else {
-                return false;
-            };
-
-            if resolution.branch_tree != branch.tree {
-                return false;
-            };
-
             let Some(status) = statuses
                 .iter()
                 .find(|status| status.0 == resolution.branch_id)
@@ -478,7 +530,16 @@ pub(crate) fn integrate_upstream(
 
             let stack = virtual_branches_state.get_stack(*stack_id)?;
             virtual_branches_state.delete_branch_entry(stack_id)?;
-            command_context.delete_branch_reference(&stack)?;
+            let delete_local_refs = resolutions
+                .iter()
+                .find(|r| r.branch_id == *stack_id)
+                .map(|r| r.delete_integrated_branches)
+                .unwrap_or(false);
+            if delete_local_refs {
+                for head in stack.heads {
+                    head.delete_reference(&gix_repo).ok();
+                }
+            }
         }
 
         let permission = context._permission.expect("Permission provided above");
@@ -507,6 +568,7 @@ pub(crate) fn integrate_upstream(
                 head,
                 tree,
                 rebase_output,
+                for_archival,
             } = integration_result
             else {
                 continue;
@@ -516,22 +578,26 @@ pub(crate) fn integrate_upstream(
                 continue;
             };
 
-            stack.set_stack_head(command_context, *head, Some(*tree))?;
-
             // Update the branch heads
             if let Some(output) = rebase_output {
-                let mut new_heads: HashMap<String, git2::Commit<'_>> = HashMap::new();
-                for spec in &output.references {
-                    let commit = command_context
-                        .repo()
-                        .find_commit(spec.commit_id.to_git2())?;
-                    new_heads.insert(spec.reference.to_string(), commit);
-                }
-                stack.set_all_heads(command_context, new_heads)?;
+                stack.set_heads_from_rebase_output(command_context, output.references.clone())?;
             }
+            stack.set_stack_head(command_context, *head, *tree)?;
 
-            let mut archived_branches = stack.archive_integrated_heads(command_context)?;
+            let delete_local_refs = resolutions
+                .iter()
+                .find(|r| r.branch_id == *branch_id)
+                .map(|r| r.delete_integrated_branches)
+                .unwrap_or(false);
+
+            let (mut archived_branches, mut review_ids_to_close) = stack.archive_integrated_heads(
+                command_context,
+                &gix_repo,
+                for_archival,
+                delete_local_refs,
+            )?;
             newly_archived_branches.append(&mut archived_branches);
+            to_be_closed_review_ids.append(&mut review_ids_to_close);
         }
 
         // checkout_branch_trees won't checkout anything if there are no
@@ -546,9 +612,22 @@ pub(crate) fn integrate_upstream(
                 .remove_untracked()
                 .checkout()?;
         } else {
-            // Now that we've potentially updated the branch trees, lets checkout
-            // the result of merging them all together.
-            checkout_branch_trees(command_context, permission)?;
+            let new_workspace =
+                WorkspaceState::create(command_context, permission.read_permission())?;
+
+            if command_context.app_settings().feature_flags.v3 {
+                update_uncommited_changes(
+                    command_context,
+                    old_workspace,
+                    new_workspace,
+                    permission,
+                )?;
+            } else {
+                // Now that we've potentially updated the branch trees, lets checkout
+                // the result of merging them all together.
+                #[allow(deprecated)]
+                checkout_branch_trees(command_context, permission)?;
+            }
         }
 
         crate::integration::update_workspace_commit(&virtual_branches_state, command_context)?;
@@ -556,6 +635,7 @@ pub(crate) fn integrate_upstream(
 
     Ok(IntegrationOutcome {
         archived_branches: newly_archived_branches,
+        review_ids_to_close: to_be_closed_review_ids,
     })
 }
 
@@ -644,11 +724,14 @@ fn compute_resolutions(
                         &incoming_branch_name,
                     )?;
 
-                    // Get the updated tree oid
-                    let BranchHeadAndTree {
-                        head: new_head,
-                        tree: new_tree,
-                    } = compute_updated_branch_head(repository, branch_stack, new_head.id())?;
+                    let (new_head, new_tree) = if context.ctx.app_settings().feature_flags.v3 {
+                        (new_head.id(), None)
+                    } else {
+                        #[allow(deprecated)]
+                        let res =
+                            compute_updated_branch_head(repository, branch_stack, new_head.id())?;
+                        (res.head, Some(res.tree))
+                    };
 
                     Ok((
                         branch_stack.id,
@@ -656,6 +739,7 @@ fn compute_resolutions(
                             head: new_head,
                             tree: new_tree,
                             rebase_output: None,
+                            for_archival: vec![],
                         },
                     ))
                 }
@@ -686,10 +770,10 @@ fn compute_resolutions(
                         new_target.id()
                     };
 
-                    let steps =
-                        stack_as_rebase_steps(context.ctx, context.gix_repo, branch_stack.id)?;
+                    let all_steps = branch_stack.as_rebase_steps(context.ctx, context.gix_repo)?;
+                    let branches_before = as_buckets(all_steps.clone());
                     // Filter out any integrated commits
-                    let steps = steps
+                    let steps = all_steps
                         .into_iter()
                         .filter_map(|s| match s {
                             RebaseStep::Pick {
@@ -708,6 +792,22 @@ fn compute_resolutions(
                         })
                         .collect::<Vec<_>>();
 
+                    let branches_after = as_buckets(steps.clone());
+
+                    // Branches that used to have commits but now don't are marked for archival
+                    let mut for_archival = vec![];
+                    for (ref_before, steps_before) in branches_before {
+                        if let Some((_, steps_after)) = branches_after
+                            .iter()
+                            .find(|(ref_after, _)| ref_after == &ref_before)
+                        {
+                            // if there were steps before and now there are none, this should be marked for archival
+                            if !steps_before.is_empty() && steps_after.is_empty() {
+                                for_archival.push(ref_before);
+                            }
+                        }
+                    }
+
                     let mut rebase = but_rebase::Rebase::new(
                         context.gix_repo,
                         Some(lower_bound.to_gix()),
@@ -719,10 +819,13 @@ fn compute_resolutions(
                     let new_head = output.top_commit.to_git2();
 
                     // Get the updated tree oid
-                    let BranchHeadAndTree {
-                        head: new_head,
-                        tree: new_tree,
-                    } = compute_updated_branch_head(repository, branch_stack, new_head)?;
+                    let (new_head, new_tree) = if context.ctx.app_settings().feature_flags.v3 {
+                        (new_head, None)
+                    } else {
+                        #[allow(deprecated)]
+                        let res = compute_updated_branch_head(repository, branch_stack, new_head)?;
+                        (res.head, Some(res.tree))
+                    };
 
                     Ok((
                         branch_stack.id,
@@ -730,6 +833,7 @@ fn compute_resolutions(
                             head: new_head,
                             tree: new_tree,
                             rebase_output: Some(output),
+                            for_archival,
                         },
                     ))
                 }
@@ -738,4 +842,20 @@ fn compute_resolutions(
         .collect::<Result<Vec<_>>>()?;
 
     Ok(results)
+}
+
+fn as_buckets(steps: Vec<RebaseStep>) -> Vec<(but_core::Reference, Vec<RebaseStep>)> {
+    let mut buckets = vec![];
+    let mut current_steps = vec![];
+    for step in steps {
+        match step {
+            RebaseStep::Reference(reference) => {
+                buckets.push((reference, std::mem::take(&mut current_steps)));
+            }
+            step => {
+                current_steps.push(step);
+            }
+        }
+    }
+    buckets
 }

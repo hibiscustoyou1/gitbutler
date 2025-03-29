@@ -1,64 +1,45 @@
 <script lang="ts">
-	import CurrentSeries from './CurrentSeries.svelte';
-	import EmptySeries from './EmptySeries.svelte';
-	import ErrorSeries from './ErrorSeries.svelte';
-	import SeriesDividerLine from './SeriesDividerLine.svelte';
 	import CardOverlay from '$components/CardOverlay.svelte';
 	import CommitList from '$components/CommitList.svelte';
+	import CurrentSeries from '$components/CurrentSeries.svelte';
 	import Dropzone from '$components/Dropzone.svelte';
+	import EmptySeries from '$components/EmptySeries.svelte';
+	import ErrorSeries from '$components/ErrorSeries.svelte';
+	import SeriesDividerLine from '$components/SeriesDividerLine.svelte';
 	import SeriesHeader from '$components/SeriesHeader.svelte';
 	import { isPatchSeries, type BranchStack } from '$lib/branches/branch';
-	import { PatchSeries } from '$lib/branches/branch';
 	import { BranchController } from '$lib/branches/branchController';
-	import { CommitDropData } from '$lib/dragging/draggables';
 	import {
-		StackingReorderDropzoneManagerFactory,
-		buildNewStackOrder
+		ReorderCommitDzHandler,
+		StackingReorderDropzoneManagerFactory
 	} from '$lib/dragging/stackingReorderDropzoneManager';
 	import { getContext } from '@gitbutler/shared/context';
 	import { isError } from '@gitbutler/ui/utils/typeguards';
 
 	interface Props {
+		projectId: string;
 		stack: BranchStack;
-		lastPush: Date | undefined;
 	}
 
-	const { stack: branch, lastPush }: Props = $props();
+	const { projectId, stack }: Props = $props();
 
 	const branchController = getContext(BranchController);
 
 	// Must contain the errored series in order to render them in the list in the correct spot
 	const nonArchivedSeries = $derived(
-		branch.series.filter((s) => {
+		stack.series.filter((s) => {
 			if (isError(s)) return s;
 			return !s.archived;
 		})
 	);
 
 	// All non-errored non-archived series for consumption elsewhere
-	const nonArchivedValidSeries = $derived(branch.validSeries.filter((s) => !s.archived));
+	const nonArchivedValidSeries = $derived(stack.validSeries.filter((s) => !s.archived));
 
 	const stackingReorderDropzoneManagerFactory = getContext(StackingReorderDropzoneManagerFactory);
 	const stackingReorderDropzoneManager = $derived(
-		stackingReorderDropzoneManagerFactory.build(branch)
+		stackingReorderDropzoneManagerFactory.build(stack)
 	);
-
-	function accepts(data: unknown) {
-		if (!(data instanceof CommitDropData)) return false;
-		if (data.branchId !== branch.id) return false;
-
-		return true;
-	}
-
-	function onDrop(data: CommitDropData, allSeries: PatchSeries[], currentSeries: PatchSeries) {
-		if (!(data instanceof CommitDropData)) return;
-
-		const stackOrder = buildNewStackOrder(allSeries, currentSeries, data.commit.id, 'top');
-
-		if (stackOrder) {
-			branchController.reorderStackCommit(data.branchId, stackOrder);
-		}
-	}
 </script>
 
 {#each nonArchivedSeries as currentSeries, idx ('name' in currentSeries ? currentSeries.name : undefined)}
@@ -72,14 +53,18 @@
 
 	{#if !isError(currentSeries)}
 		<CurrentSeries {currentSeries}>
-			<SeriesHeader branch={currentSeries} {isTopBranch} {lastPush} />
+			<SeriesHeader {projectId} branch={currentSeries} {isTopBranch} />
 
 			{#if currentSeries.upstreamPatches.length === 0 && currentSeries.patches.length === 0}
+				{@const dzHandler = new ReorderCommitDzHandler(
+					stack.id,
+					branchController,
+					currentSeries,
+					nonArchivedValidSeries,
+					'top'
+				)}
 				<div>
-					<Dropzone
-						{accepts}
-						ondrop={(data) => onDrop(data, nonArchivedValidSeries, currentSeries)}
-					>
+					<Dropzone handlers={[dzHandler]}>
 						{#snippet overlay({ hovered, activated })}
 							<CardOverlay {hovered} {activated} label="Move here" />
 						{/snippet}
@@ -90,9 +75,10 @@
 
 			{#if currentSeries.upstreamPatches.length > 0 || currentSeries.patches.length > 0}
 				<CommitList
+					stackId={stack.id}
 					{currentSeries}
 					isUnapplied={false}
-					isBottom={idx === branch.series.length - 1}
+					isBottom={idx === stack.series.length - 1}
 					{stackingReorderDropzoneManager}
 				/>
 			{/if}

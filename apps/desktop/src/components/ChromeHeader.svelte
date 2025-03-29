@@ -1,8 +1,7 @@
 <script lang="ts">
-	import OptionsGroup from '$components/OptionsGroup.svelte';
-	import Select from '$components/Select.svelte';
-	import SelectItem from '$components/SelectItem.svelte';
 	import SyncButton from '$components/SyncButton.svelte';
+	import IntegrateUpstreamModal from '$components/v3/IntegrateUpstreamModal.svelte';
+	import BaseBranchService from '$lib/baseBranch/baseBranchService.svelte';
 	import { platformName } from '$lib/platform/platform';
 	import { Project } from '$lib/project/project';
 	import { ProjectsService } from '$lib/project/projectsService';
@@ -11,12 +10,30 @@
 	import Button from '@gitbutler/ui/Button.svelte';
 	import Icon from '@gitbutler/ui/Icon.svelte';
 	import NotificationButton from '@gitbutler/ui/NotificationButton.svelte';
+	import OptionsGroup from '@gitbutler/ui/select/OptionsGroup.svelte';
+	import Select from '@gitbutler/ui/select/Select.svelte';
+	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
 	import { goto } from '$app/navigation';
 
+	type Props = {
+		projectId: string;
+	};
+
+	const { projectId }: Props = $props();
+
 	const projectsService = getContext(ProjectsService);
+	const baseBranchService = getContext(BaseBranchService);
 	const project = maybeGetContext(Project);
+	const selectedProjectId: string | undefined = $derived(project ? project.id : undefined);
+	const baseReponse = $derived(
+		selectedProjectId ? baseBranchService.baseBranch(selectedProjectId) : undefined
+	);
+	const base = $derived(baseReponse?.current.data);
 
 	const projects = $derived(projectsService.projects);
+	const upstreamCommits = $derived(base?.behind ?? 0);
+
+	let modal = $state<ReturnType<typeof IntegrateUpstreamModal>>();
 
 	const mappedProjects = $derived(
 		$projects?.map((project) => ({
@@ -25,22 +42,32 @@
 		})) || []
 	);
 
-	let selectedProjectId: string | undefined = $state(project ? project.id : undefined);
-
 	let newProjectLoading = $state(false);
 	let cloneProjectLoading = $state(false);
 
 	let isNotificationsUnread = $state(false);
+
+	function openModal() {
+		modal?.show();
+	}
 </script>
 
-<div class="header" class:mac={platformName === 'macos'}>
-	<div class="left">
+{#if selectedProjectId}
+	<IntegrateUpstreamModal bind:this={modal} projectId={selectedProjectId} />
+{/if}
+
+<div class="header" class:mac={platformName === 'macos'} data-tauri-drag-region>
+	<div class="left" data-tauri-drag-region>
 		<div class="left-buttons" class:macos={platformName === 'macos'}>
-			<SyncButton size="button" />
-			<Button style="pop">3 upstream commits</Button>
+			<SyncButton {projectId} size="button" />
+			{#if upstreamCommits > 0}
+				<Button style="pop" onclick={openModal} disabled={!selectedProjectId}
+					>{upstreamCommits} upstream commits</Button
+				>
+			{/if}
 		</div>
 	</div>
-	<div class="center">
+	<div class="center" data-tauri-drag-region>
 		<Select
 			searchable
 			value={selectedProjectId}
@@ -48,8 +75,7 @@
 			loading={newProjectLoading || cloneProjectLoading}
 			disabled={newProjectLoading || cloneProjectLoading}
 			onselect={(value: string) => {
-				selectedProjectId = value;
-				goto(projectPath(selectedProjectId));
+				goto(projectPath(value));
 			}}
 			popupAlign="center"
 			customWidth={300}
@@ -99,12 +125,11 @@
 			</OptionsGroup>
 		</Select>
 	</div>
-	<div class="right">
+	<div class="right" data-tauri-drag-region>
 		<NotificationButton
 			hasUnread={isNotificationsUnread}
 			onclick={() => {
 				// TODO: implement notifications
-				console.log('Example of the button animation');
 				isNotificationsUnread = !isNotificationsUnread;
 			}}
 		/>

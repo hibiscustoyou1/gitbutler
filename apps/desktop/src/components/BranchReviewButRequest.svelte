@@ -1,17 +1,18 @@
 <script lang="ts">
 	import { ButRequestDetailsService } from '$lib/forge/butRequestDetailsService';
 	import { ProjectService } from '$lib/project/projectService';
+	import { UserService } from '$lib/user/userService';
 	import { sleep } from '$lib/utils/sleep';
 	import BranchStatusBadge from '@gitbutler/shared/branches/BranchStatusBadge.svelte';
+	import Minimap from '@gitbutler/shared/branches/Minimap.svelte';
 	import { BranchService as CloudBranchService } from '@gitbutler/shared/branches/branchService';
 	import { getBranchReview } from '@gitbutler/shared/branches/branchesPreview.svelte';
 	import { lookupLatestBranchUuid } from '@gitbutler/shared/branches/latestBranchLookup.svelte';
 	import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
-	import { inject } from '@gitbutler/shared/context';
+	import { getContext } from '@gitbutler/shared/context';
 	import { getContributorsWithAvatars } from '@gitbutler/shared/contributors';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
 	import { and, combine, isFound, isNotFound, map } from '@gitbutler/shared/network/loadable';
-	import { ProjectService as CloudProjectService } from '@gitbutler/shared/organizations/projectService';
 	import { getProjectByRepositoryId } from '@gitbutler/shared/organizations/projectsPreview.svelte';
 	import { AppState } from '@gitbutler/shared/redux/store.svelte';
 	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
@@ -26,30 +27,19 @@
 
 	const { reviewId }: Props = $props();
 
-	const [
-		projectService,
-		appState,
-		cloudProjectService,
-		latestBranchLookupService,
-		cloudBranchService,
-		webRoutes,
-		butRequestDetailsService
-	] = inject(
-		ProjectService,
-		AppState,
-		CloudProjectService,
-		LatestBranchLookupService,
-		CloudBranchService,
-		WebRoutesService,
-		ButRequestDetailsService
-	);
+	const projectService = getContext(ProjectService);
+	const appState = getContext(AppState);
+	const latestBranchLookupService = getContext(LatestBranchLookupService);
+	const cloudBranchService = getContext(CloudBranchService);
+	const webRoutes = getContext(WebRoutesService);
+	const butRequestDetailsService = getContext(ButRequestDetailsService);
+	const userService = getContext(UserService);
+	const user = userService.user;
 
 	const project = projectService.project;
 
 	const cloudProject = $derived(
-		$project?.api?.repository_id
-			? getProjectByRepositoryId(appState, cloudProjectService, $project.api.repository_id)
-			: undefined
+		$project?.api?.repository_id ? getProjectByRepositoryId($project.api.repository_id) : undefined
 	);
 
 	const cloudBranchUuid = $derived(
@@ -66,7 +56,7 @@
 
 	const cloudBranch = $derived(
 		map(cloudBranchUuid?.current, (cloudBranchUuid) => {
-			return getBranchReview(appState, cloudBranchService, cloudBranchUuid);
+			return getBranchReview(cloudBranchUuid);
 		})
 	);
 
@@ -127,6 +117,28 @@
 			? getContributorsWithAvatars(cloudBranch.current.value)
 			: Promise.resolve([])
 	);
+
+	let container = $state<HTMLElement>();
+
+	let thin = $state(false);
+
+	$effect(() => {
+		if (!container) return;
+
+		thin = container.clientWidth < 350;
+
+		const observer = new ResizeObserver(() => {
+			if (!container) return;
+
+			thin = container.clientWidth < 350;
+		});
+
+		observer.observe(container);
+
+		return () => {
+			observer.disconnect();
+		};
+	});
 </script>
 
 {#if $project?.api?.repository_id}
@@ -137,7 +149,7 @@
 		])}
 	>
 		{#snippet children([cloudBranch, cloudProject])}
-			<div class="br-overview">
+			<div bind:this={container} class="br-overview">
 				<div class="br-row">
 					<Icon name="bowtie" />
 					<Link
@@ -154,13 +166,36 @@
 					<BranchStatusBadge branch={cloudBranch}></BranchStatusBadge>
 				</div>
 				<div class="br-row">
-					<div class="factoid text-12">
-						<span class="label">Reviewers:</span>
-						<div class="avatar-group-container">
-							{#await contributors then contributors}
-								<AvatarGroup avatars={contributors}></AvatarGroup>
-							{/await}
+					{#if $user}
+						<div class="factoid text-12">
+							<span class="label">Commits:</span>
+							<div class="minimap-container" class:thin>
+								<Minimap
+									ownerSlug={cloudProject.owner}
+									projectSlug={cloudProject.slug}
+									branchUuid={cloudBranch.uuid}
+									horizontal
+									user={{
+										email: $user.email || '',
+										id: $user.id
+									}}
+									openExternally
+								/>
+							</div>
 						</div>
+						<span class="seperator">•</span>
+					{/if}
+					<div class="factoid text-12">
+						{#await contributors then contributors}
+							{#if contributors.length > 0}
+								<span class="label">Reviewers:</span>
+								<div class="avatar-group-container">
+									<AvatarGroup avatars={contributors}></AvatarGroup>
+								</div>
+							{:else}
+								<span class="label italic">No reviewers</span>
+							{/if}
+						{/await}
 					</div>
 					<span class="seperator">•</span>
 					<div class="factoid text-12">
@@ -182,7 +217,7 @@
 	.br-overview {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
+		gap: 12px;
 	}
 
 	.br-row {
@@ -198,6 +233,10 @@
 
 		> .label {
 			color: var(--clr-text-2);
+
+			&.italic {
+				font-style: italic;
+			}
 		}
 	}
 
@@ -208,5 +247,14 @@
 
 	.avatar-group-container {
 		padding-right: 2px;
+	}
+
+	.minimap-container {
+		width: 58px;
+		height: 12px;
+
+		&.thin {
+			width: 40px;
+		}
 	}
 </style>

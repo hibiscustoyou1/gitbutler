@@ -39,15 +39,35 @@ pub enum Subcommands {
         /// Amend to the current or given commit.
         #[clap(long)]
         amend: bool,
+        /// The rev-spec of the tip of the workspace.
+        // TODO: this should be replaced with head-info discovery once available.
+        #[clap(long)]
+        workspace_tip: Option<String>,
         /// The revspec to create the commit on top of, or the commit to amend to.
         #[clap(long)]
         parent: Option<String>,
     },
-    /// Update the local workspace against an updated remote or target branch.
+    /// List all uncommitted working tree changes.
     Status {
+        /// Also compute unified diffs for each tree-change.
+        #[clap(long, short = 'c', default_value_t = crate::command::UI_CONTEXT_LINES)]
+        context_lines: u32,
         /// Also compute unified diffs for each tree-change.
         #[clap(long, short = 'd')]
         unified_diff: bool,
+    },
+    /// Discard the specified worktree change.
+    DiscardChange {
+        /// The zero-based indices of all hunks to discard.
+        #[clap(long)]
+        hunk_indices: Vec<usize>,
+        /// The 1-based pairs of 4 numbers equivalent to '(old_start,old_lines,new_start,new_lines)'
+        #[clap(long, num_args = 4, conflicts_with = "hunk_indices", value_names = ["old-start", "old-lines", "new-start", "new-lines"])]
+        hunk_headers: Vec<u32>,
+        /// The repo-relative path to the changed file to discard.
+        current_path: PathBuf,
+        /// If the change is a rename, identify the repo-relative path of the source.
+        previous_path: Option<PathBuf>,
     },
     /// Calculate the changes between two commits.
     CommitChanges {

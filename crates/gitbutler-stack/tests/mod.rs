@@ -2,6 +2,7 @@ mod file_ownership;
 mod ownership;
 
 use anyhow::Result;
+use but_core::Reference;
 use gitbutler_command_context::CommandContext;
 use gitbutler_repo::logging::{LogUntil, RepositoryExt as _};
 use gitbutler_repo_actions::RepoActionsExt;
@@ -134,7 +135,9 @@ fn add_multiple_series() -> Result<()> {
 
     // archive is noop
     let before_prune = test_ctx.stack.heads.clone();
-    test_ctx.stack.archive_integrated_heads(&ctx)?;
+    test_ctx
+        .stack
+        .archive_integrated_heads(&ctx, &ctx.gix_repository()?, &[], false)?;
     assert_eq!(before_prune, test_ctx.stack.heads);
     Ok(())
 }
@@ -269,12 +272,12 @@ fn add_series_target_commit_not_in_stack() -> Result<()> {
 }
 
 #[test]
-fn remove_series_last_fails() -> Result<()> {
+fn remove_branch_last_fails() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
     let result = test_ctx
         .stack
-        .remove_series(&ctx, test_ctx.stack.heads[0].name().clone());
+        .remove_branch(&ctx, test_ctx.stack.heads[0].name().clone());
     assert_eq!(
         result.err().unwrap().to_string(),
         "Cannot remove the last branch from the stack"
@@ -283,12 +286,12 @@ fn remove_series_last_fails() -> Result<()> {
 }
 
 #[test]
-fn remove_series_nonexistent_fails() -> Result<()> {
+fn remove_branch_nonexistent_fails() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
     let result = test_ctx
         .stack
-        .remove_series(&ctx, "does-not-exist".to_string());
+        .remove_branch(&ctx, "does-not-exist".to_string());
     assert_eq!(
         result.err().unwrap().to_string(),
         "Series with name does-not-exist not found"
@@ -297,7 +300,7 @@ fn remove_series_nonexistent_fails() -> Result<()> {
 }
 
 #[test]
-fn remove_series_with_multiple_last_heads() -> Result<()> {
+fn remove_branch_with_multiple_last_heads() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
 
@@ -317,7 +320,7 @@ fn remove_series_with_multiple_last_heads() -> Result<()> {
 
     let result = test_ctx
         .stack
-        .remove_series(&ctx, default_head.name().clone());
+        .remove_branch(&ctx, default_head.name().clone());
     assert!(result.is_ok());
     assert_eq!(head_names(&test_ctx), vec!["to_stay"]);
     assert_eq!(
@@ -328,7 +331,7 @@ fn remove_series_with_multiple_last_heads() -> Result<()> {
 }
 
 #[test]
-fn remove_series_no_orphan_commits() -> Result<()> {
+fn remove_branch_no_orphan_commits() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
 
@@ -348,7 +351,7 @@ fn remove_series_no_orphan_commits() -> Result<()> {
 
     let result = test_ctx
         .stack
-        .remove_series(&ctx, default_head.name().clone());
+        .remove_branch(&ctx, default_head.name().clone());
     assert!(result.is_ok());
     assert_eq!(head_names(&test_ctx), vec!["to_stay"]);
     assert_eq!(
@@ -366,14 +369,14 @@ fn update_series_noop_does_nothing() -> Result<()> {
     let noop_update = PatchReferenceUpdate::default();
     let result = test_ctx
         .stack
-        .update_series(&ctx, "a-branch-2".into(), &noop_update);
+        .update_branch(&ctx, "a-branch-2".into(), &noop_update);
     assert!(result.is_ok());
     assert_eq!(test_ctx.stack.heads, heads_before);
     Ok(())
 }
 
 #[test]
-fn update_series_name_fails_validation() -> Result<()> {
+fn update_branch_name_fails_validation() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
     let update = PatchReferenceUpdate {
@@ -383,13 +386,13 @@ fn update_series_name_fails_validation() -> Result<()> {
     };
     let result = test_ctx
         .stack
-        .update_series(&ctx, "a-branch-2".into(), &update);
+        .update_branch(&ctx, "a-branch-2".into(), &update);
     assert_eq!(result.err().unwrap().to_string(), "Invalid branch name");
     Ok(())
 }
 
 #[test]
-fn update_series_name_success() -> Result<()> {
+fn update_branch_name_success() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
     let update = PatchReferenceUpdate {
@@ -399,7 +402,7 @@ fn update_series_name_success() -> Result<()> {
     };
     let result = test_ctx
         .stack
-        .update_series(&ctx, "a-branch-2".into(), &update);
+        .update_branch(&ctx, "a-branch-2".into(), &update);
     assert!(result.is_ok());
     assert_eq!(test_ctx.stack.heads[0].name(), "new-name");
     // Assert persisted
@@ -411,7 +414,7 @@ fn update_series_name_success() -> Result<()> {
 }
 
 #[test]
-fn update_series_name_resets_pr_number() -> Result<()> {
+fn update_branch_name_resets_pr_number() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
     let pr_number = 123;
@@ -426,7 +429,7 @@ fn update_series_name_resets_pr_number() -> Result<()> {
     };
     test_ctx
         .stack
-        .update_series(&ctx, "a-branch-2".into(), &update)?;
+        .update_branch(&ctx, "a-branch-2".into(), &update)?;
     assert_eq!(test_ctx.stack.heads[0].pr_number, None);
     assert_eq!(
         test_ctx.stack,
@@ -446,7 +449,7 @@ fn update_series_set_description() -> Result<()> {
     };
     let result = test_ctx
         .stack
-        .update_series(&ctx, "a-branch-2".into(), &update);
+        .update_branch(&ctx, "a-branch-2".into(), &update);
     assert!(result.is_ok());
     assert_eq!(
         test_ctx.stack.heads[0].description,
@@ -475,7 +478,7 @@ fn update_series_target_fails_commit_not_in_stack() -> Result<()> {
     };
     let result = test_ctx
         .stack
-        .update_series(&ctx, "a-branch-2".into(), &update);
+        .update_branch(&ctx, "a-branch-2".into(), &update);
     assert_eq!(
         result.err().unwrap().to_string(),
         format!(
@@ -502,7 +505,7 @@ fn update_series_target_orphan_commit_fails() -> Result<()> {
     };
     let result = test_ctx
         .stack
-        .update_series(&ctx, "a-branch-2".into(), &update);
+        .update_branch(&ctx, "a-branch-2".into(), &update);
 
     assert_eq!(
         result.err().unwrap().to_string(),
@@ -537,7 +540,7 @@ fn update_series_target_success() -> Result<()> {
     };
     let result = test_ctx
         .stack
-        .update_series(&ctx, "series_1".into(), &update);
+        .update_branch(&ctx, "series_1".into(), &update);
     assert!(result.is_ok());
     assert_eq!(*test_ctx.stack.heads[0].head(), commit_1_change_id);
     // Assert persisted
@@ -582,7 +585,7 @@ fn update_name_after_push() -> Result<()> {
         Some(Some(test_ctx.stack.id)),
     );
     assert!(result.is_ok());
-    let result = test_ctx.stack.update_series(
+    let result = test_ctx.stack.update_branch(
         &ctx,
         "a-branch-2".into(),
         &PatchReferenceUpdate {
@@ -1004,7 +1007,9 @@ fn archive_heads_noop() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
     let initial_state = test_ctx.stack.heads.clone();
-    test_ctx.stack.archive_integrated_heads(&ctx)?;
+    test_ctx
+        .stack
+        .archive_integrated_heads(&ctx, &ctx.gix_repository()?, &[], false)?;
     assert_eq!(initial_state, test_ctx.stack.heads);
     // Assert persisted
     assert_eq!(
@@ -1029,7 +1034,12 @@ fn archive_heads_success() -> Result<()> {
         )?,
     );
     assert_eq!(test_ctx.stack.heads.len(), 2);
-    test_ctx.stack.archive_integrated_heads(&ctx)?;
+    test_ctx.stack.archive_integrated_heads(
+        &ctx,
+        &ctx.gix_repository()?,
+        &[Reference::Virtual("foo".to_string())],
+        false,
+    )?;
     assert_eq!(test_ctx.stack.heads.len(), 2);
     assert!(test_ctx.stack.heads[0].archived);
     assert!(!test_ctx.stack.heads[1].archived);

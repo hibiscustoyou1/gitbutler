@@ -1,15 +1,14 @@
 <script lang="ts">
-	import ScrollableContainer from '$components/ScrollableContainer.svelte';
-	import Select from '$components/Select.svelte';
-	import SelectItem from '$components/SelectItem.svelte';
-	import { BaseBranchService } from '$lib/baseBranch/baseBranchService';
+	import ScrollableContainer from '$components/ConfigurableScrollableContainer.svelte';
+	import { writeClipboard } from '$lib/backend/clipboard';
+	import BaseBranchService from '$lib/baseBranch/baseBranchService.svelte';
 	import { BranchStack } from '$lib/branches/branch';
-	import { getForge } from '$lib/forge/interface/forge';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
+	import { Project } from '$lib/project/project';
 	import {
 		getBaseBranchResolution,
 		getResolutionApproach,
 		sortStatusInfo,
-		UpstreamIntegrationService,
 		type BaseBranchResolutionApproach,
 		type StackStatusesWithBranches,
 		type StackStatusInfo,
@@ -17,20 +16,23 @@
 		type StackStatus,
 		stackFullyIntegrated,
 		type BranchStatus
-	} from '$lib/upstream/upstreamIntegrationService';
+	} from '$lib/upstream/types';
+	import { UpstreamIntegrationService } from '$lib/upstream/upstreamIntegrationService';
 	import { openExternalUrl } from '$lib/utils/url';
-	import { copyToClipboard } from '@gitbutler/shared/clipboard';
 	import { getContext } from '@gitbutler/shared/context';
 	import Badge from '@gitbutler/ui/Badge.svelte';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import IntegrationSeriesRow from '@gitbutler/ui/IntegrationSeriesRow.svelte';
 	import Modal from '@gitbutler/ui/Modal.svelte';
 	import SimpleCommitRow from '@gitbutler/ui/SimpleCommitRow.svelte';
+	import Select from '@gitbutler/ui/select/Select.svelte';
+	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
 	import { pxToRem } from '@gitbutler/ui/utils/pxToRem';
 	import { tick } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
 	type OperationState = 'inert' | 'loading' | 'completed';
+	type OperationType = 'rebase' | 'merge' | 'unapply' | 'delete';
 
 	interface Props {
 		onClose?: () => void;
@@ -38,11 +40,14 @@
 
 	const { onClose }: Props = $props();
 
-	const forge = getForge();
+	const forge = getContext(DefaultForgeFactory);
+	const project = getContext(Project);
+	const projectId = $derived(project.id);
 	const upstreamIntegrationService = getContext(UpstreamIntegrationService);
 	let branchStatuses = $state<StackStatusesWithBranches | undefined>();
 	const baseBranchService = getContext(BaseBranchService);
-	const base = baseBranchService.base;
+	const baseResponse = $derived(baseBranchService.baseBranch(projectId));
+	const base = $derived(baseResponse.current.data);
 
 	let modal = $state<Modal>();
 	let integratingUpstream = $state<OperationState>('inert');
@@ -51,7 +56,7 @@
 	let baseResolutionApproach = $state<BaseBranchResolutionApproach | undefined>();
 	let targetCommitOid = $state<string | undefined>(undefined);
 
-	const isDivergedResolved = $derived($base?.diverged && !baseResolutionApproach);
+	const isDivergedResolved = $derived(base?.diverged && !baseResolutionApproach);
 
 	$effect(() => {
 		if (branchStatuses?.type !== 'updatesRequired') {
@@ -71,8 +76,8 @@
 					status.stack.id,
 					{
 						branchId: status.stack.id,
-						branchTree: status.stack.tree,
-						approach: defaultApproach
+						approach: defaultApproach,
+						deleteIntegratedBranches: false // TODO: Take input from the UI
 					}
 				];
 			})
@@ -93,15 +98,15 @@
 	// Resolve the target commit oid if the base branch diverged and the the resolution
 	// approach is changed
 	$effect(() => {
-		if ($base?.diverged && baseResolutionApproach) {
+		if (base?.diverged && baseResolutionApproach) {
 			upstreamIntegrationService.resolveUpstreamIntegration(baseResolutionApproach).then((Oid) => {
 				targetCommitOid = Oid;
 			});
 		}
 	});
 
-	function handleBaseResolutionSelection(resolution: BaseBranchResolutionApproach) {
-		baseResolutionApproach = resolution;
+	function handleBaseResolutionSelection(value: string) {
+		baseResolutionApproach = value as BaseBranchResolutionApproach;
 	}
 
 	async function integrate() {
@@ -116,7 +121,7 @@
 			Array.from(results.values()),
 			baseResolution
 		);
-		await baseBranchService.refresh();
+		await baseBranchService.refreshBaseBranch(projectId);
 		integratingUpstream = 'completed';
 
 		modal?.close();
@@ -187,7 +192,7 @@
 					onselect={(value) => {
 						const result = results.get(stack.id)!;
 
-						results.set(stack.id, { ...result, approach: { type: value } });
+						results.set(stack.id, { ...result, approach: { type: value as OperationType } });
 					}}
 					options={integrationOptions(stackStatus)}
 				>
@@ -204,27 +209,23 @@
 
 <Modal bind:this={modal} {onClose} width={520} noPadding onSubmit={integrate}>
 	<ScrollableContainer maxHeight={'70vh'}>
-		{#if $base}
+		{#if base}
 			<div class="section">
 				<h3 class="text-14 text-semibold section-title">
-					<span>Incoming changes</span><Badge>{$base.upstreamCommits.length}</Badge>
+					<span>Incoming changes</span><Badge>{base.upstreamCommits.length}</Badge>
 				</h3>
 				<div class="scroll-wrap">
 					<ScrollableContainer maxHeight={pxToRem(268)}>
-						{#each $base.upstreamCommits as commit}
+						{#each base.upstreamCommits as commit}
+							{@const commitUrl = forge.current.commitUrl(commit.id)}
 							<SimpleCommitRow
 								title={commit.descriptionTitle ?? ''}
 								sha={commit.id}
 								date={commit.createdAt}
 								author={commit.author.name}
-								onUrlOpen={() => {
-									if ($forge) {
-										openExternalUrl($forge.commitUrl(commit.id));
-									}
-								}}
-								onCopy={() => {
-									copyToClipboard(commit.id);
-								}}
+								url={commitUrl}
+								onOpen={(url) => openExternalUrl(url)}
+								onCopy={() => writeClipboard(commit.id)}
 							/>
 						{/each}
 					</ScrollableContainer>
@@ -232,7 +233,7 @@
 			</div>
 		{/if}
 
-		{#if $base?.diverged}
+		{#if base?.diverged}
 			<div class="target-divergence">
 				<img class="target-icon" src="/images/domain-icons/trunk.svg" alt="" />
 
@@ -271,9 +272,11 @@
 				<h3 class="text-14 text-semibold">To be updated:</h3>
 				<div class="scroll-wrap">
 					<ScrollableContainer maxHeight={pxToRem(240)}>
-						{#each statuses as { stack, status }}
-							{@render stackStatus(stack, status)}
-						{/each}
+						<div>
+							{#each statuses as { stack, status }}
+								{@render stackStatus(stack, status)}
+							{/each}
+						</div>
 					</ScrollableContainer>
 				</div>
 			</div>
@@ -303,14 +306,14 @@
 		gap: 14px;
 		border-bottom: 1px solid var(--clr-border-2);
 
-		&:last-child {
-			border-bottom: none;
-		}
-
-		.scroll-wrap {
+		& .scroll-wrap {
 			border-radius: var(--radius-m);
 			border: 1px solid var(--clr-border-2);
 			overflow: hidden;
+		}
+
+		&:nth-last-child(2) {
+			border-bottom: none;
 		}
 	}
 

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import EmptyBranch from './EmptyBranch.svelte';
 	import ReduxResult from '$components/ReduxResult.svelte';
 	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { combineResults } from '$lib/state/helpers';
@@ -12,7 +11,6 @@
 		projectId: string;
 		stackId: string;
 		branchName: string;
-		lastBranch?: boolean;
 		selectedCommitId?: string;
 		upstreamTemplate?: Snippet<
 			[
@@ -20,13 +18,22 @@
 					commit: UpstreamCommit;
 					commitKey: CommitKey;
 					first: boolean;
-					last: boolean;
+					lastCommit: boolean;
 					selected: boolean;
 				}
 			]
 		>;
 		localAndRemoteTemplate?: Snippet<
-			[{ commit: Commit; commitKey: CommitKey; first: boolean; last: boolean; selected: boolean }]
+			[
+				{
+					commit: Commit;
+					commitKey: CommitKey;
+					first: boolean;
+					last: boolean;
+					lastCommit: boolean;
+					selected: boolean;
+				}
+			]
 		>;
 	}
 
@@ -34,7 +41,6 @@
 		projectId,
 		stackId,
 		branchName,
-		lastBranch,
 		selectedCommitId,
 		localAndRemoteTemplate,
 		upstreamTemplate
@@ -42,41 +48,42 @@
 
 	const [stackService] = inject(StackService);
 
-	const localAndRemoteCommits = $derived(
-		stackService.commits(projectId, stackId, branchName).current
-	);
+	const localAndRemoteCommits = $derived(stackService.commits(projectId, stackId, branchName));
 	const upstreamOnlyCommits = $derived(
-		stackService.upstreamCommits(projectId, stackId, branchName).current
+		stackService.upstreamCommits(projectId, stackId, branchName)
 	);
 </script>
 
-<ReduxResult result={combineResults(upstreamOnlyCommits, localAndRemoteCommits)}>
+<ReduxResult result={combineResults(upstreamOnlyCommits.current, localAndRemoteCommits.current)}>
 	{#snippet children([upstreamOnlyCommits, localAndRemoteCommits])}
-		{#if !upstreamOnlyCommits.length && !localAndRemoteCommits.length}
-			<EmptyBranch {lastBranch} />
-		{:else}
-			<div class="commit-list">
-				{#if upstreamTemplate}
-					{#each upstreamOnlyCommits as commit, i (commit.id)}
-						{@const first = i === 0}
-						{@const last = i === upstreamOnlyCommits.length - 1}
-						{@const commitKey = { stackId, branchName, commitId: commit.id, upstream: true }}
-						{@const selected = selectedCommitId === commit.id}
-						{@render upstreamTemplate({ commit, commitKey, first, last, selected })}
-					{/each}
-				{/if}
+		<div class="commit-list">
+			{#if upstreamTemplate}
+				{#each upstreamOnlyCommits as commit, i (commit.id)}
+					{@const first = i === 0}
+					{@const lastCommit = i === upstreamOnlyCommits.length - 1}
+					{@const commitKey = { stackId, branchName, commitId: commit.id, upstream: true }}
+					{@const selected = selectedCommitId === commit.id}
+					{@render upstreamTemplate({ commit, commitKey, first, lastCommit, selected })}
+				{/each}
+			{/if}
 
-				{#if localAndRemoteTemplate}
-					{#each localAndRemoteCommits as commit, i (commit.id)}
-						{@const first = i === 0}
-						{@const last = i === localAndRemoteCommits.length - 1}
-						{@const commitKey = { stackId, branchName, commitId: commit.id, upstream: false }}
-						{@const selected = selectedCommitId === commit.id}
-						{@render localAndRemoteTemplate({ commit, commitKey, first, last, selected })}
-					{/each}
-				{/if}
-			</div>
-		{/if}
+			{#if localAndRemoteTemplate}
+				{#each localAndRemoteCommits as commit, i (commit.id)}
+					{@const first = i === 0}
+					{@const last = i === localAndRemoteCommits.length - 1}
+					{@const commitKey = { stackId, branchName, commitId: commit.id, upstream: false }}
+					{@const selected = selectedCommitId === commit.id}
+					{@render localAndRemoteTemplate({
+						commit,
+						commitKey,
+						first,
+						last,
+						lastCommit: last,
+						selected
+					})}
+				{/each}
+			{/if}
+		</div>
 	{/snippet}
 </ReduxResult>
 
@@ -86,6 +93,5 @@
 		display: flex;
 		flex-direction: column;
 		border-radius: 0 0 var(--radius-ml) var(--radius-ml);
-		/* overflow: hidden; */
 	}
 </style>

@@ -1,7 +1,8 @@
 <script lang="ts">
-	import CommitContextMenu from './CommitContextMenu.svelte';
 	import BranchFilesList from '$components/BranchFilesList.svelte';
+	import CommitContextMenu from '$components/CommitContextMenu.svelte';
 	import CommitMessageInput from '$components/CommitMessageInput.svelte';
+	import { writeClipboard } from '$lib/backend/clipboard';
 	import { BaseBranch } from '$lib/baseBranch/baseBranch';
 	import { BranchStack } from '$lib/branches/branch';
 	import { PatchSeries } from '$lib/branches/branch';
@@ -9,17 +10,17 @@
 	import { Commit, DetailedCommit } from '$lib/commits/commit';
 	import { type CommitStatus } from '$lib/commits/commit';
 	import { createCommitStore } from '$lib/commits/contexts';
+	import { CommitDropData } from '$lib/commits/dropHandler';
 	import { persistedCommitMessage } from '$lib/config/config';
 	import { draggableCommit } from '$lib/dragging/draggable';
-	import { CommitDropData, NON_DRAGGABLE } from '$lib/dragging/draggables';
+	import { NON_DRAGGABLE } from '$lib/dragging/draggables';
 	import { RemoteFile } from '$lib/files/file';
 	import { FileService } from '$lib/files/fileService';
 	import { ModeService } from '$lib/mode/modeService';
 	import { Project } from '$lib/project/project';
 	import { UserService } from '$lib/user/userService';
 	import { openExternalUrl } from '$lib/utils/url';
-	import { copyToClipboard } from '@gitbutler/shared/clipboard';
-	import { getContext, getContextStore, maybeGetContext } from '@gitbutler/shared/context';
+	import { getContext, maybeGetContext } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import ContextMenu from '@gitbutler/ui/ContextMenu.svelte';
 	import Icon from '@gitbutler/ui/Icon.svelte';
@@ -35,7 +36,7 @@
 	const user = userService.user;
 
 	interface Props {
-		branch?: BranchStack | undefined;
+		stack?: BranchStack | undefined;
 		currentSeries?: PatchSeries | undefined;
 		commit: DetailedCommit | Commit;
 		commitUrl?: string | undefined;
@@ -50,7 +51,7 @@
 	}
 
 	const {
-		branch = undefined,
+		stack = undefined,
 		currentSeries,
 		commit,
 		commitUrl = undefined,
@@ -65,7 +66,7 @@
 	}: Props = $props();
 
 	const branchController = getContext(BranchController);
-	const baseBranch = getContextStore(BaseBranch);
+	const baseBranch = getContext(BaseBranch);
 	const project = getContext(Project);
 	const modeService = maybeGetContext(ModeService);
 	const fileService = getContext(FileService);
@@ -76,7 +77,7 @@
 		commitStore.set(commit);
 	});
 
-	const currentCommitMessage = persistedCommitMessage(project.id, branch?.id || '');
+	const currentCommitMessage = persistedCommitMessage(project.id, stack?.id || '');
 
 	let branchCardElement = $state<HTMLElement>();
 	let kebabMenuTrigger = $state<HTMLButtonElement>();
@@ -112,11 +113,11 @@
 	}
 
 	function undoCommit(commit: DetailedCommit | Commit) {
-		if (!branch || !$baseBranch) {
+		if (!stack || !baseBranch) {
 			console.error('Unable to undo commit');
 			return;
 		}
-		branchController.undoCommit(branch.id, branch.name, commit.id);
+		branchController.undoCommit(stack.id, stack.name, commit.id);
 	}
 
 	let isUndoable = commit instanceof DetailedCommit && type !== 'Remote' && type !== 'Integrated';
@@ -134,8 +135,8 @@
 	function submitCommitMessageModal() {
 		commit.description = description;
 
-		if (branch) {
-			branchController.updateCommitMessage(branch.id, commit.id, description);
+		if (stack) {
+			branchController.updateCommitMessage(stack.id, commit.id, description);
 		}
 
 		commitMessageModal?.close();
@@ -157,14 +158,14 @@
 	function canEdit() {
 		if (isUnapplied) return false;
 		if (!modeService) return false;
-		if (!branch) return false;
+		if (!stack) return false;
 
 		return true;
 	}
 
 	async function editPatch() {
 		if (!canEdit()) return;
-		modeService!.enterEditMode(commit.id, branch!.refname);
+		modeService!.enterEditMode(commit.id, stack!.id);
 	}
 
 	async function handleEditPatch() {
@@ -221,8 +222,8 @@
 		}
 	}}
 	bind:menu={contextMenu}
-	baseBranch={$baseBranch}
-	stack={branch}
+	{baseBranch}
+	{stack}
 	{commit}
 	isRemote={type === 'Remote'}
 	commitUrl={showOpenInBrowser ? commitUrl : undefined}
@@ -251,7 +252,7 @@
 	onkeyup={onKeyup}
 	role="button"
 	tabindex="0"
-	use:draggableCommit={isDraggable
+	use:draggableCommit={isDraggable && stack
 		? {
 				disabled: false,
 				label: commit.descriptionTitle,
@@ -259,7 +260,17 @@
 				date: getTimeAgo(commit.createdAt),
 				authorImgUrl: authorImgUrl,
 				commitType: type,
-				data: new CommitDropData(commit.branchId, commit, isHeadCommit, currentSeries?.name),
+				data: new CommitDropData(
+					stack.id,
+					{
+						id: commit.id,
+						isConflicted: commit.conflicted,
+						isRemote: commit instanceof Commit,
+						isIntegrated: commit instanceof DetailedCommit && commit.isIntegrated
+					},
+					isHeadCommit,
+					currentSeries?.name
+				),
 				viewportId: 'board-viewport'
 			}
 		: NON_DRAGGABLE}
@@ -338,7 +349,7 @@
 						class="commit__subtitle-btn commit__subtitle-btn_dashed"
 						onclick={(e) => {
 							e.stopPropagation();
-							copyToClipboard(commit.id);
+							writeClipboard(commit.id);
 						}}
 					>
 						<span>{commitShortSha}</span>

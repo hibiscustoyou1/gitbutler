@@ -101,6 +101,12 @@ impl StackBranch {
         &self.head
     }
 
+    pub fn full_name(&self) -> Result<gix::refs::FullName> {
+        qualified_reference_name(&self.name)
+            .try_into()
+            .map_err(Into::into)
+    }
+
     /// This will update the commit that this points to (the virtual reference in virtual_branches.toml) as well as update of create a real git reference.
     /// If this points to a change id, it's a noop operation. In practice, moving forward, new CommitOrChangeId entries will always be CommitId and ChangeId may only appear in deserialized data.
     pub fn set_head(
@@ -219,7 +225,6 @@ impl StackBranch {
                 let merge_base = stack.merge_base(stack_context)?;
                 let head_commit =
                     commit_by_oid_or_change_id(&self.head, repository, stack.head(), merge_base)?
-                        .head
                         .id();
                 Ok(head_commit)
             }
@@ -256,7 +261,7 @@ impl StackBranch {
                 upstream_only: vec![],
             });
         }
-        let head_commit = head_commit?.head.id();
+        let head_commit = head_commit?.id();
 
         // Find the previous head in the stack - if it is not archived, use it as base
         // Otherwise use the merge base
@@ -265,7 +270,7 @@ impl StackBranch {
             .filter(|predacessor| !predacessor.archived)
             .map_or(merge_base, |predacessor| {
                 commit_by_oid_or_change_id(&predacessor.head, repository, stack.head(), merge_base)
-                    .map(|commit| commit.head.id())
+                    .map(|commit| commit.id())
                     .unwrap_or(merge_base)
             });
 
@@ -297,23 +302,36 @@ impl StackBranch {
                 });
         }
 
-        // refs/remotes/origin/my-branch..^refs/heads/my-branch
-        let mut upstream_only_patches: Vec<Commit<'_>> = vec![];
-        if self.pushed(&remote, repository) {
-            let upstream_head = repository
-                .find_reference(self.remote_reference(&remote).as_str())?
-                .peel_to_commit()?;
-            repository
-                .log(upstream_head.id(), LogUntil::Commit(head_commit), false)?
-                .into_iter()
-                .rev()
-                .for_each(|c| upstream_only_patches.push(c));
-        }
+        let upstream_only = if let core::result::Result::Ok(reference) =
+            repository.find_reference(self.remote_reference(&remote).as_str())
+        {
+            let upstream_head = reference.peel_to_commit()?;
+            let mut revwalk = repository.revwalk()?;
+            revwalk.push(upstream_head.id())?;
+            if let Some(pred) = stack.branch_predacessor(self) {
+                if let core::result::Result::Ok(head_ref) =
+                    repository.find_reference(pred.remote_reference(&remote).as_str())
+                {
+                    revwalk.hide(head_ref.peel_to_commit()?.id())?;
+                }
+            }
+            revwalk.hide(previous_head)?;
+            let mut upstream_only = revwalk
+                .filter_map(|c| {
+                    let commit = repository.find_commit(c.ok()?).ok()?;
+                    Some(commit)
+                })
+                .collect::<Vec<_>>();
+            upstream_only.reverse();
+            upstream_only
+        } else {
+            vec![]
+        };
 
         Ok(BranchCommits {
             local_commits: local_patches,
             remote_commits: remote_patches,
-            upstream_only: upstream_only_patches,
+            upstream_only,
         })
     }
 }

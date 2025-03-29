@@ -2,8 +2,8 @@
 	import LoginModal from '$lib/components/LoginModal.svelte';
 	import { UserService } from '$lib/user/userService';
 	import { getContext } from '@gitbutler/shared/context';
-	import { PatchService } from '@gitbutler/shared/patches/patchService';
-	import { type Patch } from '@gitbutler/shared/patches/types';
+	import { PatchCommitService } from '@gitbutler/shared/patches/patchCommitService';
+	import { type PatchCommit } from '@gitbutler/shared/patches/types';
 	import CommitStatusBadge from '@gitbutler/ui/CommitStatusBadge.svelte';
 	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
 	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
@@ -11,7 +11,7 @@
 
 	interface Props {
 		branchUuid: string;
-		patch: Patch;
+		patch: PatchCommit;
 		isUserLoggedIn: boolean;
 	}
 
@@ -25,7 +25,7 @@
 
 	const { patch, branchUuid, isUserLoggedIn }: Props = $props();
 
-	const patchService = getContext(PatchService);
+	const patchService = getContext(PatchCommitService);
 	const userService = getContext(UserService);
 	const user = userService.user;
 
@@ -95,7 +95,6 @@
 	}
 
 	function showAlertDialog(action: Action) {
-		console.log(action);
 		const message =
 			action === 'requestChanges'
 				? 'You have already approved this commit. Do you want to request changes instead?'
@@ -105,7 +104,6 @@
 	}
 
 	function handleChangeStatus(action: Action) {
-		console.log(action);
 		if (action === 'approve') {
 			showAlertDialog(action);
 		} else {

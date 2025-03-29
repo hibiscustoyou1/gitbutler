@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-
 use anyhow::{bail, Context, Result};
 use but_rebase::{RebaseOutput, RebaseStep};
-use git2::{Commit, Oid};
+use git2::Oid;
 use gitbutler_command_context::CommandContext;
 use gitbutler_oxidize::{ObjectIdExt, OidExt};
 use gitbutler_project::access::WorktreeWritePermission;
@@ -11,8 +9,10 @@ use gitbutler_stack::{
     Stack, StackId,
 };
 
+#[allow(deprecated)]
 use gitbutler_workspace::{
-    checkout_branch_trees, compute_updated_branch_head_for_commits, BranchHeadAndTree,
+    branch_trees::{update_uncommited_changes, WorkspaceState},
+    checkout_branch_trees, compute_updated_branch_head_for_commits,
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,7 @@ pub fn reorder_stack(
     new_order: StackOrder,
     perm: &mut WorktreeWritePermission,
 ) -> Result<RebaseOutput> {
+    let old_workspace = WorkspaceState::create(ctx, perm.read_permission())?;
     let state = ctx.project().virtual_branches();
     let repo = ctx.repo();
     let mut stack = state.get_stack(stack_id)?;
@@ -70,25 +71,27 @@ pub fn reorder_stack(
     let new_head = output.top_commit.to_git2();
 
     // Calculate the new head and tree
-    let BranchHeadAndTree {
-        head: new_head_oid,
-        tree: new_tree_oid,
-    } = compute_updated_branch_head_for_commits(repo, old_head.id(), stack.tree, new_head)?;
+    let (new_head_oid, new_tree_oid) = if ctx.app_settings().feature_flags.v3 {
+        (new_head, None)
+    } else {
+        #[allow(deprecated)]
+        let res =
+            compute_updated_branch_head_for_commits(repo, old_head.id(), stack.tree, new_head)?;
+        (res.head, Some(res.tree))
+    };
 
     // Ensure the stack head is set to the new oid after rebasing
-    stack.set_stack_head(ctx, new_head_oid, Some(new_tree_oid))?;
+    stack.set_stack_head(ctx, new_head_oid, new_tree_oid)?;
 
-    let mut new_heads: HashMap<String, Commit<'_>> = HashMap::new();
-    for reference in &output.references {
-        let commit = repo.find_commit(reference.commit_id.to_git2())?;
-        if let but_core::Reference::Virtual(name) = &reference.reference {
-            new_heads.insert(name.clone(), commit);
-        }
+    stack.set_heads_from_rebase_output(ctx, output.references.clone())?;
+
+    let new_workspace = WorkspaceState::create(ctx, perm.read_permission())?;
+    if ctx.app_settings().feature_flags.v3 {
+        update_uncommited_changes(ctx, old_workspace, new_workspace, perm)?;
+    } else {
+        #[allow(deprecated)]
+        checkout_branch_trees(ctx, perm)?;
     }
-    // Set the series heads accordingly in one go
-    stack.set_all_heads(ctx, new_heads)?;
-
-    checkout_branch_trees(ctx, perm)?;
     crate::integration::update_workspace_commit(&state, ctx)
         .context("failed to update gitbutler workspace")?;
 

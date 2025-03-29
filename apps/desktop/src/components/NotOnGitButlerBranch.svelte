@@ -1,10 +1,11 @@
 <script lang="ts">
-	import DecorativeSplitView from './DecorativeSplitView.svelte';
-	import ProjectSwitcher from './ProjectSwitcher.svelte';
-	import RemoveProjectButton from './RemoveProjectButton.svelte';
+	import DecorativeSplitView from '$components/DecorativeSplitView.svelte';
 	import ProjectNameLabel from '$components/ProjectNameLabel.svelte';
+	import ProjectSwitcher from '$components/ProjectSwitcher.svelte';
+	import RemoveProjectButton from '$components/RemoveProjectButton.svelte';
 	import derectionDoubtSvg from '$lib/assets/illustrations/direction-doubt.svg?raw';
-	import { BranchController } from '$lib/branches/branchController';
+	import BaseBranchService from '$lib/baseBranch/baseBranchService.svelte';
+	import { VirtualBranchService } from '$lib/branches/virtualBranchService';
 	import { showError } from '$lib/notifications/toasts';
 	import { Project } from '$lib/project/project';
 	import { ProjectsService } from '$lib/project/projectsService';
@@ -22,9 +23,20 @@
 
 	const { baseBranch }: Props = $props();
 
-	const branchController = getContext(BranchController);
 	const projectsService = getContext(ProjectsService);
+	const vbranchService = getContext(VirtualBranchService);
+	const baseBranchService = getContext(BaseBranchService);
 	const project = getContext(Project);
+	const [setBaseBranchTarget, targetBranchSwitch] = baseBranchService.setTarget;
+
+	async function switchTarget(branch: string, remote?: string) {
+		await setBaseBranchTarget({
+			projectId: project.id,
+			branch,
+			pushRemote: remote
+		});
+		await vbranchService.refresh();
+	}
 
 	let isDeleting = $state(false);
 	let deleteConfirmationModal: ReturnType<typeof RemoveProjectButton> | undefined = $state();
@@ -70,8 +82,9 @@
 				style="pop"
 				icon="undo-small"
 				reversedDirection
+				loading={targetBranchSwitch.current.isLoading}
 				onclick={() => {
-					if (baseBranch) branchController.setTarget(baseBranch.branchName);
+					if (baseBranch) switchTarget(baseBranch.branchName);
 				}}
 			>
 				Go back to gitbutler/workspace

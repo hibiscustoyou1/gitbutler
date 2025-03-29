@@ -2,29 +2,28 @@
 	import Chrome from '$components/Chrome.svelte';
 	import FileMenuAction from '$components/FileMenuAction.svelte';
 	import History from '$components/History.svelte';
+	import MetricsReporter from '$components/MetricsReporter.svelte';
 	import Navigation from '$components/Navigation.svelte';
 	import NoBaseBranch from '$components/NoBaseBranch.svelte';
 	import NotOnGitButlerBranch from '$components/NotOnGitButlerBranch.svelte';
 	import ProblemLoadingRepo from '$components/ProblemLoadingRepo.svelte';
 	import ProjectSettingsMenuAction from '$components/ProjectSettingsMenuAction.svelte';
-	import { BaseBranch, NoDefaultTarget } from '$lib/baseBranch/baseBranch';
-	import { BaseBranchService } from '$lib/baseBranch/baseBranchService';
+	import { BaseBranch } from '$lib/baseBranch/baseBranch';
+	import BaseBranchService from '$lib/baseBranch/baseBranchService.svelte';
 	import { BranchController } from '$lib/branches/branchController';
 	import { BranchListingService, CombinedBranchListingService } from '$lib/branches/branchListing';
-	import { BranchDragActionsFactory } from '$lib/branches/dragActions';
 	import { GitBranchService } from '$lib/branches/gitBranch';
 	import { VirtualBranchService } from '$lib/branches/virtualBranchService';
-	import { CommitDragActionsFactory } from '$lib/commits/dragActions';
 	import { SettingsService } from '$lib/config/appSettingsV2';
 	import { showHistoryView } from '$lib/config/config';
 	import { StackingReorderDropzoneManagerFactory } from '$lib/dragging/stackingReorderDropzoneManager';
 	import { UncommitedFilesWatcher } from '$lib/files/watcher';
-	import { DefaultForgeFactory } from '$lib/forge/forgeFactory';
-	import { octokitFromAccessToken } from '$lib/forge/github/octokit';
-	import { createForgeStore } from '$lib/forge/interface/forge';
-	import { createForgeListingServiceStore } from '$lib/forge/interface/forgeListingService';
-	import { createForgePrServiceStore } from '$lib/forge/interface/forgePrService';
-	import { createForgeRepoServiceStore } from '$lib/forge/interface/forgeRepoService';
+	import { FocusManager } from '$lib/focus/focusManager.svelte';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
+	import { GitHubClient } from '$lib/forge/github/githubClient';
+	import { GitLabClient } from '$lib/forge/gitlab/gitlabClient';
+	import { GitLabState } from '$lib/forge/gitlab/gitlabState.svelte';
+	import { BrToPrService } from '$lib/forge/shared/prFooter';
 	import { TemplateService } from '$lib/forge/templateService';
 	import { HistoryService } from '$lib/history/history';
 	import { StackPublishingService } from '$lib/history/stackPublishingService';
@@ -33,14 +32,17 @@
 	import { Project } from '$lib/project/project';
 	import { projectCloudSync } from '$lib/project/projectCloudSync.svelte';
 	import { ProjectService } from '$lib/project/projectService';
+	import { getSecretsService } from '$lib/secrets/secretsService';
+	import { IdSelection } from '$lib/selection/idSelection.svelte';
 	import { UpstreamIntegrationService } from '$lib/upstream/upstreamIntegrationService';
 	import { debounce } from '$lib/utils/debounce';
+	import { WorktreeService } from '$lib/worktree/worktreeService.svelte';
 	import { BranchService as CloudBranchService } from '@gitbutler/shared/branches/branchService';
 	import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
 	import { getContext } from '@gitbutler/shared/context';
 	import { HttpClient } from '@gitbutler/shared/network/httpClient';
 	import { ProjectService as CloudProjectService } from '@gitbutler/shared/organizations/projectService';
-	import { AppState } from '@gitbutler/shared/redux/store.svelte';
+	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
 	import { onDestroy, setContext, type Snippet } from 'svelte';
 	import type { ProjectMetrics } from '$lib/metrics/projectMetrics';
 	import type { LayoutData } from './$types';
@@ -53,7 +55,6 @@
 		project,
 		projectId,
 		projectsService,
-		baseBranchService,
 		branchListingService,
 		modeService,
 		userService,
@@ -62,13 +63,34 @@
 		projectMetrics
 	} = $derived(data);
 
+	const baseBranchService = getContext(BaseBranchService);
+	const repoInfoResponse = $derived(baseBranchService.repo(projectId));
+	const repoInfo = $derived(repoInfoResponse.current.data);
+	const baseBranchResponse = $derived(baseBranchService.baseBranch(projectId));
+	const baseBranch = $derived(baseBranchResponse.current.data);
+	const pushRepoResponse = $derived(baseBranchService.pushRepo(projectId));
+	const forkInfo = $derived(pushRepoResponse.current.data);
+	const baseError = $derived(baseBranchResponse.current.error);
+	const baseBranchName = $derived(baseBranch?.shortName);
+
+	const secretService = getSecretsService();
+	const gitLabState = $derived(new GitLabState(secretService, repoInfo, projectId));
+	$effect(() => {
+		setContext(GitLabState, gitLabState);
+	});
+	const gitLabClient = getContext(GitLabClient);
+	$effect(() => {
+		gitLabClient.set(gitLabState);
+	});
+
 	const branchesError = $derived(vbranchService.branchesError);
-	const baseBranch = $derived(baseBranchService.base);
-	const repoInfo = $derived(baseBranchService.repo);
-	const forkInfo = $derived(baseBranchService.pushRepo);
 	const user = $derived(userService.user);
 	const accessToken = $derived($user?.github_access_token);
-	const baseError = $derived(baseBranchService.error);
+
+	const gitHubClient = getContext(GitHubClient);
+	$effect(() => gitHubClient.setToken(accessToken));
+	$effect(() => gitHubClient.setRepo({ owner: repoInfo?.owner, repo: repoInfo?.name }));
+
 	const projectError = $derived(projectsService.error);
 
 	const cloudBranchService = getContext(CloudBranchService);
@@ -89,12 +111,9 @@
 		setContext(HistoryService, data.historyService);
 		setContext(VirtualBranchService, data.vbranchService);
 		setContext(BranchController, data.branchController);
-		setContext(BaseBranchService, data.baseBranchService);
 		setContext(TemplateService, data.templateService);
 		setContext(BaseBranch, baseBranch);
 		setContext(Project, project);
-		setContext(BranchDragActionsFactory, data.branchDragActionsFactory);
-		setContext(CommitDragActionsFactory, data.commitDragActionsFactory);
 		setContext(StackingReorderDropzoneManagerFactory, data.stackingReorderDropzoneManagerFactory);
 		setContext(GitBranchService, data.gitBranchService);
 		setContext(BranchListingService, data.branchListingService);
@@ -107,21 +126,19 @@
 		setContext(StackPublishingService, data.stackPublishingService);
 	});
 
+	const focusManager = new FocusManager();
+	setContext(FocusManager, focusManager);
+
+	const worktreeService = getContext(WorktreeService);
+	const idSelection = new IdSelection(worktreeService);
+	setContext(IdSelection, idSelection);
+
 	let intervalId: any;
 
-	const octokit = $derived(accessToken ? octokitFromAccessToken(accessToken) : undefined);
-	const forgeFactory = $derived(new DefaultForgeFactory(octokit, posthog, projectMetrics));
-	const baseBranchName = $derived($baseBranch?.shortName);
-
-	const listServiceStore = createForgeListingServiceStore(undefined);
-	const forgeStore = createForgeStore(undefined);
-	const prService = createForgePrServiceStore(undefined);
-	const repoService = createForgeRepoServiceStore(undefined);
-
+	const forgeFactory = getContext(DefaultForgeFactory);
 	$effect.pre(() => {
 		const combinedBranchListingService = new CombinedBranchListingService(
 			data.branchListingService,
-			listServiceStore,
 			projectId
 		);
 
@@ -134,7 +151,9 @@
 
 	// TODO: can we eliminate the need to debounce?
 	const fetch = $derived(fetchSignal.event);
-	const debouncedBaseBranchRefresh = debounce(async () => await baseBranchService.refresh(), 500);
+	const debouncedBaseBranchRefresh = debounce(async () => {
+		await baseBranchService.refreshBaseBranch(projectId);
+	}, 500);
 	$effect(() => {
 		if ($fetch || $head) debouncedBaseBranchRefresh();
 	});
@@ -146,20 +165,21 @@
 	);
 
 	$effect(() => {
-		if ($baseBranch || $head || $fetch) debouncedRemoteBranchRefresh();
+		if (baseBranch || $head || $fetch) debouncedRemoteBranchRefresh();
 	});
 
 	$effect(() => {
-		const forge =
-			$repoInfo && baseBranchName
-				? forgeFactory.build($repoInfo, baseBranchName, $forkInfo)
-				: undefined;
-		const ghListService = forge?.listService();
-		listServiceStore.set(ghListService);
-		forgeStore.set(forge);
-		prService.set(forge ? forge.prService() : undefined);
-		repoService.set(forge ? forge.repoService() : undefined);
-		posthog.setPostHogRepo($repoInfo);
+		forgeFactory.setConfig({
+			repo: repoInfo,
+			pushRepo: forkInfo,
+			baseBranch: baseBranchName,
+			githubAuthenticated: !!$user?.github_access_token,
+			gitlabAuthenticated: !!gitLabState.configured.current
+		});
+	});
+
+	$effect(() => {
+		posthog.setPostHogRepo(repoInfo);
 		return () => {
 			posthog.setPostHogRepo(undefined);
 		};
@@ -190,12 +210,16 @@
 		projectMetrics.loadFromLocalStorage();
 	});
 
+	async function fetchRemoteForProject() {
+		await baseBranchService.refreshRemotes(projectId);
+	}
+
 	function setupFetchInterval() {
-		baseBranchService.fetchFromRemotes();
+		fetchRemoteForProject();
 		clearFetchInterval();
 		const intervalMs = 15 * 60 * 1000; // 15 minutes
 		intervalId = setInterval(async () => {
-			await baseBranchService.fetchFromRemotes();
+			await fetchRemoteForProject();
 		}, intervalMs);
 	}
 
@@ -203,24 +227,30 @@
 		if (intervalId) clearInterval(intervalId);
 	}
 
-	const appState = getContext(AppState);
 	const httpClient = getContext(HttpClient);
 
 	const settingsService = getContext(SettingsService);
 	const settingsStore = settingsService.appSettings;
 
+	const webRoutesService = getContext(WebRoutesService);
+	const brToPrService = new BrToPrService(
+		webRoutesService,
+		cloudProjectService,
+		latestBranchLookupService,
+		forgeFactory
+	);
+	setContext(BrToPrService, brToPrService);
+
 	$effect(() => {
-		projectCloudSync(
-			appState,
-			data.projectsService,
-			data.projectService,
-			cloudProjectService,
-			httpClient
-		);
+		projectCloudSync(data.projectsService, data.projectService, httpClient);
 	});
 
 	onDestroy(() => {
 		clearFetchInterval();
+	});
+
+	$effect(() => {
+		projectsService.setActiveProject(projectId);
 	});
 </script>
 
@@ -231,23 +261,23 @@
 
 	{#if !project}
 		<p>Project not found!</p>
-	{:else if $baseError instanceof NoDefaultTarget}
+	{:else if !baseBranch}
 		<NoBaseBranch />
-	{:else if $baseError}
-		<ProblemLoadingRepo error={$baseError} />
+	{:else if baseError}
+		<ProblemLoadingRepo error={baseError} />
 	{:else if $branchesError}
 		<ProblemLoadingRepo error={$branchesError} />
 	{:else if $projectError}
 		<ProblemLoadingRepo error={$projectError} />
-	{:else if $baseBranch}
+	{:else if baseBranch}
 		{#if $mode?.type === 'OpenWorkspace' || $mode?.type === 'Edit'}
 			<div class="view-wrap" role="group" ondragover={(e) => e.preventDefault()}>
 				{#if $settingsStore?.featureFlags.v3}
-					<Chrome>
+					<Chrome {projectId}>
 						{@render children()}
 					</Chrome>
 				{:else}
-					<Navigation />
+					<Navigation {projectId} />
 					{@render children()}
 				{/if}
 				{#if $showHistoryView}
@@ -255,10 +285,13 @@
 				{/if}
 			</div>
 		{:else if $mode?.type === 'OutsideWorkspace'}
-			<NotOnGitButlerBranch baseBranch={$baseBranch} />
+			<NotOnGitButlerBranch {baseBranch} />
 		{/if}
 	{/if}
 {/key}
+
+<!-- Mounting metrics reporter in the board ensures dependent services are subscribed to. -->
+<MetricsReporter {projectId} {projectMetrics} />
 
 <style>
 	.view-wrap {

@@ -1,13 +1,12 @@
 <script lang="ts">
 	import { AIService } from '$lib/ai/service';
-	import { BranchStack } from '$lib/branches/branch';
-	import { BranchController } from '$lib/branches/branchController';
+	import { writeClipboard } from '$lib/backend/clipboard';
 	import { type CommitStatus } from '$lib/commits/commit';
 	import { projectAiGenEnabled } from '$lib/config/config';
 	import { Project } from '$lib/project/project';
+	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { openExternalUrl } from '$lib/utils/url';
-	import { copyToClipboard } from '@gitbutler/shared/clipboard';
-	import { getContext, getContextStore } from '@gitbutler/shared/context';
+	import { inject } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import ContextMenu from '@gitbutler/ui/ContextMenu.svelte';
 	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
@@ -20,22 +19,20 @@
 		contextMenuEl?: ReturnType<typeof ContextMenu>;
 		leftClickTrigger?: HTMLElement;
 		rightClickTrigger?: HTMLElement;
-		headName: string;
+		branchName: string;
 		seriesCount: number;
 		isTopBranch: boolean;
 		hasForgeBranch: boolean;
 		pr?: DetailedPullRequest;
 		branchType: CommitStatus;
-		description: string;
-		parentIsPushed: boolean;
-		hasParent: boolean;
-		toggleDescription: () => Promise<void>;
+		descriptionOption?: boolean;
+		descriptionString?: string;
+		stackId: string;
+		toggleDescription?: () => Promise<void>;
 		onGenerateBranchName: () => void;
-		openPrDetailsModal: () => void;
 		onAddDependentSeries?: () => void;
-		onCreateNewPr?: () => Promise<void>;
 		onOpenInBrowser?: () => void;
-		onMenuToggle?: (isOpen: boolean, isLeftClick: boolean) => void;
+		onToggle?: (isOpen: boolean, isLeftClick: boolean) => void;
 	}
 
 	let {
@@ -45,31 +42,29 @@
 		isTopBranch,
 		seriesCount,
 		hasForgeBranch,
-		headName,
+		branchName,
 		pr,
 		branchType,
-		description,
-		parentIsPushed,
-		hasParent,
+		descriptionOption = true,
+		descriptionString,
+		stackId,
 		toggleDescription,
 		onGenerateBranchName,
-		openPrDetailsModal,
-		onCreateNewPr,
 		onAddDependentSeries,
 		onOpenInBrowser,
-		onMenuToggle
+		onToggle
 	}: Props = $props();
 
-	const project = getContext(Project);
-	const aiService = getContext(AIService);
-	const branchStore = getContextStore(BranchStack);
-	const branchController = getContext(BranchController);
-	const aiGenEnabled = projectAiGenEnabled(project.id);
+	const [project, aiService, stackService] = inject(Project, AIService, StackService);
+	const projectId = $derived(project.id);
+	const aiGenEnabled = $derived(projectAiGenEnabled(projectId));
+
+	const [renameBranch, branchRenameOp] = stackService.updateBranchName;
+	const [removeBranch, branchRemovalOp] = stackService.removeBranch;
 
 	let deleteSeriesModal: Modal;
 	let renameSeriesModal: Modal;
-	let newHeadName: string = $state(headName);
-	let isDeleting = $state(false);
+	let newName: string = $state(branchName);
 	let aiConfigurationValid = $state(false);
 
 	$effect(() => {
@@ -80,13 +75,9 @@
 		aiConfigurationValid = await aiService.validateConfiguration();
 	}
 
-	const stack = $derived($branchStore);
-
-	export function showSeriesRenameModal(seriesName: string) {
-		renameSeriesModal.show(stack.validSeries.find((s) => s.name === seriesName));
+	export function showSeriesRenameModal() {
+		renameSeriesModal.show();
 	}
-
-	let isOpenedByMouse = $state(false);
 </script>
 
 <ContextMenu
@@ -94,16 +85,10 @@
 	{leftClickTrigger}
 	{rightClickTrigger}
 	ontoggle={(isOpen, isLeftClick) => {
-		if (!isLeftClick) {
-			isOpenedByMouse = true;
-		} else {
-			isOpenedByMouse = false;
-		}
-
-		onMenuToggle?.(isOpen, isLeftClick);
+		onToggle?.(isOpen, isLeftClick);
 	}}
 >
-	{#if isOpenedByMouse && isTopBranch}
+	{#if isTopBranch}
 		<ContextMenuSection>
 			<ContextMenuItem
 				label="Add dependent branch"
@@ -115,7 +100,7 @@
 		</ContextMenuSection>
 	{/if}
 	<ContextMenuSection>
-		{#if isOpenedByMouse && hasForgeBranch}
+		{#if hasForgeBranch}
 			<ContextMenuItem
 				label="Open in browser"
 				onclick={() => {
@@ -127,19 +112,21 @@
 		<ContextMenuItem
 			label="Copy branch name"
 			onclick={() => {
-				copyToClipboard(headName);
+				writeClipboard(branchName);
 				contextMenuEl?.close();
 			}}
 		/>
 	</ContextMenuSection>
 	<ContextMenuSection>
-		<ContextMenuItem
-			label={`${!description ? 'Add' : 'Remove'} description`}
-			onclick={async () => {
-				await toggleDescription();
-				contextMenuEl?.close();
-			}}
-		/>
+		{#if descriptionOption}
+			<ContextMenuItem
+				label={`${!descriptionString ? 'Add' : 'Remove'} description`}
+				onclick={async () => {
+					await toggleDescription?.();
+					contextMenuEl?.close();
+				}}
+			/>
+		{/if}
 		{#if $aiGenEnabled && aiConfigurationValid && !hasForgeBranch}
 			<ContextMenuItem
 				label="Generate branch name"
@@ -153,7 +140,7 @@
 			<ContextMenuItem
 				label="Rename"
 				onclick={async () => {
-					renameSeriesModal.show(stack);
+					renameSeriesModal.show(stackId);
 					contextMenuEl?.close();
 				}}
 			/>
@@ -162,7 +149,7 @@
 			<ContextMenuItem
 				label="Delete"
 				onclick={() => {
-					deleteSeriesModal.show(stack);
+					deleteSeriesModal.show(stackId);
 					contextMenuEl?.close();
 				}}
 			/>
@@ -180,26 +167,8 @@
 			<ContextMenuItem
 				label="Copy PR link"
 				onclick={() => {
-					copyToClipboard(pr.htmlUrl);
+					writeClipboard(pr.htmlUrl);
 					contextMenuEl?.close();
-				}}
-			/>
-			<ContextMenuItem
-				label="Show PR details"
-				onclick={() => {
-					openPrDetailsModal();
-					contextMenuEl?.close();
-				}}
-			/>
-		</ContextMenuSection>
-	{/if}
-	{#if onCreateNewPr && pr?.state === 'closed'}
-		<ContextMenuSection>
-			<ContextMenuItem
-				disabled={hasParent && !parentIsPushed}
-				label="Create new PR"
-				onclick={async () => {
-					await onCreateNewPr();
 				}}
 			/>
 		</ContextMenuSection>
@@ -211,14 +180,19 @@
 	title={hasForgeBranch ? 'Branch has already been pushed' : 'Rename branch'}
 	type={hasForgeBranch ? 'warning' : 'info'}
 	bind:this={renameSeriesModal}
-	onSubmit={(close) => {
-		if (newHeadName && newHeadName !== headName) {
-			branchController.updateSeriesName(stack.id, headName, newHeadName);
+	onSubmit={async (close) => {
+		if (newName && newName !== branchName) {
+			await renameBranch({
+				projectId,
+				stackId,
+				branchName,
+				newName
+			});
 		}
 		close();
 	}}
 >
-	<Textbox placeholder="New name" id="newSeriesName" bind:value={newHeadName} autofocus />
+	<Textbox placeholder="New name" id="newSeriesName" bind:value={newName} autofocus />
 
 	{#if hasForgeBranch}
 		<div class="text-12 helper-text">
@@ -229,7 +203,7 @@
 
 	{#snippet controls(close)}
 		<Button kind="outline" type="reset" onclick={close}>Cancel</Button>
-		<Button style="pop" type="submit">Rename</Button>
+		<Button style="pop" type="submit" loading={branchRenameOp.current.isLoading}>Rename</Button>
 	{/snippet}
 </Modal>
 
@@ -238,21 +212,20 @@
 	title="Delete branch"
 	bind:this={deleteSeriesModal}
 	onSubmit={async (close) => {
-		try {
-			isDeleting = true;
-			await branchController.removePatchSeries(stack.id, headName);
-			close();
-		} finally {
-			isDeleting = false;
-		}
+		await removeBranch({
+			projectId,
+			stackId,
+			branchName
+		});
+		close();
 	}}
 >
 	{#snippet children()}
-		Are you sure you want to delete <code class="code-string">{headName}</code>?
+		Are you sure you want to delete <code class="code-string">{branchName}</code>?
 	{/snippet}
 	{#snippet controls(close)}
 		<Button kind="outline" onclick={close}>Cancel</Button>
-		<Button style="error" type="submit" loading={isDeleting}>Delete</Button>
+		<Button style="error" type="submit" loading={branchRemovalOp.current.isLoading}>Delete</Button>
 	{/snippet}
 </Modal>
 

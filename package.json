@@ -6,7 +6,7 @@
 		"node": ">=20.11"
 	},
 	"type": "module",
-	"packageManager": "pnpm@10.2.0",
+	"packageManager": "pnpm@10.3.0",
 	"scripts": {
 		"dev:ui": "pnpm --filter @gitbutler/ui storybook",
 		"dev:web": "turbo watch --filter @gitbutler/web dev",
@@ -50,6 +50,7 @@
 		"svelte-eslint-parser": "^0.43.0",
 		"turbo": "2.3.3",
 		"typescript": "5.4.5",
-		"typescript-eslint": "^8.10.0"
+		"typescript-eslint": "^8.10.0",
+		"@gitbutler/no-relative-imports": "workspace:*"
 	}
 }

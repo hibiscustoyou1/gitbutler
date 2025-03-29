@@ -1,7 +1,13 @@
-import { GitLabBranch } from './gitlabBranch';
-import type { RepoInfo } from '$lib/url/gitUrl';
-import type { Forge, ForgeName } from '../interface/forge';
-import type { DetailedPullRequest, ForgeArguments } from '../interface/types';
+import { GitLabBranch } from '$lib/forge/gitlab/gitlabBranch';
+import { GitLabPrService } from '$lib/forge/gitlab/gitlabPrService.svelte';
+import type { PostHogWrapper } from '$lib/analytics/posthog';
+import type { GitLabClient } from '$lib/forge/gitlab/gitlabClient';
+import type { Forge, ForgeName } from '$lib/forge/interface/forge';
+import type { DetailedPullRequest, ForgeArguments } from '$lib/forge/interface/types';
+import type { ProjectMetrics } from '$lib/metrics/projectMetrics';
+import type { GitLabApi } from '$lib/state/clientState.svelte';
+import type { ReduxTag } from '$lib/state/tags';
+import type { TagDescription } from '@reduxjs/toolkit/query';
 
 export type PrAction = 'creating_pr';
 export type PrState = { busy: boolean; branchId: string; action?: PrAction };
@@ -18,16 +24,27 @@ export const GITLAB_SUB_DOMAIN = 'gitlab'; // For self hosted instance of Gitlab
  */
 export class GitLab implements Forge {
 	readonly name: ForgeName = 'gitlab';
+	readonly authenticated: boolean;
 	private baseUrl: string;
-	private repo: RepoInfo;
 	private baseBranch: string;
 	private forkStr?: string;
 
-	constructor({ repo, baseBranch, forkStr }: ForgeArguments) {
+	constructor(
+		private params: ForgeArguments & {
+			posthog?: PostHogWrapper;
+			projectMetrics?: ProjectMetrics;
+			api: GitLabApi;
+			client: GitLabClient;
+		}
+	) {
+		const { api, client, baseBranch, forkStr, authenticated, repo } = this.params;
 		this.baseUrl = `https://${repo.domain}/${repo.owner}/${repo.name}`;
-		this.repo = repo;
 		this.baseBranch = baseBranch;
 		this.forkStr = forkStr;
+		this.authenticated = authenticated;
+
+		// Reset the API when the token changes.
+		client.onReset(() => api.util.resetApiState());
 	}
 
 	branch(name: string) {
@@ -38,27 +55,32 @@ export class GitLab implements Forge {
 		return `${this.baseUrl}/-/commit/${id}`;
 	}
 
-	listService() {
+	get listService() {
 		return undefined;
 	}
 
-	issueService() {
+	get issueService() {
 		return undefined;
 	}
 
-	prService() {
+	get prService() {
+		const { api: gitLabApi, posthog } = this.params;
+		return new GitLabPrService(gitLabApi, posthog);
+	}
+
+	get repoService() {
 		return undefined;
 	}
 
-	repoService() {
-		return undefined;
-	}
-
-	checksMonitor(_sourceBranch: string) {
+	get checks() {
 		return undefined;
 	}
 
 	async pullRequestTemplateContent(_path?: string) {
 		return undefined;
+	}
+
+	invalidate(tags: TagDescription<ReduxTag>[]) {
+		return this.params.api.util.invalidateTags(tags);
 	}
 }

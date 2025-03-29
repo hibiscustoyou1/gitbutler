@@ -1,4 +1,6 @@
+import { createSelectByPrefix } from '$lib/state/customSelectors';
 import { type Reactive, reactive } from '@gitbutler/shared/storeUtils';
+import { type LineId } from '@gitbutler/ui/utils/diffParsing';
 import {
 	createEntityAdapter,
 	createSlice,
@@ -11,11 +13,6 @@ export class HunkSelection {
 	private state = $state([]);
 }
 
-type HunkRange = {
-	start: number;
-	lines: number;
-};
-
 type HunkHeader = {
 	oldStart: number;
 	oldLines: number;
@@ -23,39 +20,38 @@ type HunkHeader = {
 	newLines: number;
 };
 
+export type FullySelectedHunk = HunkHeader & {
+	type: 'full';
+};
+
+export type PartiallySelectedHunk = HunkHeader & {
+	type: 'partial';
+	lines: LineId[];
+};
+
 /**
  * Representation of visually selected hunk.
  */
-type SelectedHunk = HunkHeader &
-	(
-		| {
-				type: 'full';
-		  }
-		| {
-				type: 'partial';
-				hunkRanges: HunkRange[];
-		  }
-	);
+export type SelectedHunk = FullySelectedHunk | PartiallySelectedHunk;
 
 type FileHeader = {
 	path: string;
 	pathBytes: number[];
-	previousPathBytes: number[];
+};
+
+export type FullySelectedFile = FileHeader & {
+	type: 'full';
+};
+
+export type PartiallySelectedFile = FileHeader & {
+	type: 'partial';
+	hunks: SelectedHunk[];
 };
 
 /**
  * Representation of visually selected file.
  */
-type SelectedFile = FileHeader &
-	(
-		| {
-				type: 'full';
-		  }
-		| {
-				type: 'partial';
-				hunks: SelectedHunk[];
-		  }
-	);
+export type SelectedFile = FullySelectedFile | PartiallySelectedFile;
 
 export const changeSelectionAdapter = createEntityAdapter<SelectedFile, SelectedFile['path']>({
 	selectId: (change) => change.path,
@@ -63,12 +59,14 @@ export const changeSelectionAdapter = createEntityAdapter<SelectedFile, Selected
 });
 
 const { selectById, selectAll } = changeSelectionAdapter.getSelectors();
+const selectByPrefix = createSelectByPrefix<SelectedFile>();
 
 export const changeSelectionSlice = createSlice({
 	name: 'changeSelection',
 	initialState: changeSelectionAdapter.getInitialState(),
 	reducers: {
 		addOne: changeSelectionAdapter.addOne,
+		addMany: changeSelectionAdapter.addMany,
 		removeOne: changeSelectionAdapter.removeOne,
 		removeMany: changeSelectionAdapter.removeMany,
 		removeAll: changeSelectionAdapter.removeAll,
@@ -77,7 +75,17 @@ export const changeSelectionSlice = createSlice({
 	selectors: { selectById, selectAll }
 });
 
-const { addOne, removeOne, removeMany, removeAll, upsertOne } = changeSelectionSlice.actions;
+const { addOne, addMany, removeOne, removeMany, removeAll, upsertOne } =
+	changeSelectionSlice.actions;
+
+function sortHunksInFile(file: SelectedFile) {
+	if (file.type === 'full') {
+		return file;
+	}
+
+	const hunks = file.hunks.slice().sort((a, b) => a.newStart - b.newStart);
+	return { ...file, hunks };
+}
 
 export class ChangeSelectionService {
 	/** The change selection slice of the full redux state. */
@@ -102,12 +110,22 @@ export class ChangeSelectionService {
 		return reactive(() => selected);
 	}
 
+	getByPrefix(path: string): Reactive<SelectedFile[]> {
+		const selected = $derived(selectByPrefix(this.state, path));
+		return reactive(() => selected);
+	}
+
 	add(file: SelectedFile) {
 		this.dispatch(addOne(file));
 	}
 
+	addMany(files: SelectedFile[]) {
+		this.dispatch(addMany(files));
+	}
+
 	update(file: SelectedFile) {
-		this.dispatch(upsertOne(file));
+		const sortedFile = sortHunksInFile(file);
+		this.dispatch(upsertOne(sortedFile));
 	}
 
 	remove(path: string) {
@@ -130,5 +148,20 @@ export class ChangeSelectionService {
 		if (expired.length > 0) {
 			this.dispatch(removeMany(expired));
 		}
+	}
+
+	every(paths: string[], predicate: (selection: SelectedFile) => boolean): boolean {
+		const selection = $derived(selectAll(this.state));
+		for (const path of paths) {
+			const change = selection.find((change) => change.path === path);
+			if (change === undefined || !predicate(change)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	clear() {
+		this.dispatch(removeAll());
 	}
 }

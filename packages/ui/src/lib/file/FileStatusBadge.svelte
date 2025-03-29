@@ -1,8 +1,8 @@
 <script lang="ts">
 	import Badge from '$lib/Badge.svelte';
 	import Tooltip from '$lib/Tooltip.svelte';
+	import type { FileStatus } from '$lib/file/types';
 	import type { ComponentColorType } from '$lib/utils/colorTypes';
-	import type { FileStatus } from './types';
 
 	interface Props {
 		status: FileStatus;
@@ -74,7 +74,7 @@
 		</div>
 	</Tooltip>
 {:else if style === 'full'}
-	<Badge style={getStatusColor(status)}>{getFullStatusText(status)}</Badge>
+	<Badge style={getStatusColor(status)} kind="soft">{getFullStatusText(status)}</Badge>
 {/if}
 
 <style lang="postcss">

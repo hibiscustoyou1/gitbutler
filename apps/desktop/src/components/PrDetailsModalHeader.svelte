@@ -3,20 +3,19 @@
 	import SegmentControl from '@gitbutler/ui/segmentControl/SegmentControl.svelte';
 
 	interface Props {
-		isDisplay: boolean;
 		isEditing: boolean;
 	}
 
-	let { isDisplay, isEditing = $bindable() }: Props = $props();
+	let { isEditing = $bindable() }: Props = $props();
 </script>
 
 <!-- MAIN -->
 <div class="pr-header">
 	<div class="pr-header__row">
-		<h3 class="text-14 text-body text-semibold pr-title">Create a pull request</h3>
+		<h3 class="text-14 text-body text-semibold pr-title">Submit code for review</h3>
 
 		<SegmentControl
-			defaultIndex={isDisplay ? 1 : 0}
+			defaultIndex={0}
 			onselect={(id) => {
 				isEditing = id === 'write';
 			}}
@@ -33,7 +32,7 @@
 		flex-direction: column;
 		justify-content: center;
 		gap: 16px;
-		padding: 16px 16px 14px;
+		padding-bottom: 16px;
 	}
 
 	.pr-header__row {

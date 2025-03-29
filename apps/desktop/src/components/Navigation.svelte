@@ -8,22 +8,20 @@
 	import WorkspaceButton from '$components/WorkspaceButton.svelte';
 	import { ModeService } from '$lib/mode/modeService';
 	import { platformName } from '$lib/platform/platform';
-	import { ProjectService } from '$lib/project/projectService';
-	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
 	import { ShortcutService } from '$lib/shortcuts/shortcutService.svelte';
-	import { getContext, getContextStoreBySymbol } from '@gitbutler/shared/context';
+	import { getContext } from '@gitbutler/shared/context';
 	import { persisted } from '@gitbutler/shared/persisted';
 	import { env } from '$env/dynamic/public';
 
-	const minResizerWidth = 280;
-	const minResizerRatio = 150;
-	const userSettings = getContextStoreBySymbol<Settings>(SETTINGS);
-	const projectService = getContext(ProjectService);
-	const projectId = projectService.projectId;
-	const defaultTrayWidthRem = persisted<number | undefined>(
-		undefined,
-		'defaulTrayWidth_ ' + projectId
-	);
+	type Props = {
+		projectId: string;
+	};
+
+	const { projectId }: Props = $props();
+
+	const minResizerWidth = 14;
+	const minResizerRatio = 7;
+	const width = persisted<number | undefined>(25, 'defaultTrayWidth_' + projectId);
 
 	let viewport = $state<HTMLDivElement>();
 	let isResizerHovered = $state(false);
@@ -56,12 +54,10 @@
 				{viewport}
 				direction="right"
 				minWidth={minResizerWidth}
-				defaultLineColor="var(--clr-border-2)"
 				zIndex="var(--z-floating)"
 				onDblClick={toggleNavCollapse}
-				onWidth={(value) => {
-					$defaultTrayWidthRem = value / (16 * $userSettings.zoom);
-				}}
+				onWidth={(value) => ($width = value)}
+				imitateBorder
 				onHover={(isHovering) => {
 					isResizerHovered = isHovering;
 				}}
@@ -100,7 +96,7 @@
 	<div
 		class="navigation"
 		class:collapsed={$isNavCollapsed}
-		style:width={$defaultTrayWidthRem && !$isNavCollapsed ? $defaultTrayWidthRem + 'rem' : null}
+		style:width={$width && !$isNavCollapsed ? $width + 'rem' : null}
 		bind:this={viewport}
 		role="menu"
 	>
@@ -112,7 +108,7 @@
 				{/if}
 				<ProjectSelector isNavCollapsed={$isNavCollapsed} />
 				<div class="domains">
-					<TargetCard isNavCollapsed={$isNavCollapsed} />
+					<TargetCard {projectId} isNavCollapsed={$isNavCollapsed} />
 					{#if $mode?.type === 'OpenWorkspace'}
 						<WorkspaceButton href={`/${projectId}/board`} isNavCollapsed={$isNavCollapsed} />
 					{:else if $mode?.type === 'Edit'}
@@ -122,7 +118,7 @@
 			</div>
 
 			{#if !$isNavCollapsed}
-				<Branches />
+				<Branches {projectId} />
 			{/if}
 			<Footer {projectId} isNavCollapsed={$isNavCollapsed} />
 		{/if}
@@ -136,6 +132,7 @@
 
 		&:hover:not(.hide-fold-button) {
 			& .folding-button {
+				z-index: var(--z-floating);
 				pointer-events: auto;
 				opacity: 1;
 				right: -6px;
@@ -175,7 +172,7 @@
 	/* FOLDING BUTTON */
 
 	.folding-button {
-		z-index: var(--z-floating);
+		z-index: var(--z-ground);
 		display: flex;
 		align-items: center;
 		justify-content: center;

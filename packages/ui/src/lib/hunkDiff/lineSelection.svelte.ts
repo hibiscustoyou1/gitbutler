@@ -1,5 +1,5 @@
-import { isTouchDevice } from '$lib/utils/browserAgent';
-import type { Row } from '$lib/utils/diffParsing';
+import { isMobileTouchDevice } from '$lib/utils/browserAgent';
+import { type Row } from '$lib/utils/diffParsing';
 
 export interface LineSelectionParams {
 	index: number;
@@ -19,21 +19,27 @@ interface TouchCoords {
 }
 
 export default class LineSelection {
-	private readonly touchDevice = isTouchDevice();
+	private readonly mobileTouchDevice = isMobileTouchDevice();
 	private rows: Row[] | undefined;
 	private _touchStart = $state<TouchCoords>();
 	private _touchMove = $state<TouchCoords>();
 	private _selectionStart = $state<number>();
 	private _selectionEnd = $state<number>();
+	private onLineClick: ToggleLineSelectionFn | undefined;
 
-	constructor(private onLineClick: ToggleLineSelectionFn | undefined) {}
+	constructor() {}
 
 	setRows(rows: Row[]) {
 		this.rows = rows;
 	}
 
+	setOnLineClick(fn: ToggleLineSelectionFn | undefined) {
+		this.onLineClick = fn;
+	}
+
 	onStart(ev: MouseEvent, row: Row, index: number) {
-		if (this.touchDevice) return;
+		if (ev.buttons !== 1) return;
+		if (this.mobileTouchDevice) return;
 		ev.preventDefault();
 		ev.stopPropagation();
 
@@ -50,7 +56,7 @@ export default class LineSelection {
 	}
 
 	onMoveOver(ev: MouseEvent, row: Row, index: number) {
-		if (this.touchDevice) return;
+		if (this.mobileTouchDevice) return;
 		if (this._selectionStart === undefined) return;
 		if (ev.buttons === 1) {
 			ev.preventDefault();

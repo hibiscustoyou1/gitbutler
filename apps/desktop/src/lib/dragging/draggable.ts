@@ -1,6 +1,6 @@
-import { FileDropData, ChangeDropData, type DropData } from './draggables';
-import { dropzoneRegistry } from './dropzone';
 import { type CommitStatus } from '$lib/commits/commit';
+import { FileDropData, ChangeDropData, type DropData } from '$lib/dragging/draggables';
+import { dropzoneRegistry } from '$lib/dragging/dropzone';
 import { getFileIcon } from '@gitbutler/ui/file/getFileIcon';
 import { pxToRem } from '@gitbutler/ui/utils/pxToRem';
 
@@ -100,7 +100,7 @@ function setupDragHandlers(
 
 		if (opts.data instanceof ChangeDropData) {
 			selectedElements = [];
-			for (const path of opts.data.changedPaths()) {
+			for (const path of opts.data.changedPaths(opts.data.selectionId)) {
 				// Path is sufficient as a key since we query the parent container.
 				const element = parentNode.querySelector(`[data-file-id="${path}"]`);
 				if (element) {
@@ -322,7 +322,8 @@ export function createChipsElement(
 	return containerEl;
 }
 
-export function draggableChips(node: HTMLElement, initialOpts: DraggableConfig) {
+export function draggableChips(node: HTMLElement, initialOpts?: DraggableConfig) {
+	if (!initialOpts) return;
 	function createClone(opts: DraggableConfig, selectedElements: Element[]) {
 		if (opts.disabled) return;
 		return createChipsElement(selectedElements.length, opts.label, opts.filePath);

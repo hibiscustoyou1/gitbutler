@@ -1,27 +1,36 @@
 <script lang="ts">
-	import { type ColumnTypes, type AvatarsType, type ChangesType } from './types';
 	import Factoid from '$lib/components/infoFlexRow//Factoid.svelte';
 	import InfoFlexRow from '$lib/components/infoFlexRow/InfoFlexRow.svelte';
-	import CommitsGraph from '$lib/components/review/CommitsGraph.svelte';
+	import {
+		type ColumnTypes,
+		type AvatarsType,
+		type ChangesType
+	} from '$lib/components/table/types';
+	import { UserService } from '$lib/user/userService';
+	import Minimap from '@gitbutler/shared/branches/Minimap.svelte';
+	import { getContext } from '@gitbutler/shared/context';
 	import CommitStatusBadge, { type CommitStatusType } from '@gitbutler/ui/CommitStatusBadge.svelte';
 	import Icon from '@gitbutler/ui/Icon.svelte';
 	import AvatarGroup from '@gitbutler/ui/avatar/AvatarGroup.svelte';
 	import dayjs from 'dayjs';
-	import type { Branch } from '@gitbutler/shared/branches/types';
 	import { goto } from '$app/navigation';
 
 	type Props = {
-		columns: Array<{
+		columns: {
 			key: keyof ColumnTypes;
 			value?: ColumnTypes[keyof ColumnTypes];
 			tooltip?: string;
-		}>;
+		}[];
 		href?: string;
+		isTopEntry?: boolean;
 		separatedTop?: boolean;
 		separatedBottom?: boolean;
 	};
 
-	let { columns, href, separatedTop, separatedBottom }: Props = $props();
+	const userService = getContext(UserService);
+	const user = userService.user;
+
+	let { columns, href, isTopEntry = false, separatedTop, separatedBottom }: Props = $props();
 	let tableMobileBreakpoint = 800;
 	let isTableMobileBreakpoint = $state(window.innerWidth < tableMobileBreakpoint);
 
@@ -65,7 +74,18 @@
 					{:else if key === 'number'}
 						{value}
 					{:else if key === 'commitGraph'}
-						<CommitsGraph branch={value as Branch} />
+						{@const params = columns.find((col) => col.key === 'commitGraph')
+							?.value as ColumnTypes['commitGraph']}
+
+						{#if $user}
+							<Minimap
+								branchUuid={params.branch.uuid}
+								projectSlug={params.projectSlug}
+								ownerSlug={params.ownerSlug}
+								horizontal
+								user={$user}
+							/>
+						{/if}
 					{:else if key === 'avatars'}
 						<AvatarGroup avatars={value as Array<AvatarsType>}></AvatarGroup>
 					{:else if key === 'reviewers'}
@@ -90,7 +110,12 @@
 					{:else if key === 'date'}
 						{dayjs(value as Date).fromNow()}
 					{:else if key === 'status'}
-						<CommitStatusBadge status={value as CommitStatusType} />
+						<CommitStatusBadge
+							status={value as CommitStatusType}
+							kind="both"
+							lineTop={!isTopEntry && !separatedTop}
+							lineBottom={!separatedBottom}
+						/>
 					{:else if key === 'changes'}
 						<div class="dynclmn-changes">
 							<span class="dynclmn-changes_additions">+{(value as ChangesType).additions}</span>
@@ -185,9 +210,18 @@
 
 					{#if columns.find((col) => col.key === 'commitGraph')}
 						<Factoid label="Commits">
-							<CommitsGraph
-								branch={columns.find((col) => col.key === 'commitGraph')?.value as Branch}
-							/>
+							{@const params = columns.find((col) => col.key === 'commitGraph')
+								?.value as ColumnTypes['commitGraph']}
+
+							{#if $user}
+								<Minimap
+									branchUuid={params.branch.uuid}
+									projectSlug={params.projectSlug}
+									ownerSlug={params.ownerSlug}
+									horizontal
+									user={$user}
+								/>
+							{/if}
 						</Factoid>
 					{/if}
 
@@ -312,6 +346,7 @@
 
 	.dynclmn-commitGraph-td {
 		min-width: 120px;
+		overflow: visible;
 	}
 
 	/* MOBILE CELL */

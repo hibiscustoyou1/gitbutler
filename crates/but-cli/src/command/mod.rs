@@ -1,6 +1,11 @@
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
+use but_core::UnifiedDiff;
+use but_workspace::commit_engine::HunkHeader;
 use gitbutler_project::Project;
+use gix::bstr::{BString, ByteSlice};
 use std::path::Path;
+
+pub(crate) const UI_CONTEXT_LINES: u32 = 3;
 
 pub fn project_from_path(path: &Path) -> anyhow::Result<Project> {
     Project::from_path(path)
@@ -45,7 +50,7 @@ pub fn repo_and_maybe_project(
     let res = if let Some((projects, work_dir)) =
         project_controller(args.app_suffix.as_deref(), args.app_data_dir.as_deref())
             .ok()
-            .zip(repo.work_dir())
+            .zip(repo.workdir())
     {
         let work_dir = gix::path::realpath(work_dir)?;
         (
@@ -131,4 +136,82 @@ pub mod stacks {
             stack_branch_upstream_only_commits(id.to_string(), name.to_string(), &ctx, &repo);
         debug_print(upstream_only)
     }
+}
+
+pub(crate) mod discard_change {
+    pub enum IndicesOrHeaders<'a> {
+        Indices(&'a [usize]),
+        Headers(&'a [u32]),
+    }
+}
+pub(crate) fn discard_change(
+    cwd: &Path,
+    current_rela_path: &Path,
+    previous_rela_path: Option<&Path>,
+    indices_or_headers: Option<discard_change::IndicesOrHeaders>,
+) -> anyhow::Result<()> {
+    let repo = gix::discover(cwd)?;
+
+    let previous_path = previous_rela_path.map(path_to_rela_path).transpose()?;
+    let path = path_to_rela_path(current_rela_path)?;
+    let hunk_headers = match indices_or_headers {
+        None => vec![],
+        Some(discard_change::IndicesOrHeaders::Headers(headers)) => headers
+            .windows(4)
+            .map(|n| HunkHeader {
+                old_start: n[0],
+                old_lines: n[1],
+                new_start: n[2],
+                new_lines: n[3],
+            })
+            .collect(),
+        Some(discard_change::IndicesOrHeaders::Indices(hunk_indices)) => {
+            let worktree_changes = but_core::diff::worktree_changes(&repo)?
+                .changes
+                .into_iter()
+                .find(|change| {
+                    change.path == path
+                        && change.previous_path() == previous_path.as_ref().map(|p| p.as_bstr())
+                }).with_context(|| format!("Couldn't find worktree change for file at '{path}' (previous-path: {previous_path:?}"))?;
+            let UnifiedDiff::Patch { hunks } =
+                worktree_changes.unified_diff(&repo, UI_CONTEXT_LINES)?
+            else {
+                bail!("No hunks available for given '{path}'")
+            };
+
+            hunk_indices
+                .iter()
+                .map(|idx| {
+                    hunks.get(*idx).cloned().map(Into::into).ok_or_else(|| {
+                        anyhow!(
+                            "There was no hunk at index {idx} in '{path}' with {} hunks",
+                            hunks.len()
+                        )
+                    })
+                })
+                .collect::<Result<Vec<HunkHeader>, _>>()?
+        }
+    };
+    let spec = but_workspace::commit_engine::DiffSpec {
+        previous_path,
+        path,
+        hunk_headers,
+    };
+    debug_print(but_workspace::discard_workspace_changes(
+        &repo,
+        Some(spec.into()),
+        UI_CONTEXT_LINES,
+    )?)
+}
+
+fn path_to_rela_path(path: &Path) -> anyhow::Result<BString> {
+    if !path.is_relative() {
+        bail!(
+            "Can't currently convert absolute path to relative path (but this could be done via gix, just not as easily as I'd like right now"
+        );
+    }
+    let rela_path =
+        gix::path::to_unix_separators_on_windows(gix::path::os_str_into_bstr(path.as_os_str())?)
+            .into_owned();
+    Ok(rela_path)
 }

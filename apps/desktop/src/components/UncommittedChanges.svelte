@@ -1,9 +1,12 @@
 <script lang="ts">
 	import BranchFiles from '$components/BranchFiles.svelte';
+	import CardOverlay from '$components/CardOverlay.svelte';
 	import CommitDialog from '$components/CommitDialog.svelte';
-	import Dropzones from '$components/Dropzones.svelte';
+	import Dropzone from '$components/Dropzone.svelte';
 	import InfoMessage from '$components/InfoMessage.svelte';
 	import { BranchStack } from '$lib/branches/branch';
+	import { BranchController } from '$lib/branches/branchController';
+	import { BranchFileDzHandler, BranchHunkDzHandler } from '$lib/branches/dropHandler';
 	import { Project } from '$lib/project/project';
 	import { getContext, getContextStore } from '@gitbutler/shared/context';
 	import type { Writable } from 'svelte/store';
@@ -16,14 +19,22 @@
 
 	const project = getContext(Project);
 	const branchStore = getContextStore(BranchStack);
+	const branchController = getContext(BranchController);
 
 	const stack = $derived($branchStore);
 
 	let commitDialog = $state<ReturnType<typeof CommitDialog>>();
+	const dzFileHandler = $derived(
+		new BranchFileDzHandler(branchController, stack.id, stack.ownership)
+	);
+	const dzHunkHandler = $derived(new BranchHunkDzHandler(branchController, stack));
 </script>
 
 <div class="branch-card__files">
-	<Dropzones type="file">
+	<Dropzone handlers={[dzHunkHandler, dzFileHandler]}>
+		{#snippet overlay({ hovered, activated })}
+			<CardOverlay {hovered} {activated} label="Move here" />
+		{/snippet}
 		<BranchFiles
 			isUnapplied={false}
 			files={stack.files}
@@ -47,7 +58,7 @@
 				</InfoMessage>
 			</div>
 		{/if}
-	</Dropzones>
+	</Dropzone>
 
 	<CommitDialog
 		bind:this={commitDialog}

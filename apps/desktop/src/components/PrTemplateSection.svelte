@@ -1,11 +1,11 @@
 <script lang="ts">
-	import Select from '$components/Select.svelte';
-	import SelectItem from '$components/SelectItem.svelte';
-	import { getForge } from '$lib/forge/interface/forge';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
 	import { TemplateService } from '$lib/forge/templateService';
 	import { Project } from '$lib/project/project';
 	import { getContext } from '@gitbutler/shared/context';
 	import { persisted } from '@gitbutler/shared/persisted';
+	import Select from '@gitbutler/ui/select/Select.svelte';
+	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
 
 	interface Props {
 		templates: string[];
@@ -14,7 +14,7 @@
 
 	const { templates, onselected }: Props = $props();
 
-	const forge = getForge();
+	const forge = getContext(DefaultForgeFactory);
 	// TODO: Rename or refactor this service.
 	const templateService = getContext(TemplateService);
 	const project = getContext(Project);
@@ -24,15 +24,13 @@
 	const lastTemplate = persisted<string | undefined>(undefined, `last-template-${project.id}`);
 
 	async function setTemplate(path: string) {
-		if ($forge) {
-			lastTemplate.set(path);
-			loadAndEmit(path);
-		}
+		lastTemplate.set(path);
+		loadAndEmit(path);
 	}
 
 	async function loadAndEmit(path: string) {
-		if (path && $forge) {
-			const template = await templateService.getContent($forge.name, path);
+		if (path) {
+			const template = await templateService.getContent(forge.current.name, path);
 			if (template) {
 				onselected(template);
 			}
@@ -58,8 +56,8 @@
 	<Select
 		value={$lastTemplate}
 		options={templates.map((value) => ({ label: value, value }))}
-		placeholder={templates.length > 0 ? 'Choose template' : 'No PR templates found ¯_(ツ)_/¯'}
-		flex="1"
+		placeholder={templates.length > 0 ? 'Choose template' : 'No PR templates found ¯\\_(ツ)_/¯'}
+		wide
 		searchable
 		disabled={templates.length === 0}
 		onselect={setTemplate}

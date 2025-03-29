@@ -4,9 +4,11 @@ import type { LoadableData } from '$lib/network/types';
 export type ApiProject = {
 	slug: string;
 	owner: string;
+	owner_type: string;
 	parent_project?: ApiProject;
 	name: string;
 	description: string;
+	readme?: string;
 
 	active_reviews_count: number;
 
@@ -19,6 +21,7 @@ export type ApiProject = {
 
 	created_at: string;
 	updated_at: string;
+	last_pushed_at?: string;
 };
 
 export type Project = {
@@ -27,10 +30,15 @@ export type Project = {
 
 	slug: string;
 	owner: string;
+	ownerType: string;
+
+	parentProject?: Project;
 	parentProjectRepositoryId?: string;
+
 	activeReviewsCount?: number;
 	name: string;
 	description: string;
+	readme?: string;
 
 	codeRepositoryId: string;
 	gitUrl: string;
@@ -40,6 +48,7 @@ export type Project = {
 
 	createdAt: string;
 	updatedAt: string;
+	lastPushedAt?: string;
 };
 
 export type LoadableProject = LoadableData<Project, Project['repositoryId']>;
@@ -49,6 +58,8 @@ export function apiToProject(apiProject: ApiProject): Project {
 		repositoryId: apiProject.repository_id,
 		slug: apiProject.slug,
 		owner: apiProject.owner,
+		ownerType: apiProject.owner_type,
+		parentProject: apiProject.parent_project ? apiToProject(apiProject.parent_project) : undefined,
 		parentProjectRepositoryId: apiProject.parent_project?.repository_id,
 		activeReviewsCount: apiProject.active_reviews_count,
 		name: apiProject.name,
@@ -58,7 +69,9 @@ export function apiToProject(apiProject: ApiProject): Project {
 		codeGitUrl: apiProject.code_git_url,
 		permissions: apiToPermissions(apiProject.permissions),
 		createdAt: apiProject.created_at,
-		updatedAt: apiProject.updated_at
+		updatedAt: apiProject.updated_at,
+		readme: apiProject.readme,
+		lastPushedAt: apiProject.last_pushed_at
 	};
 }
 

@@ -13,16 +13,18 @@ export type ChangesType = {
 
 export type ColumnTypes = {
 	status: CommitStatusType;
+	version: string;
 	changes: ChangesType;
 	title: string;
 	string: string;
 	comments: string;
 	number: number;
 	date: Date;
-	commitGraph: Branch;
-	avatars: Array<AvatarsType>;
+	commitGraph: { branch: Branch; projectSlug: string; ownerSlug: string };
+	avatars: AvatarsType[];
 	reviewers: {
-		approvers: Array<AvatarsType>;
-		rejectors: Array<AvatarsType>;
+		approvers: AvatarsType[];
+		rejectors: AvatarsType[];
 	};
+	position: string;
 };

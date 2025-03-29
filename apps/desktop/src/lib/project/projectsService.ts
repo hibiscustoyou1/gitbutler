@@ -1,6 +1,6 @@
-import { Project, type CloudProject } from './project';
 import { invoke } from '$lib/backend/ipc';
 import { showError } from '$lib/notifications/toasts';
+import { Project, type CloudProject } from '$lib/project/project';
 import { sleep } from '$lib/utils/sleep';
 import { persisted } from '@gitbutler/shared/persisted';
 import * as toasts from '@gitbutler/ui/toasts';
@@ -38,6 +38,11 @@ export class ProjectsService {
 
 	async reload(): Promise<void> {
 		this.projects.set(await this.loadAll());
+	}
+
+	async setActiveProject(projectId: string): Promise<void> {
+		await invoke('set_project_active', { id: projectId });
+		await this.reload();
 	}
 
 	async getProject(projectId: string, noValidation?: boolean) {

@@ -4,7 +4,7 @@ import {
 	type MutationDefinition,
 	type QueryDefinition
 } from '@reduxjs/toolkit/query';
-import type { CustomQuery, CustomResult } from './butlerModule';
+import type { CustomQuery, CustomResult } from '$lib/state/butlerModule';
 
 /** Copied from redux-toolkit, it isn't exported. */
 export function isQueryDefinition(
@@ -33,9 +33,7 @@ export function isMutationDefinition(
 export function combineResults<T extends [...CustomResult<any>[]]>(
 	...results: T
 ): CustomResult<CustomQuery<{ [K in keyof T]: Exclude<T[K]['data'], undefined> }>> {
-	const data = results.every((r) => r.status === QueryStatus.fulfilled)
-		? results.map((r) => r.data)
-		: undefined;
+	const data = results.every((r) => r.data !== undefined) ? results.map((r) => r.data) : undefined;
 	const error = results.find((r) => r.error);
 	const status = (results.find((r) => r.status === QueryStatus.rejected) ||
 		results.find((r) => r.status === QueryStatus.uninitialized) ||

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use but_rebase::RebaseStep;
 use gitbutler_command_context::CommandContext;
 use gitbutler_commit::commit_ext::CommitExt;
 use gitbutler_oplog::entry::{OperationKind, SnapshotDetails};
@@ -33,7 +32,7 @@ use gitbutler_operating_modes::assure_open_workspace_mode;
 /// If there are multiple heads pointing to the same patch and `preceding_head` is not specified,
 /// that means the new head will be first in order for that patch.
 /// The argument `preceding_head` is only used if there are multiple heads that point to the same patch, otherwise it is ignored.
-pub fn create_series(
+pub fn create_branch(
     ctx: &CommandContext,
     stack_id: StackId,
     req: CreateSeriesRequest,
@@ -77,37 +76,36 @@ pub struct CreateSeriesRequest {
 /// The very last branch (reference) cannot be removed (A Stack must always contain at least one reference)
 /// If there were commits/changes that were *only* referenced by the removed branch,
 /// those commits are moved to the branch underneath it (or more accurately, the preceding it)
-pub fn remove_series(ctx: &CommandContext, stack_id: StackId, head_name: String) -> Result<()> {
+pub fn remove_branch(ctx: &CommandContext, stack_id: StackId, branch_name: String) -> Result<()> {
     ctx.verify()?;
     let mut guard = ctx.project().exclusive_worktree_access();
     let _ = ctx
         .project()
-        .snapshot_remove_dependent_branch(&head_name, guard.write_permission());
+        .snapshot_remove_dependent_branch(&branch_name, guard.write_permission());
     assure_open_workspace_mode(ctx).context("Requires an open workspace mode")?;
     let mut stack = ctx.project().virtual_branches().get_stack(stack_id)?;
-    stack.remove_series(ctx, head_name)
+    stack.remove_branch(ctx, branch_name)
 }
 
-/// Updates the name an existing series in the stack and resets the pr_number to None.
-/// Same invariants as `create_series` apply.
-/// If the series have been pushed to a remote, the name can not be changed as it corresponds to a remote ref.
-pub fn update_series_name(
+/// Updates the name an existing branch and resets the pr_number to None.
+/// Same invariants as `create_branch` apply.
+pub fn update_branch_name(
     ctx: &CommandContext,
     stack_id: StackId,
-    head_name: String,
-    new_head_name: String,
+    branch_name: String,
+    new_name: String,
 ) -> Result<()> {
     ctx.verify()?;
     let mut guard = ctx.project().exclusive_worktree_access();
     let _ = ctx
         .project()
-        .snapshot_update_dependent_branch_name(&head_name, guard.write_permission());
+        .snapshot_update_dependent_branch_name(&branch_name, guard.write_permission());
     assure_open_workspace_mode(ctx).context("Requires an open workspace mode")?;
     let mut stack = ctx.project().virtual_branches().get_stack(stack_id)?;
-    let normalized_head_name = normalize_branch_name(&new_head_name)?;
-    stack.update_series(
+    let normalized_head_name = normalize_branch_name(&new_name)?;
+    stack.update_branch(
         ctx,
-        head_name,
+        branch_name,
         &PatchReferenceUpdate {
             name: Some(normalized_head_name),
             ..Default::default()
@@ -117,10 +115,10 @@ pub fn update_series_name(
 
 /// Updates the description of an existing series in the stack.
 /// The description can be set to `None` to remove it.
-pub fn update_series_description(
+pub fn update_branch_description(
     ctx: &CommandContext,
     stack_id: StackId,
-    head_name: String,
+    branch_name: String,
     description: Option<String>,
 ) -> Result<()> {
     ctx.verify()?;
@@ -131,9 +129,9 @@ pub fn update_series_description(
     );
     assure_open_workspace_mode(ctx).context("Requires an open workspace mode")?;
     let mut stack = ctx.project().virtual_branches().get_stack(stack_id)?;
-    stack.update_series(
+    stack.update_branch(
         ctx,
-        head_name,
+        branch_name,
         &PatchReferenceUpdate {
             description: Some(description),
             ..Default::default()
@@ -150,10 +148,10 @@ pub fn update_series_description(
 ///  - The stack has not been initialized
 ///  - The project is not in workspace mode
 ///  - Persisting the changes failed
-pub fn update_series_pr_number(
+pub fn update_branch_pr_number(
     ctx: &CommandContext,
     stack_id: StackId,
-    head_name: String,
+    branch_name: String,
     pr_number: Option<usize>,
 ) -> Result<()> {
     ctx.verify()?;
@@ -164,7 +162,7 @@ pub fn update_series_pr_number(
     );
     assure_open_workspace_mode(ctx).context("Requires an open workspace mode")?;
     let mut stack = ctx.project().virtual_branches().get_stack(stack_id)?;
-    stack.set_pr_number(ctx, &head_name, pr_number)
+    stack.set_pr_number(ctx, &branch_name, pr_number)
 }
 
 /// Pushes all series in the stack to the remote.
@@ -430,38 +428,4 @@ fn stack_branch_to_api_branch(
         },
         requires_force,
     ))
-}
-
-pub(crate) fn stack_as_rebase_steps(
-    ctx: &CommandContext,
-    repo: &gix::Repository,
-    stack_id: StackId,
-) -> Result<Vec<RebaseStep>> {
-    let mut steps: Vec<RebaseStep> = Vec::new();
-    for branch in but_workspace::stack_branches(stack_id.to_string(), ctx)? {
-        if branch.archived {
-            continue;
-        }
-        let reference_step = if let Some(reference) = repo.try_find_reference(&branch.name)? {
-            RebaseStep::Reference(but_core::Reference::Git(reference.name().to_owned()))
-        } else {
-            RebaseStep::Reference(but_core::Reference::Virtual(branch.name.to_string()))
-        };
-        steps.push(reference_step);
-        let commits = but_workspace::stack_branch_local_and_remote_commits(
-            stack_id.to_string(),
-            branch.name.to_string(),
-            ctx,
-            repo,
-        )?;
-        for commit in commits {
-            let pick_step = RebaseStep::Pick {
-                commit_id: commit.id,
-                new_message: None,
-            };
-            steps.push(pick_step);
-        }
-    }
-    steps.reverse();
-    Ok(steps)
 }

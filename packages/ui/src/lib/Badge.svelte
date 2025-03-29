@@ -1,6 +1,6 @@
 <script lang="ts">
-	import Tooltip from './Tooltip.svelte';
 	import Icon from '$lib/Icon.svelte';
+	import Tooltip from '$lib/Tooltip.svelte';
 	import type iconsJson from '$lib/data/icons.json';
 	import type { ComponentColorType } from '$lib/utils/colorTypes';
 	import type { Snippet } from 'svelte';
@@ -116,15 +116,13 @@
 		/* SIZE */
 		&.icon-size {
 			height: var(--size-icon);
-			min-width: var(--size-icon);
 			padding: 0 3px;
-			gap: 0;
+			gap: 1px;
 		}
 
 		&.tag-size {
 			height: var(--size-tag);
-			min-width: var(--size-tag);
-			padding: 0 6px;
+			padding: 0 5px;
 			gap: 2px;
 		}
 

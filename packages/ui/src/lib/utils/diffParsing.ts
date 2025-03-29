@@ -17,10 +17,10 @@ import { ruby } from '@codemirror/legacy-modes/mode/ruby';
 import { NodeType, Tree, Parser } from '@lezer/common';
 import { tags, highlightTree } from '@lezer/highlight';
 import diff_match_patch from 'diff-match-patch';
-import type { BrandedId } from './branding';
+import type { BrandedId } from '$lib/utils/branding';
 
 export function parseHunk(hunkStr: string): Hunk {
-	const lines = hunkStr.trim().split('\n');
+	const lines = hunkStr.split('\n');
 	const headerLine = lines[0];
 	const bodyLines = lines.slice(1);
 
@@ -31,6 +31,9 @@ export function parseHunk(hunkStr: string): Hunk {
 
 	let lastBefore = hunk.oldStart;
 	let lastAfter = hunk.newStart;
+
+	const lastLineNumberBefore = hunk.oldStart + hunk.oldLines - 1;
+	const lastLineNumberAfter = hunk.newStart + hunk.newLines - 1;
 
 	for (const line of bodyLines) {
 		const type = lineType(line);
@@ -53,6 +56,7 @@ export function parseHunk(hunkStr: string): Hunk {
 			lastSection.lines.push({ beforeLineNumber: lastBefore, content: line.slice(1) });
 			lastBefore += 1;
 		} else {
+			if (lastBefore > lastLineNumberBefore || lastAfter > lastLineNumberAfter) continue;
 			lastSection.lines.push({
 				afterLineNumber: lastAfter,
 				beforeLineNumber: lastBefore,
@@ -78,6 +82,7 @@ export type Row = {
 	isFirstOfSelectionGroup?: boolean;
 	isLastOfSelectionGroup?: boolean;
 	isLastSelected?: boolean;
+	isDeltaLine: boolean;
 };
 
 enum Operation {
@@ -111,7 +116,10 @@ export type ContentSection = {
 
 type Hunk = {
 	readonly oldStart: number;
+	readonly oldLines: number;
 	readonly newStart: number;
+	readonly newLines: number;
+	readonly comment?: string;
 	readonly contentSections: ContentSection[];
 };
 
@@ -119,14 +127,23 @@ type DiffRows = { prevRows: Row[]; nextRows: Row[] };
 
 const headerRegex =
 	/@@ -(?<beforeStart>\d+),?(?<beforeCount>\d+)? \+(?<afterStart>\d+),?(?<afterCount>\d+)? @@(?<comment>.+)?/;
-function parseHeader(header: string): { oldStart: number; newStart: number } {
+function parseHeader(header: string): {
+	oldStart: number;
+	newStart: number;
+	oldLines: number;
+	newLines: number;
+	comment?: string;
+} {
 	const result = headerRegex.exec(header);
 	if (!result?.groups) {
 		throw new Error('Failed to parse diff header');
 	}
 	return {
 		oldStart: parseInt(result.groups['beforeStart']),
-		newStart: parseInt(result.groups['afterStart'])
+		oldLines: parseInt(result.groups['beforeCount'] ?? '1'),
+		newStart: parseInt(result.groups['afterStart']),
+		newLines: parseInt(result.groups['afterCount'] ?? '1'),
+		comment: result.groups['comment']
 	};
 }
 
@@ -356,12 +373,14 @@ export function readDiffLineKey(key: DiffLineKey): ParsedDiffLineKey | undefined
 	};
 }
 
+const DIFF_FILE_KEY_SEPARATOR = '%%-%%';
+
 export function createDiffFileHunkKey(fileName: string, diffSha: string): DiffFileKey {
-	return `${fileName}-${diffSha}` as DiffFileKey;
+	return `${fileName}${DIFF_FILE_KEY_SEPARATOR}${diffSha}` as DiffFileKey;
 }
 
 export function readDiffFileHunkKey(key: DiffFileKey): [string, string] | undefined {
-	const [fileName, diffSha] = key.split('-');
+	const [fileName, diffSha] = key.split(DIFF_FILE_KEY_SEPARATOR);
 
 	if (fileName === undefined || diffSha === undefined) {
 		return undefined;
@@ -497,6 +516,7 @@ function createRowData(
 			type: section.sectionType,
 			size: line.content.length,
 			isLast: false,
+			isDeltaLine: isDeltaLine(section.sectionType),
 			...getSelectionParams(line, selectedLines)
 		};
 	});
@@ -557,6 +577,7 @@ function computeWordDiff(
 			type: prevSection.sectionType,
 			size: oldLine.content.length,
 			isLast: false,
+			isDeltaLine: isDeltaLine(prevSection.sectionType),
 			...getSelectionParams(oldLine, selectedLines)
 		};
 		const nextSectionRow = {
@@ -571,6 +592,7 @@ function computeWordDiff(
 			type: nextSection.sectionType,
 			size: newLine.content.length,
 			isLast: false,
+			isDeltaLine: isDeltaLine(nextSection.sectionType),
 			...getSelectionParams(newLine, selectedLines)
 		};
 
@@ -629,6 +651,7 @@ function computeInlineWordDiff(
 			type: nextSection.sectionType,
 			size: newLine.content.length,
 			isLast: false,
+			isDeltaLine: isDeltaLine(nextSection.sectionType),
 			...getSelectionParams(newLine, selectedLines)
 		};
 
@@ -656,9 +679,16 @@ function computeInlineWordDiff(
 	return rows;
 }
 
-export interface LineSelector {
+export interface LineId {
 	oldLine: number | undefined;
 	newLine: number | undefined;
+}
+
+export function lineIdKey(lineId: LineId): string {
+	return `${lineId.oldLine}-${lineId.newLine}`;
+}
+
+export interface LineSelector extends LineId {
 	/**
 	 * Whether this is the first line in any selection group.
 	 */
@@ -700,6 +730,15 @@ export function generateRows(
 		}
 
 		if (isLineEmpty(prevSection.lines)) {
+			acc.push(...createRowData(filePath, nextSection, parser, selectedLines));
+			return acc;
+		}
+
+		// Don't do word diff on super long lines
+		if (
+			prevSection.lines.some((line) => line.content.length > 300) ||
+			nextSection.lines.some((line) => line.content.length > 300)
+		) {
 			acc.push(...createRowData(filePath, nextSection, parser, selectedLines));
 			return acc;
 		}
@@ -765,4 +804,11 @@ export function getHunkLineInfo(subsections: ContentSection[]): DiffHunkLineInfo
 		afterLineStart,
 		afterLineCount
 	};
+}
+
+/**
+ * Check if a given diff row is a line of actual changed code.
+ */
+export function isDeltaLine(type: SectionType): boolean {
+	return [SectionType.AddedLines, SectionType.RemovedLines].includes(type);
 }

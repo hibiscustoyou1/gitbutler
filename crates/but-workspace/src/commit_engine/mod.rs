@@ -1,24 +1,28 @@
 //! The machinery used to alter and mutate commits in various ways whilst adjusting descendant commits within a [reference frame](ReferenceFrame).
 
+use crate::commit_engine::reference_frame::InferenceMode;
 use anyhow::{Context, bail};
 use bstr::BString;
 use but_core::RepositoryExt;
 use but_core::unified_diff::DiffHunk;
 use but_rebase::RebaseOutput;
 use but_rebase::commit::CommitterMode;
+use gitbutler_project::access::WorktreeWritePermission;
 use gitbutler_stack::{StackId, VirtualBranchesHandle, VirtualBranchesState};
 use gix::prelude::ObjectIdExt as _;
 use gix::refs::transaction::PreviousValue;
 use serde::{Deserialize, Serialize};
 
-mod tree;
-use crate::commit_engine::reference_frame::InferenceMode;
+pub(crate) mod tree;
 use tree::{CreateTreeOutcome, create_tree};
 
-mod index;
+pub(crate) mod index;
 /// Utility types
 pub mod reference_frame;
 mod refs;
+
+mod hunks;
+pub use hunks::apply_hunks;
 
 /// Types for use in the frontend with serialization support.
 pub mod ui;
@@ -36,8 +40,8 @@ pub enum Destination {
         ///
         /// To create a commit at the position of the first commit of a branch, the parent has to be the merge-base with the *target branch*.
         parent_commit_id: Option<gix::ObjectId>,
-        /// The name of the ref pointing to the tip of the stack segment the commit is supposed to go into. It is necessary to disambiguate the reference update.
-        stack_segment_ref: Option<gix::refs::FullName>,
+        /// The stack and reference the commit is supposed to go into. It is necessary to disambiguate the reference update.
+        stack_segment: Option<StackSegmentId>,
         /// Use `message` as commit message for the new commit.
         message: String,
     },
@@ -45,12 +49,19 @@ pub enum Destination {
     AmendCommit(gix::ObjectId),
 }
 
+/// The stack and the branch the commit is supposed to go into.
+#[derive(Debug, Clone)]
+pub struct StackSegmentId {
+    /// Identifies the stack the commit is destined to (without it, ambiguity is still possible, e.g. when all stacks have no commits)
+    pub stack_id: StackId,
+    /// The name of the ref pointing to the tip of the stack segment the commit is supposed to go into. It is necessary to disambiguate the reference update.
+    pub segment_ref: gix::refs::FullName,
+}
+
 impl Destination {
-    pub(self) fn stack_segment(&self) -> Option<&gix::refs::FullName> {
+    pub(self) fn stack_segment(&self) -> Option<&StackSegmentId> {
         match self {
-            Destination::NewCommit {
-                stack_segment_ref, ..
-            } => stack_segment_ref.as_ref(),
+            Destination::NewCommit { stack_segment, .. } => stack_segment.as_ref(),
             Destination::AmendCommit(..) => None,
         }
     }
@@ -83,7 +94,7 @@ pub struct DiffSpec {
 }
 
 /// The header of a hunk that represents a change to a file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HunkHeader {
     /// The 1-based line number at which the previous version of the file started.
@@ -94,6 +105,17 @@ pub struct HunkHeader {
     pub new_start: u32,
     /// The non-zero amount of lines included in the new version of the file.
     pub new_lines: u32,
+}
+
+/// The range of a hunk as denoted by a 1-based starting line, and the amount of lines from there.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct HunkRange {
+    /// The number of the first line in the hunk, 1 based.
+    pub start: u32,
+    /// The amount of lines in the range.
+    ///
+    /// If `0`, this is an empty hunk.
+    pub lines: u32,
 }
 
 impl From<but_core::unified_diff::DiffHunk> for HunkHeader {
@@ -239,7 +261,7 @@ pub fn create_commit(
             Destination::NewCommit {
                 message,
                 parent_commit_id: _,
-                stack_segment_ref: _,
+                stack_segment: _,
             } => {
                 let (author, committer) = repo.commit_signatures()?;
                 let new_commit = create_possibly_signed_commit(
@@ -392,7 +414,7 @@ pub fn create_commit_and_update_refs(
                 .collect();
             if !found_marker {
                 bail!(
-                    "Branch tip at {branch_tip} didn't contain the affected commit - cannot rebase"
+                    "Branch tip at {branch_tip} didn't contain the affected commit {commit_in_graph} - cannot rebase"
                 );
             }
 
@@ -437,7 +459,7 @@ pub fn create_commit_and_update_refs(
         let tree_index = repo.index_from_tree(&repo.head_tree_id()?)?;
         let mut disk_index = repo.open_index()?;
         index::apply_lhs_to_rhs(
-            repo.work_dir().expect("non-bare"),
+            repo.workdir().expect("non-bare"),
             &tree_index,
             &mut disk_index,
         )?;
@@ -473,66 +495,48 @@ pub fn create_commit_and_update_refs(
 /// if present. Alternatively it uses the current `HEAD` as only reference point.
 /// Note that virtual branches will be updated and written back after this call, which will obtain
 /// an exclusive workspace lock as well.
+#[allow(clippy::too_many_arguments)]
 pub fn create_commit_and_update_refs_with_project(
     repo: &gix::Repository,
-    project: Option<(&gitbutler_project::Project, Option<StackId>)>,
+    project: &gitbutler_project::Project,
+    maybe_stackid: Option<StackId>,
     destination: Destination,
     move_source: Option<MoveSourceCommit>,
     changes: Vec<DiffSpec>,
     context_lines: u32,
+    _perm: &mut WorktreeWritePermission,
 ) -> anyhow::Result<CreateCommitOutcome> {
-    match project {
-        Some((project, maybe_stackid)) => {
-            let _guard = project.exclusive_worktree_access();
-            let vbh = VirtualBranchesHandle::new(project.gb_dir());
-            let mut vb = vbh.read_file()?;
-            let frame = match maybe_stackid {
-                None => {
-                    let maybe_commit_id = match &destination {
-                        Destination::NewCommit {
-                            parent_commit_id, ..
-                        } => *parent_commit_id,
-                        Destination::AmendCommit(commit_id) => Some(*commit_id),
-                    };
-                    match maybe_commit_id {
-                        None => ReferenceFrame::default(),
-                        Some(commit_id) => ReferenceFrame::infer(
-                            repo,
-                            &vb,
-                            InferenceMode::CommitIdInStack(commit_id),
-                        )?,
-                    }
-                }
-                Some(stack_id) => {
-                    ReferenceFrame::infer(repo, &vb, InferenceMode::StackId(stack_id))?
-                }
+    let vbh = VirtualBranchesHandle::new(project.gb_dir());
+    let mut vb = vbh.read_file()?;
+    let frame = match maybe_stackid {
+        None => {
+            let maybe_commit_id = match &destination {
+                Destination::NewCommit {
+                    parent_commit_id, ..
+                } => *parent_commit_id,
+                Destination::AmendCommit(commit_id) => Some(*commit_id),
             };
-            let out = create_commit_and_update_refs(
-                repo,
-                frame,
-                &mut vb,
-                destination,
-                move_source,
-                changes,
-                context_lines,
-            )?;
-
-            vbh.write_file(&vb)?;
-            Ok(out)
+            match maybe_commit_id {
+                None => ReferenceFrame::default(),
+                Some(commit_id) => {
+                    ReferenceFrame::infer(repo, &vb, InferenceMode::CommitIdInStack(commit_id))?
+                }
+            }
         }
-        None => create_commit_and_update_refs(
-            repo,
-            ReferenceFrame {
-                workspace_tip: None,
-                branch_tip: repo.head_id()?.detach().into(),
-            },
-            &mut VirtualBranchesState::default(),
-            destination,
-            move_source,
-            changes,
-            context_lines,
-        ),
-    }
+        Some(stack_id) => ReferenceFrame::infer(repo, &vb, InferenceMode::StackId(stack_id))?,
+    };
+    let out = create_commit_and_update_refs(
+        repo,
+        frame,
+        &mut vb,
+        destination,
+        move_source,
+        changes,
+        context_lines,
+    )?;
+
+    vbh.write_file(&vb)?;
+    Ok(out)
 }
 
 /// Create a commit exactly as specified, and sign it depending on Git and GitButler specific Git configuration.

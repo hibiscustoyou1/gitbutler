@@ -1,22 +1,24 @@
 <script lang="ts">
-	import { BaseBranchService } from '$lib/baseBranch/baseBranchService';
+	import BaseBranchService from '$lib/baseBranch/baseBranchService.svelte';
 	import { BranchListingService } from '$lib/branches/branchListing';
-	import { getForgeListingService } from '$lib/forge/interface/forgeListingService';
-	import { getContext } from '@gitbutler/shared/context';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
+	import { getContext, inject } from '@gitbutler/shared/context';
 	import Button, { type Props as ButtonProps } from '@gitbutler/ui/Button.svelte';
 	import TimeAgo from '@gitbutler/ui/TimeAgo.svelte';
 
 	interface Props {
+		projectId: string;
 		size?: ButtonProps['size'];
 	}
 
-	const { size = 'tag' }: Props = $props();
+	const { projectId, size = 'tag' }: Props = $props();
 
-	const baseBranchService = getContext(BaseBranchService);
-	const baseBranch = baseBranchService.base;
-	const branchListingService = getContext(BranchListingService);
+	const [baseBranchService, branchListingService] = inject(BaseBranchService, BranchListingService);
+	const baseBranch = baseBranchService.baseBranch(projectId);
+	const [fetchFromRemotes] = baseBranchService.fetchFromRemotes;
 
-	const listingService = getForgeListingService();
+	const forge = getContext(DefaultForgeFactory);
+	const listingService = $derived(forge.current.listService);
 
 	let loading = $state(false);
 </script>
@@ -33,10 +35,13 @@
 		e.stopPropagation();
 		loading = true;
 		try {
-			await baseBranchService.fetchFromRemotes('modal');
+			await fetchFromRemotes({
+				projectId,
+				action: 'modal'
+			});
 			await Promise.all([
-				$listingService?.refresh(),
-				baseBranchService.refresh(),
+				listingService?.refresh(projectId),
+				baseBranch.current.refetch(),
 				branchListingService.refresh()
 			]);
 		} finally {
@@ -46,8 +51,8 @@
 >
 	{#if loading}
 		<div class="sync-btn__busy-label">busy…</div>
-	{:else if $baseBranch?.lastFetched}
-		<TimeAgo date={$baseBranch?.lastFetched} addSuffix={true} />
+	{:else if baseBranch.current.data?.lastFetched}
+		<TimeAgo date={baseBranch.current.data.lastFetched} addSuffix={true} />
 	{/if}
 </Button>
 

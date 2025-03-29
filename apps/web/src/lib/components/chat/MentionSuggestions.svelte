@@ -1,15 +1,15 @@
 <script lang="ts" module>
-	import type { MentionNodeAttrs } from '@gitbutler/ui/old_RichTextEditor.svelte';
+	import type { MentionSuggestion } from '@gitbutler/ui/richText/plugins/Mention.svelte';
 
 	export interface Props {
 		isLoading: boolean;
-		suggestions: MentionNodeAttrs[] | undefined;
-		selectSuggestion?: (suggestion: MentionNodeAttrs) => void;
+		suggestions: MentionSuggestion[] | undefined;
+		selectSuggestion?: (suggestion: MentionSuggestion) => void;
 	}
 </script>
 
 <script lang="ts">
-	import MentionSuggestionItem from './MentionSuggestionItem.svelte';
+	import MentionSuggestionItem from '$lib/components/chat/MentionSuggestionItem.svelte';
 	import { setPosition } from '@gitbutler/ui/utils/tooltipPosition';
 	import { flyScale } from '@gitbutler/ui/utils/transitions';
 
@@ -71,7 +71,7 @@
 	<!-- Empty div needed for the position calculation -->
 	<div></div>
 
-	{#if suggestions}
+	{#if suggestions !== undefined}
 		<div
 			use:setPosition={{ targetEl, position: 'top', align: 'center', gap: 2 }}
 			transition:flyScale

@@ -1,61 +1,55 @@
 <script lang="ts">
-	import AddSeriesModal from './AddSeriesModal.svelte';
-	import BranchLabel from './BranchLabel.svelte';
-	import BranchStatus from './BranchStatus.svelte';
-	import Dropzones from './Dropzones.svelte';
-	import SeriesDescription from './SeriesDescription.svelte';
-	import SeriesHeaderStatusIcon from './SeriesHeaderStatusIcon.svelte';
+	import AddSeriesModal from '$components/AddSeriesModal.svelte';
+	import BranchLabel from '$components/BranchLabel.svelte';
 	import BranchReview from '$components/BranchReview.svelte';
-	import PrDetailsModal from '$components/PrDetailsModal.svelte';
-	import PullRequestCard from '$components/PullRequestCard.svelte';
+	import BranchStatus from '$components/BranchStatus.svelte';
+	import CardOverlay from '$components/CardOverlay.svelte';
+	import Dropzone from '$components/Dropzone.svelte';
+	import SeriesDescription from '$components/SeriesDescription.svelte';
 	import SeriesHeaderContextMenu from '$components/SeriesHeaderContextMenu.svelte';
+	import SeriesHeaderStatusIcon from '$components/SeriesHeaderStatusIcon.svelte';
 	import { PromptService } from '$lib/ai/promptService';
 	import { AIService } from '$lib/ai/service';
 	import { BaseBranch } from '$lib/baseBranch/baseBranch';
 	import { BranchStack } from '$lib/branches/branch';
 	import { PatchSeries } from '$lib/branches/branch';
 	import { BranchController } from '$lib/branches/branchController';
-	import {
-		allPreviousSeriesHavePrNumber,
-		childBranch,
-		parentBranch
-	} from '$lib/branches/virtualBranchService';
+	import { parentBranch } from '$lib/branches/virtualBranchService';
 	import { type CommitStatus } from '$lib/commits/commit';
+	import { MoveCommitDzHandler } from '$lib/commits/dropHandler';
 	import { projectAiGenEnabled } from '$lib/config/config';
 	import { FileService } from '$lib/files/fileService';
 	import { closedStateSync } from '$lib/forge/closedStateSync.svelte';
-	import { getForge } from '$lib/forge/interface/forge';
-	import { getForgeListingService } from '$lib/forge/interface/forgeListingService';
-	import { getForgePrService } from '$lib/forge/interface/forgePrService';
-	import { ProjectService } from '$lib/project/projectService';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
 	import { openExternalUrl } from '$lib/utils/url';
-	import { getContext, getContextStore } from '@gitbutler/shared/context';
+	import { getContext, getContextStore, inject } from '@gitbutler/shared/context';
 	import { reactive } from '@gitbutler/shared/reactiveUtils.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
 	import ContextMenu from '@gitbutler/ui/ContextMenu.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
 	import PopoverActionsContainer from '@gitbutler/ui/popoverActions/PopoverActionsContainer.svelte';
 	import PopoverActionsItem from '@gitbutler/ui/popoverActions/PopoverActionsItem.svelte';
 	import { getColorFromBranchType } from '@gitbutler/ui/utils/getColorFromBranchType';
 	import { tick } from 'svelte';
 
 	interface Props {
+		projectId: string;
 		branch: PatchSeries;
 		isTopBranch: boolean;
-		lastPush: Date | undefined;
 	}
 
-	const { branch, isTopBranch, lastPush }: Props = $props();
+	const { projectId, branch, isTopBranch }: Props = $props();
 
 	let descriptionVisible = $state(!!branch.description);
 
-	const aiService = getContext(AIService);
-	const promptService = getContext(PromptService);
-	const fileService = getContext(FileService);
+	const [aiService, promptService, fileService, branchController, forge] = inject(
+		AIService,
+		PromptService,
+		FileService,
+		BranchController,
+		DefaultForgeFactory
+	);
+
 	const stackStore = getContextStore(BranchStack);
-	const projectService = getContext(ProjectService);
 	const stack = $derived($stackStore);
-	const project = projectService.project;
 
 	const parent = $derived(
 		parentBranch(
@@ -63,30 +57,16 @@
 			stack.validSeries.filter((b) => b.archived)
 		)
 	);
-	const child = $derived(
-		childBranch(
-			branch,
-			stack.validSeries.filter((b) => !b.archived)
-		)
-	);
 
-	const aiGenEnabled = $derived(!!$project && projectAiGenEnabled($project.id));
-	const branchController = getContext(BranchController);
-	const baseBranch = getContextStore(BaseBranch);
-	const prService = getForgePrService();
-	const forge = getForge();
+	const aiGenEnabled = $derived(projectAiGenEnabled(projectId));
+	const baseBranch = getContext(BaseBranch);
 
 	const upstreamName = $derived(branch.upstreamReference ? branch.name : undefined);
-	const forgeBranch = $derived(upstreamName ? $forge?.branch(upstreamName) : undefined);
-	const previousSeriesHavePrNumber = $derived(
-		allPreviousSeriesHavePrNumber(branch.name, stack.validSeries)
-	);
+	const forgeBranch = $derived(upstreamName ? forge.current.branch(upstreamName) : undefined);
 
 	let stackingAddSeriesModal = $state<ReturnType<typeof AddSeriesModal>>();
-	let prDetailsModal = $state<ReturnType<typeof PrDetailsModal>>();
 	let kebabContextMenu = $state<ReturnType<typeof ContextMenu>>();
-	let stackingContextMenu = $state<ReturnType<typeof SeriesHeaderContextMenu>>();
-	let confirmCreatePrModal = $state<ReturnType<typeof Modal>>();
+	let branchContextMenu = $state<ReturnType<typeof SeriesHeaderContextMenu>>();
 	let kebabContextMenuTrigger = $state<HTMLButtonElement>();
 	let seriesHeaderEl = $state<HTMLDivElement>();
 	let seriesDescriptionEl = $state<HTMLTextAreaElement>();
@@ -103,49 +83,19 @@
 
 	// Pretty cumbersome way of getting the PR number, would be great if we can
 	// make it more concise somehow.
-	const forgeListing = getForgeListingService();
-	const prStore = $derived($forgeListing?.prs);
-	const prs = $derived(prStore ? $prStore : undefined);
-
-	const listedPr = $derived(prs?.find((pr) => pr.sourceBranch === upstreamName));
-	const prNumber = $derived(branch.prNumber || listedPr?.number);
-
-	const prMonitor = $derived(prNumber ? $prService?.prMonitor(prNumber) : undefined);
-	const pr = $derived(prMonitor?.pr);
-	const sourceBranch = $derived($pr?.sourceBranch); // Deduplication.
-	const mergedIncorrectly = $derived(prMonitor?.mergedIncorrectly);
-
-	// Do not create a checks monitor if pull request is merged or from a fork.
-	// For more information about unavailability of check-runs for forked repos,
-	// see GitHub docs at:
-	// https://docs.github.com/en/rest/checks/runs?apiVersion=2022-11-28#list-check-runs-in-a-check-suite
-	// TODO: Make this forge specific by moving it into ForgePrMonitor.
-	const shouldCheck = $derived($pr && !$pr.fork && !$pr.merged); // Deduplication.
-	const checksMonitor = $derived(
-		sourceBranch && shouldCheck ? $forge?.checksMonitor(sourceBranch) : undefined
+	const forgeListing = $derived(forge.current.listService);
+	const listedPrResult = $derived(
+		upstreamName ? forgeListing?.getByBranch(projectId, upstreamName) : undefined
 	);
+	const listedPr = $derived(listedPrResult?.current.data);
+	const prNumber = $derived(branch.prNumber);
 
-	// Extra reference to avoid potential infinite loop.
-	let lastSeenPush: Date | undefined;
-
-	// Without lastSeenPush this code has gone into an infinite loop, where lastPush
-	// seemingly kept updating as a result of calling updateStatusAndChecks.
-	// TODO: Refactor such that we do not need `$effect`.
-	$effect(() => {
-		if (!lastPush) return;
-		if (!lastSeenPush || lastPush > lastSeenPush) {
-			updateStatusAndChecks();
-		}
-		lastSeenPush = lastPush;
-	});
-
-	async function handleReloadPR() {
-		await updateStatusAndChecks();
-	}
-
-	async function updateStatusAndChecks() {
-		await Promise.allSettled([prMonitor?.refresh(), checksMonitor?.update()]);
-	}
+	const prService = $derived(forge.current.prService);
+	const prResult = $derived(prNumber ? prService?.get(prNumber) : undefined);
+	const pr = $derived(prResult?.current.data);
+	const mergedIncorrectly = $derived(
+		(pr?.merged && pr.baseBranch !== baseBranch.shortName) || false
+	);
 
 	/**
 	 * We are starting to store pull request id's locally so if we find one that does not have
@@ -155,7 +105,7 @@
 	 */
 	$effect(() => {
 		if (
-			$forge?.name === 'github' &&
+			forge.current.name === 'github' &&
 			!branch.prNumber &&
 			listedPr?.number &&
 			listedPr.number !== branch.prNumber
@@ -164,31 +114,9 @@
 		}
 	});
 
-	function confirmCreatePR(close: () => void) {
-		close();
-		prDetailsModal?.show();
-	}
-
-	function handleOpenPR() {
-		if (!previousSeriesHavePrNumber) {
-			confirmCreatePrModal?.show();
-			return;
-		}
-		prDetailsModal?.show();
-	}
-
-	async function handleReopenPr() {
-		if (!$pr) {
-			return;
-		}
-		await $prService?.reopen($pr?.number);
-		await $forgeListing?.refresh();
-		await handleReloadPR();
-	}
-
-	function editTitle(title: string) {
+	function updateBranchName(title: string) {
 		if (branch?.name && title !== branch.name) {
-			branchController.updateSeriesName(stack.id, branch.name, title);
+			branchController.updateBranchName(stack.id, branch.name, title);
 		}
 	}
 
@@ -210,10 +138,10 @@
 	}
 
 	async function generateBranchName() {
-		if (!aiGenEnabled || !branch || !$project) return;
+		if (!aiGenEnabled || !branch) return;
 
 		let hunk_promises = branch.patches.flatMap(async (p) => {
-			let files = await fileService.listCommitFiles($project.id, p.id);
+			let files = await fileService.listCommitFiles(projectId, p.id);
 			return files.flatMap((f) =>
 				f.hunks.map((h) => {
 					return { filePath: f.path, diff: h.diff };
@@ -222,53 +150,35 @@
 		});
 		let hunks = (await Promise.all(hunk_promises)).flat();
 
-		const prompt = promptService.selectedBranchPrompt($project.id);
-		const message = await aiService.summarizeBranch({
+		const prompt = promptService.selectedBranchPrompt(projectId);
+		const newBranchName = await aiService.summarizeBranch({
 			hunks,
 			branchTemplate: prompt
 		});
 
-		if (message && message !== branch.name) {
-			branchController.updateSeriesName(stack.id, branch.name, message);
+		if (newBranchName && newBranchName !== branch.name) {
+			branchController.updateBranchName(stack.id, branch.name, newBranchName);
 		}
-	}
-
-	async function onCreateNewPr() {
-		// Make sure the listing result is up-to-date so that we don't
-		// automatically set it back to what it was. If a branch has no
-		// pr attached we look for any open prs with a matching branch
-		// name, and save it to the branch.
-		await $forgeListing?.refresh();
-
-		if (!branch.prNumber) {
-			throw new Error('Failed to discard pr, try reloading the app.');
-		}
-
-		// Delete the reference stored on disk.
-		branchController.updateBranchPrNumber(stack.id, branch.name, null);
-		kebabContextMenu?.close();
-
-		// Display create pr modal after a slight delay, this prevents
-		// interference with the closing context menu. It also feels nice
-		// that these two things are not happening at the same time.
-		setTimeout(() => handleOpenPR(), 250);
 	}
 
 	closedStateSync(reactive(() => branch));
+
+	const dzHandler = $derived(new MoveCommitDzHandler(branchController, stack));
 </script>
 
 <AddSeriesModal bind:this={stackingAddSeriesModal} parentSeriesName={branch.name} />
 
 <SeriesHeaderContextMenu
-	bind:this={stackingContextMenu}
+	stackId={stack.id}
+	bind:this={branchContextMenu}
 	bind:contextMenuEl={kebabContextMenu}
 	leftClickTrigger={kebabContextMenuTrigger}
 	rightClickTrigger={seriesHeaderEl}
-	headName={branch.name}
+	branchName={branch.name}
 	seriesCount={stack.validSeries?.length ?? 0}
 	{isTopBranch}
 	{toggleDescription}
-	description={branch.description ?? ''}
+	descriptionString={branch.description ?? ''}
 	onGenerateBranchName={generateBranchName}
 	onAddDependentSeries={() => stackingAddSeriesModal?.show()}
 	onOpenInBrowser={() => {
@@ -276,17 +186,13 @@
 		if (url) openExternalUrl(url);
 	}}
 	hasForgeBranch={!!forgeBranch}
-	pr={$pr}
-	openPrDetailsModal={handleOpenPR}
+	{pr}
 	{branchType}
-	onMenuToggle={(isOpen, isLeftClick) => {
+	onToggle={(isOpen, isLeftClick) => {
 		if (isLeftClick) {
 			contextMenuOpened = isOpen;
 		}
 	}}
-	{parentIsPushed}
-	{hasParent}
-	{onCreateNewPr}
 />
 
 <div
@@ -298,7 +204,10 @@
 		kebabContextMenu?.toggle(e);
 	}}
 >
-	<Dropzones type="commit">
+	<Dropzone handlers={[dzHandler]}>
+		{#snippet overlay({ hovered, activated })}
+			<CardOverlay {hovered} {activated} label="Move here" />
+		{/snippet}
 		<PopoverActionsContainer class="branch-actions-menu" stayOpen={contextMenuOpened}>
 			{#if isTopBranch}
 				<PopoverActionsItem
@@ -341,16 +250,16 @@
 				<div class="text-14 text-bold branch-info__name">
 					{#if forgeBranch}
 						<span class="remote-name">
-							{$baseBranch.pushRemoteName ? `${$baseBranch.pushRemoteName} /` : 'origin /'}
+							{baseBranch.pushRemoteName ? `${baseBranch.pushRemoteName} /` : 'origin /'}
 						</span>
 					{/if}
 					<BranchLabel
 						name={branch.name}
-						onChange={(name) => editTitle(name)}
+						onChange={(name) => updateBranchName(name)}
 						readonly={!!forgeBranch}
 						onDblClick={() => {
 							if (branchType !== 'Integrated') {
-								stackingContextMenu?.showSeriesRenameModal?.(branch.name);
+								branchContextMenu?.showSeriesRenameModal?.();
 							}
 						}}
 					/>
@@ -369,71 +278,36 @@
 			</div>
 		</div>
 		{#if !hasNoCommits}
-			<BranchReview {branch} openForgePullRequest={handleOpenPR}>
-				{#snippet branchLine()}
-					<div class="branch-action__line" style:--bg-color={lineColor}></div>
-				{/snippet}
-				{#snippet pullRequestCard(pr)}
-					<PullRequestCard
-						reloadPR={handleReloadPR}
-						reopenPr={handleReopenPr}
-						openPrDetailsModal={handleOpenPR}
-						{pr}
-						{checksMonitor}
-						{prMonitor}
-						{isPushed}
-						{child}
-						{hasParent}
-						{parentIsPushed}
-					/>
-				{/snippet}
-				{#snippet branchStatus()}
-					<BranchStatus
-						{mergedIncorrectly}
-						{isPushed}
-						{hasParent}
-						{parentIsPushed}
-						{parentIsIntegrated}
-					/>
-				{/snippet}
-			</BranchReview>
+			<div class="branch-review-section">
+				<div class="branch-action__line" style:--bg-color={lineColor}></div>
+				<div class="branch-review-container">
+					<BranchReview {projectId} stackId={stack.id} branchName={branch.name}>
+						{#snippet branchStatus()}
+							<BranchStatus
+								{mergedIncorrectly}
+								{isPushed}
+								{hasParent}
+								{parentIsPushed}
+								{parentIsIntegrated}
+							/>
+						{/snippet}
+					</BranchReview>
+				</div>
+			</div>
 		{/if}
-
-		{#if $pr}
-			<PrDetailsModal bind:this={prDetailsModal} type="display" pr={$pr} currentSeries={branch} />
-		{:else}
-			<PrDetailsModal
-				bind:this={prDetailsModal}
-				type="preview"
-				currentSeries={branch}
-				stackId={stack.id}
-			/>
-		{/if}
-
-		<Modal
-			width="small"
-			type="warning"
-			title="Create Pull Request"
-			bind:this={confirmCreatePrModal}
-			onSubmit={confirmCreatePR}
-		>
-			{#snippet children()}
-				<p class="text-13 text-body helper-text">
-					It's strongly recommended to create pull requests starting with the branch at the base of
-					the stack.
-					<br />
-					Do you still want to create this pull request?
-				</p>
-			{/snippet}
-			{#snippet controls(close)}
-				<Button kind="outline" onclick={close}>Cancel</Button>
-				<Button style="warning" type="submit">Create Pull Request</Button>
-			{/snippet}
-		</Modal>
-	</Dropzones>
+	</Dropzone>
 </div>
 
 <style lang="postcss">
+	.branch-review-section {
+		display: flex;
+	}
+
+	.branch-review-container {
+		flex-grow: 1;
+		padding: 0 14px 14px 0;
+	}
+
 	.branch-header {
 		position: relative;
 		display: flex;
@@ -483,21 +357,6 @@
 		gap: 6px;
 		padding: 14px 0;
 		margin-left: -2px;
-	}
-
-	.branch-action {
-		width: 100%;
-		display: flex;
-		justify-content: flex-start;
-		align-items: stretch;
-
-		.branch-action__body {
-			width: 100%;
-			padding: 0 14px 14px 0;
-			display: flex;
-			flex-direction: column;
-			gap: 14px;
-		}
 	}
 
 	.branch-action__line {

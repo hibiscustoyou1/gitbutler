@@ -2,6 +2,8 @@ import { Tauri } from '$lib/backend/tauri';
 import { isBackendError } from '$lib/error/typeguards';
 import { type BaseQueryApi, type QueryReturnValue } from '@reduxjs/toolkit/query';
 
+export type TauriBaseQueryFn = typeof tauriBaseQuery;
+
 export async function tauriBaseQuery(
 	args: ApiArgs,
 	api: BaseQueryApi
@@ -13,9 +15,9 @@ export async function tauriBaseQuery(
 		return { data: await api.extra.tauri.invoke(args.command, args.params) };
 	} catch (error: unknown) {
 		if (isBackendError(error)) {
-			return { error: { message: error.message, code: error.code } };
+			return { error: error as TauriCommandError };
 		}
-		return { error: { message: String(error) } };
+		return { error: { message: String(error) } as TauriCommandError };
 	}
 }
 
@@ -24,7 +26,7 @@ type ApiArgs = {
 	params: Record<string, unknown>;
 };
 
-type TauriCommandError = { message: string; code?: string };
+export type TauriCommandError = { message: string; code?: string };
 
 /**
  * Typeguard for accessing injected Tauri dependency safely.

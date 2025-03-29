@@ -24,6 +24,10 @@
 		solidBackground?: boolean;
 		class?: string | (string | undefined)[] | Record<string, string>;
 		iconClass?: string;
+		/**
+		 * Custom style to be applied to the button.
+		 */
+		customStyle?: string;
 		// Additional elements
 		icon?: keyof typeof iconsJson | undefined;
 		tooltip?: string;
@@ -42,8 +46,8 @@
 </script>
 
 <script lang="ts">
-	import Tooltip, { type TooltipAlign, type TooltipPosition } from './Tooltip.svelte';
 	import Icon from '$lib/Icon.svelte';
+	import Tooltip, { type TooltipAlign, type TooltipPosition } from '$lib/Tooltip.svelte';
 	import { pxToRem } from '$lib/utils/pxToRem';
 	import type iconsJson from '$lib/data/icons.json';
 	import type { ComponentColorType, ComponentKindType } from '$lib/utils/colorTypes';
@@ -71,6 +75,7 @@
 		solidBackground = false,
 		class: className = '',
 		iconClass = '',
+		customStyle,
 		testId,
 		icon,
 		tooltip,
@@ -119,6 +124,7 @@
 				: width
 			: undefined}
 		style:max-width={maxWidth !== undefined ? pxToRem(maxWidth) : undefined}
+		style={customStyle}
 		disabled={disabled || loading}
 		onclick={handleAction}
 		{onmousedown}
@@ -205,7 +211,7 @@
 					);
 			}
 			&:disabled {
-				cursor: default;
+				cursor: not-allowed;
 				opacity: 0.5;
 			}
 			&.wide {

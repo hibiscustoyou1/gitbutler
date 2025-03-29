@@ -2,16 +2,16 @@
 	import zenSvg from '$lib/assets/dzen-pc.svg?raw';
 	import { BaseBranch } from '$lib/baseBranch/baseBranch';
 	import { BranchController } from '$lib/branches/branchController';
-	import { getForge } from '$lib/forge/interface/forge';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
 	import { Project } from '$lib/project/project';
 	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
 	import { getEditorUri, openExternalUrl } from '$lib/utils/url';
-	import { getContext, getContextStore, getContextStoreBySymbol } from '@gitbutler/shared/context';
+	import { getContext, getContextStoreBySymbol, maybeGetContext } from '@gitbutler/shared/context';
 	import Icon from '@gitbutler/ui/Icon.svelte';
 	import type { Writable } from 'svelte/store';
 
-	const forge = getForge();
-	const baseBranch = getContextStore(BaseBranch);
+	const forge = getContext(DefaultForgeFactory);
+	const baseBranch = maybeGetContext(BaseBranch);
 	const branchController = getContext(BranchController);
 	const userSettings = getContextStoreBySymbol<Settings, Writable<Settings>>(SETTINGS);
 
@@ -51,7 +51,7 @@
 							onclick={async () => await branchController.createBranch({})}
 						>
 							<div class="empty-board__suggestions__link__icon">
-								<Icon name="new-branch" />
+								<Icon name="add-new" />
 							</div>
 							<span class="text-12">Create a new branch</span>
 						</div>
@@ -83,10 +83,10 @@
 				<div class="empty-board__suggestions__block">
 					<h3 class="text-14 text-bold">Recent commits</h3>
 					<div class="empty-board__suggestions__links">
-						{#each ($baseBranch?.recentCommits || []).slice(0, 4) as commit}
+						{#each (baseBranch?.recentCommits || []).slice(0, 4) as commit}
 							<a
 								class="empty-board__suggestions__link"
-								href={$forge?.commitUrl(commit.id)}
+								href={forge.current.commitUrl(commit.id)}
 								target="_blank"
 								rel="noreferrer"
 								title="Open in browser"

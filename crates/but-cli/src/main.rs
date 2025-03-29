@@ -16,10 +16,32 @@ fn main() -> Result<()> {
     let _op_span = tracing::info_span!("cli-op").entered();
 
     match &args.cmd {
+        args::Subcommands::DiscardChange {
+            hunk_indices,
+            hunk_headers,
+            current_path,
+            previous_path,
+        } => command::discard_change(
+            &args.current_dir,
+            current_path,
+            previous_path.as_deref(),
+            if !hunk_indices.is_empty() {
+                Some(command::discard_change::IndicesOrHeaders::Indices(
+                    hunk_indices,
+                ))
+            } else if !hunk_headers.is_empty() {
+                Some(command::discard_change::IndicesOrHeaders::Headers(
+                    hunk_headers,
+                ))
+            } else {
+                None
+            },
+        ),
         args::Subcommands::Commit {
             message,
             amend,
             parent,
+            workspace_tip,
             stack_segment_ref,
         } => {
             let (repo, project) = repo_and_maybe_project(&args, RepositoryOpenMode::Merge)?;
@@ -30,12 +52,14 @@ fn main() -> Result<()> {
                 *amend,
                 parent.as_deref(),
                 stack_segment_ref.as_deref(),
+                workspace_tip.as_deref(),
             )
         }
         args::Subcommands::HunkDependency => command::diff::locks(&args.current_dir),
-        args::Subcommands::Status { unified_diff } => {
-            command::diff::status(&args.current_dir, *unified_diff)
-        }
+        args::Subcommands::Status {
+            unified_diff,
+            context_lines,
+        } => command::diff::status(&args.current_dir, *unified_diff, *context_lines),
         args::Subcommands::CommitChanges {
             unified_diff,
             current_commit,

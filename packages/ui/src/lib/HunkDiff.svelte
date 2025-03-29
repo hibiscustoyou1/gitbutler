@@ -4,15 +4,17 @@
 </script>
 
 <script lang="ts">
-	import Button from './Button.svelte';
-	import Checkbox from './Checkbox.svelte';
-	import HunkDiffBody from './hunkDiff/HunkDiffBody.svelte';
+	import Button from '$lib/Button.svelte';
+	import Checkbox from '$lib/Checkbox.svelte';
+	import Icon from '$lib/Icon.svelte';
+	import HunkDiffBody from '$lib/hunkDiff/HunkDiffBody.svelte';
 	import {
 		type ContentSection,
-		getHunkLineInfo,
+		type LineId,
 		type LineSelector,
 		parseHunk
 	} from '$lib/utils/diffParsing';
+	import type { ContextMenuParams } from '$lib/hunkDiff/HunkDiffRow.svelte';
 	interface Props {
 		filePath: string;
 		hunkStr: string;
@@ -22,16 +24,20 @@
 		diffLigatures?: boolean;
 		inlineUnifiedDiffs?: boolean;
 		diffContrast?: 'light' | 'medium' | 'strong';
-		selected?: boolean;
+		staged?: boolean;
+		stagedLines?: LineId[];
+		hideCheckboxes?: boolean;
 		selectedLines?: LineSelector[];
 		isHidden?: boolean;
 		whyHidden?: string;
 		onShowDiffClick?: () => void;
-		onchange?: (selected: boolean) => void;
+		onChangeStage?: (staged: boolean) => void;
 		onLineClick?: (params: LineSelectionParams) => void;
 		clearLineSelection?: (fileName: string) => void;
 		onQuoteSelection?: () => void;
 		onCopySelection?: (contentSections: ContentSection[]) => void;
+		handleLineContextMenu?: (params: ContextMenuParams) => void;
+		clickOutsideExcludeElement?: HTMLElement;
 	}
 
 	const {
@@ -43,16 +49,20 @@
 		diffLigatures = true,
 		diffContrast = 'medium',
 		inlineUnifiedDiffs = false,
-		selected,
+		staged,
+		stagedLines,
+		hideCheckboxes,
 		selectedLines,
 		isHidden,
 		whyHidden,
 		onShowDiffClick,
-		onchange,
+		onChangeStage,
 		onLineClick,
 		clearLineSelection,
 		onCopySelection,
-		onQuoteSelection
+		onQuoteSelection,
+		handleLineContextMenu,
+		clickOutsideExcludeElement
 	}: Props = $props();
 
 	const BORDER_WIDTH = 1;
@@ -62,15 +72,16 @@
 	let numberHeaderWidth = $state<number>(0);
 
 	const hunk = $derived(parseHunk(hunkStr));
-	const hunkLineInfo = $derived(getHunkLineInfo(hunk.contentSections));
 
 	function handleCopySelection() {
 		onCopySelection?.(hunk.contentSections);
 	}
 
 	const hunkSummary = $derived(
-		`@@ -${hunkLineInfo.beforLineStart},${hunkLineInfo.beforeLineCount} +${hunkLineInfo.afterLineStart},${hunkLineInfo.afterLineCount} @@`
+		`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`
 	);
+	const showingCheckboxes = $derived(!hideCheckboxes && staged !== undefined);
+	const colspan = $derived(showingCheckboxes ? 3 : 2);
 </script>
 
 <div
@@ -87,17 +98,22 @@
 					bind:clientWidth={numberHeaderWidth}
 					class="table__checkbox-container"
 					style="--border-width: {BORDER_WIDTH}px;"
-					colspan={2}
+					class:stageable={showingCheckboxes}
+					class:staged={showingCheckboxes && staged}
+					{colspan}
+					onclick={() => {
+						if (showingCheckboxes) {
+							onChangeStage?.(!staged);
+						}
+					}}
 				>
 					<div class="table__checkbox">
-						{#if selected !== undefined}
-							<Checkbox
-								checked={selected}
-								small
-								onchange={(e) => {
-									onchange?.(e.currentTarget.checked);
-								}}
-							/>
+						{#if staged && !hideCheckboxes}
+							<Checkbox checked={staged} small style="ghost" />
+						{:else if showingCheckboxes}
+							<div class="table__checkbox-unstaged">
+								<Icon name="minus-small" />
+							</div>
 						{/if}
 					</div>
 
@@ -134,6 +150,7 @@
 			</tbody>
 		{:else}
 			<HunkDiffBody
+				comment={hunk.comment}
 				{filePath}
 				content={hunk.contentSections}
 				{onLineClick}
@@ -145,6 +162,11 @@
 				{numberHeaderWidth}
 				onCopySelection={onCopySelection && handleCopySelection}
 				{onQuoteSelection}
+				{staged}
+				{stagedLines}
+				{hideCheckboxes}
+				{handleLineContextMenu}
+				{clickOutsideExcludeElement}
 			/>
 		{/if}
 	</table>
@@ -155,7 +177,7 @@
 		border-radius: var(--radius-m);
 		background-color: var(--clr-diff-line-bg);
 		border: 1px solid var(--clr-border-2);
-		overflow-x: auto;
+		overflow: hidden;
 		width: 100%;
 	}
 
@@ -190,20 +212,36 @@
 		border-right: 1px solid var(--clr-border-2);
 		border-bottom: 1px solid var(--clr-border-2);
 		background-color: var(--clr-diff-count-bg);
-		border-top-left-radius: var(--radius-m);
 		box-sizing: border-box;
 
-		&.selected {
+		&.stageable {
+			cursor: pointer;
+		}
+
+		&.staged {
 			background-color: var(--clr-diff-selected-count-bg);
 			border-color: var(--clr-diff-selected-count-border);
 		}
 	}
 
 	.table__checkbox {
-		padding: 4px 6px;
+		padding: 4px;
 		display: flex;
-		justify-content: space-between;
+		justify-content: flex-start;
 		align-items: center;
+		pointer-events: none;
+	}
+
+	.table__checkbox-unstaged {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+
+		color: var(--clr-diff-count-checkmark);
+		margin: 0;
+		padding: 0;
+		width: 16px;
+		height: 16px;
 	}
 
 	.table__title {

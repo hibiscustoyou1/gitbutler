@@ -1,22 +1,24 @@
 <script lang="ts">
 	import BaseBranch from '$components/BaseBranch.svelte';
+	import ScrollableContainer from '$components/ConfigurableScrollableContainer.svelte';
 	import FileCard from '$components/FileCard.svelte';
 	import FullviewLoading from '$components/FullviewLoading.svelte';
 	import Resizer from '$components/Resizer.svelte';
-	import ScrollableContainer from '$components/ScrollableContainer.svelte';
-	import { BaseBranchService } from '$lib/baseBranch/baseBranchService';
+	import BaseBranchService from '$lib/baseBranch/baseBranchService.svelte';
+	import { Project } from '$lib/project/project';
 	import { FileIdSelection } from '$lib/selection/fileIdSelection';
-	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
-	import { getContext, getContextStoreBySymbol } from '@gitbutler/shared/context';
-	import lscache from 'lscache';
-	import { onMount, setContext } from 'svelte';
+	import { getContext } from '@gitbutler/shared/context';
+	import { persisted } from '@gitbutler/shared/persisted';
+	import { setContext } from 'svelte';
 
-	const defaultBranchWidthRem = 30;
-	const laneWidthKey = 'historyLaneWidth';
-	const userSettings = getContextStoreBySymbol<Settings>(SETTINGS);
+	const laneWidthKey = 'baseLaneWidth';
+	const width = persisted<number>(20, laneWidthKey);
 
+	const project = getContext(Project);
 	const baseBranchService = getContext(BaseBranchService);
-	const baseBranch = baseBranchService.base;
+	const baseBranchResponse = $derived(baseBranchService.baseBranch(project.id));
+	const baseBranch = $derived(baseBranchResponse.current.data);
+	const baseBranchError = $derived(baseBranchResponse.current.error);
 
 	const fileIdSelection = new FileIdSelection();
 	setContext(FileIdSelection, fileIdSelection);
@@ -27,39 +29,25 @@
 	const selected = $derived($selectedFile?.file);
 
 	let rsViewport = $state<HTMLDivElement>();
-	let laneWidth = $state<number>();
-
-	const error = baseBranchService.error;
-
-	onMount(() => {
-		laneWidth = lscache.get(laneWidthKey);
-	});
 </script>
 
-{#if $error}
+{#if baseBranchError}
 	<p>Error...</p>
-{:else if !$baseBranch}
+{:else if !baseBranch}
 	<FullviewLoading />
 {:else}
 	<div class="base">
-		<div
-			class="base__left"
-			bind:this={rsViewport}
-			style:width={`${laneWidth || defaultBranchWidthRem}rem`}
-		>
+		<div class="base__left" bind:this={rsViewport} style:width={$width + 'rem'}>
 			<ScrollableContainer>
 				<div class="card">
-					<BaseBranch base={$baseBranch} />
+					<BaseBranch base={baseBranch} />
 				</div>
 			</ScrollableContainer>
 			<Resizer
 				viewport={rsViewport}
 				direction="right"
-				minWidth={320}
-				onWidth={(value) => {
-					laneWidth = value / (16 * $userSettings.zoom);
-					lscache.set(laneWidthKey, laneWidth, 7 * 1440); // 7 day ttl
-				}}
+				minWidth={20}
+				onWidth={(value) => ($width = value)}
 			/>
 		</div>
 		<div class="base__right">

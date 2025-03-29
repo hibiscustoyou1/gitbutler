@@ -1,13 +1,12 @@
 <script lang="ts">
-	import FileStatusBadge from './FileStatusBadge.svelte';
 	import Badge from '$lib/Badge.svelte';
 	import Button from '$lib/Button.svelte';
 	import Checkbox from '$lib/Checkbox.svelte';
 	import Icon from '$lib/Icon.svelte';
 	import Tooltip from '$lib/Tooltip.svelte';
-	import FileIcon from '$lib/file/FileIcon.svelte';
-	import { splitFilePath } from '$lib/utils/filePath';
-	import type { FileStatus } from './types';
+	import FileName from '$lib/file/FileName.svelte';
+	import FileStatusBadge from '$lib/file/FileStatusBadge.svelte';
+	import type { FileStatus } from '$lib/file/types';
 
 	interface Props {
 		ref?: HTMLDivElement;
@@ -17,15 +16,17 @@
 		fileStatusStyle?: 'dot' | 'full';
 		draggable?: boolean;
 		selected?: boolean;
+		focused?: boolean;
 		clickable?: boolean;
 		showCheckbox?: boolean;
+		listMode: 'list' | 'tree';
 		checked?: boolean;
 		indeterminate?: boolean;
 		conflicted?: boolean;
 		conflictHint?: string;
 		locked?: boolean;
 		lockText?: string;
-		open?: boolean;
+		listActive?: boolean;
 		oncheck?: (
 			e: Event & {
 				currentTarget: EventTarget & HTMLInputElement;
@@ -40,13 +41,13 @@
 
 	let {
 		ref = $bindable(),
-		open = $bindable(),
 		id,
 		filePath,
 		fileStatus,
 		fileStatusStyle = 'dot',
 		draggable = false,
 		selected = false,
+		focused = false,
 		clickable = true,
 		showCheckbox = false,
 		checked = $bindable(),
@@ -55,6 +56,8 @@
 		conflictHint,
 		locked,
 		lockText,
+		listActive,
+		listMode,
 		oncheck,
 		onclick,
 		ondblclick,
@@ -62,8 +65,6 @@
 		onkeydown,
 		oncontextmenu
 	}: Props = $props();
-
-	const fileInfo = $derived(splitFilePath(filePath));
 </script>
 
 <div
@@ -71,10 +72,12 @@
 	data-locked={locked}
 	data-file-id={id}
 	class="file-list-item"
-	class:selected-draggable={selected}
+	class:selected
+	class:list-active={listActive}
 	class:clickable
 	class:draggable
-	class:open
+	class:focused
+	class:list-mode={listMode === 'list'}
 	aria-selected={selected}
 	role="option"
 	tabindex="-1"
@@ -97,22 +100,8 @@
 	{#if showCheckbox}
 		<Checkbox small {checked} {indeterminate} onchange={oncheck} />
 	{/if}
-	<div class="info">
-		<FileIcon fileName={fileInfo.filename} />
-		<span class="text-12 text-semibold name truncate">
-			{fileInfo.filename}
-		</span>
 
-		{#if fileInfo.path}
-			<div class="path-container">
-				<Tooltip text={filePath} delay={1200}>
-					<span class="text-12 path truncate">
-						{fileInfo.path}
-					</span>
-				</Tooltip>
-			</div>
-		{/if}
-	</div>
+	<FileName {filePath} hideFilePath={listMode === 'tree'} />
 
 	<div class="details">
 		{#if locked}
@@ -156,19 +145,6 @@
 		{#if fileStatus}
 			<FileStatusBadge status={fileStatus} style={fileStatusStyle} />
 		{/if}
-		{#if open !== undefined}
-			<button
-				class="chevron"
-				type="button"
-				onclick={(e) => {
-					open = !open;
-					e.stopPropagation();
-					e.preventDefault();
-				}}
-			>
-				<Icon name={open ? 'chevron-up-small' : 'chevron-down-small'} />
-			</button>
-		{/if}
 	</div>
 </div>
 
@@ -184,7 +160,6 @@
 		user-select: none;
 		outline: none;
 		background: transparent;
-		border-bottom: 1px solid var(--clr-border-3);
 
 		& :global(.mark-resolved-btn) {
 			margin: 0 4px;
@@ -194,7 +169,7 @@
 	.file-list-item.clickable {
 		cursor: pointer;
 
-		&:not(.selected-draggable):hover {
+		&:not(.selected):hover {
 			background-color: var(--clr-bg-1-muted);
 		}
 	}
@@ -218,62 +193,6 @@
 		margin-right: -12px;
 		transition: opacity var(--transition-fast);
 	}
-	/* 
-	.mark-resolved-btn {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		padding: 3px 6px 3px 6px;
-		border: 1px solid var(--clr-border-2);
-		border-radius: var(--radius-m);
-		margin: 0 2px;
-		white-space: nowrap;
-		transition:
-			background-color var(--transition-fast),
-			border-color var(--transition-fast);
-
-		&:hover {
-			background-color: var(--clr-bg-1);
-		}
-	} */
-
-	.info {
-		display: flex;
-		align-items: center;
-		flex-shrink: 1;
-		min-width: 32px;
-		gap: 6px;
-		width: 100%;
-		overflow: hidden;
-	}
-
-	.name {
-		flex-shrink: 1;
-		flex-grow: 0;
-		min-width: 40px;
-		pointer-events: none;
-		color: var(--clt-text-1);
-	}
-
-	.path-container {
-		display: flex;
-		justify-content: flex-start;
-		flex-shrink: 0;
-		flex-grow: 1;
-		flex-basis: 0px;
-		text-align: left;
-		min-width: 16px;
-		overflow: hidden;
-	}
-
-	.path {
-		display: inline-block;
-		color: var(--clt-text-1);
-		line-height: 120%;
-		opacity: 0.3;
-		max-width: 100%;
-		text-align: left;
-	}
 
 	.details {
 		flex-grow: 1;
@@ -290,38 +209,11 @@
 		display: flex;
 	}
 
-	.selected-draggable {
-		background-color: var(--clr-theme-pop-bg-muted);
+	.selected {
+		background-color: var(--clr-selected-not-in-focus-bg);
 	}
 
-	.file-list-item:hover .chevron {
-		display: inline-block;
-		display: flex;
-	}
-
-	.chevron {
-		display: none;
-		align-items: center;
-		justify-content: center;
-		color: var(--clr-text-1);
-		opacity: 0.4;
-		padding-left: 10px;
-		padding-right: 10px;
-		height: 28px;
-		margin-left: -8px;
-		margin-right: -12px;
-		transition: opacity var(--transition-fast);
-
-		&:hover {
-			opacity: 0.8;
-		}
-	}
-
-	.file-list-item.open {
-		border-bottom: 1px solid transparent;
-
-		& .chevron {
-			display: flex;
-		}
+	.list-active.selected {
+		background-color: var(--clr-selected-in-focus-bg);
 	}
 </style>

@@ -2,8 +2,6 @@
 	import InfoMessage from '$components/InfoMessage.svelte';
 	import Section from '$components/Section.svelte';
 	import SectionCardDisclaimer from '$components/SectionCardDisclaimer.svelte';
-	import Select from '$components/Select.svelte';
-	import SelectItem from '$components/SelectItem.svelte';
 	import { invoke } from '$lib/backend/ipc';
 	import { GitConfigService } from '$lib/config/gitConfigService';
 	import { Project } from '$lib/project/project';
@@ -13,6 +11,8 @@
 	import Textbox from '@gitbutler/ui/Textbox.svelte';
 	import Toggle from '@gitbutler/ui/Toggle.svelte';
 	import Link from '@gitbutler/ui/link/Link.svelte';
+	import Select from '@gitbutler/ui/select/Select.svelte';
+	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
 	import { onMount } from 'svelte';
 
 	const project = getContext(Project);
@@ -68,7 +68,6 @@
 			})
 			.catch((err) => {
 				console.error('Error checking signing:', err);
-				console.log(err.message);
 				errorMessage = err.message;
 				signCheckResult = false;
 			});
@@ -121,6 +120,7 @@
 			<Select
 				value={signingFormat}
 				options={signingFormatOptions}
+				wide
 				label="Signing format"
 				onselect={(value: string) => {
 					signingFormat = value;

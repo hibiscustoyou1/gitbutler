@@ -5,10 +5,10 @@
 		type BranchListing
 	} from '$lib/branches/branchListing';
 	import { GitConfigService } from '$lib/config/gitConfigService';
-	import { getForgeListingService } from '$lib/forge/interface/forgeListingService';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
 	import { Project } from '$lib/project/project';
 	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
+	import { inject } from '@gitbutler/shared/context';
 	import SidebarEntry from '@gitbutler/ui/SidebarEntry.svelte';
 	import { gravatarUrlFromEmail } from '@gitbutler/ui/avatar/gravatar';
 	import type { Readable } from 'svelte/store';
@@ -16,28 +16,35 @@
 	import { page } from '$app/stores';
 
 	interface Props {
+		projectId: string;
 		branchListing: BranchListing;
 	}
 
-	const { branchListing }: Props = $props();
+	const { branchListing, projectId }: Props = $props();
 
 	const unknownName = 'unknown';
 	const unknownEmail = 'example@example.com';
 
-	const branchListingService = getContext(BranchListingService);
-	const project = getContext(Project);
-	const gitConfigService = getContext(GitConfigService);
+	const [forge, userService, gitConfigService, branchListingService, project] = inject(
+		DefaultForgeFactory,
+		UserService,
+		GitConfigService,
+		BranchListingService,
+		Project
+	);
 
-	const forgeListingService = getForgeListingService();
-	const prs = $derived($forgeListingService?.prs);
-	const pr = $derived($prs?.find((pr) => branchListing.containsPullRequestBranch(pr.sourceBranch)));
-
-	const userService = getContext(UserService);
 	const user = userService.user;
 
-	let branchListingDetails = $state<Readable<BranchListingDetails | undefined>>();
+	const listService = $derived(forge.current.listService);
+	const prResult = $derived(listService?.filterByBranch(projectId, branchListing.branchNames));
+	const pr = $derived(prResult?.current?.at(0));
 
+	let lastCommitDetails = $state<{ authorName: string; lastCommitAt?: Date }>();
+	let branchListingDetails = $state<Readable<BranchListingDetails | undefined>>();
 	let hasBeenSeen = $state(false);
+
+	// If there are zero commits we should not show the author
+	const ownedByUser = $derived($branchListingDetails?.numberOfCommits === 0);
 
 	$effect(() => {
 		if (hasBeenSeen) {
@@ -62,11 +69,6 @@
 	function formatBranchURL(project: Project, name: string) {
 		return `/${project.id}/branch/${encodeURIComponent(name)}`;
 	}
-
-	// If there are zero commits we should not show the author
-	const ownedByUser = $derived($branchListingDetails?.numberOfCommits === 0);
-
-	let lastCommitDetails = $state<{ authorName: string; lastCommitAt?: Date }>();
 
 	$effect(() => {
 		let canceled = false;

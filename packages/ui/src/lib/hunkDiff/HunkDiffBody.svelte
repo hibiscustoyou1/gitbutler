@@ -1,17 +1,17 @@
-<script lang="ts" module>
-</script>
-
 <script lang="ts">
-	import HunkDiffRow from './HunkDiffRow.svelte';
-	import LineSelection from './lineSelection.svelte';
+	import HunkDiffRow, { type ContextMenuParams } from '$lib/hunkDiff/HunkDiffRow.svelte';
+	import LineSelection from '$lib/hunkDiff/lineSelection.svelte';
 	import { clickOutside } from '$lib/utils/clickOutside';
 	import {
 		type ContentSection,
 		generateRows,
+		type LineId,
 		type LineSelector,
-		parserFromFilename
+		parserFromFilename,
+		type Row,
+		SectionType
 	} from '$lib/utils/diffParsing';
-	import type { LineSelectionParams } from './lineSelection.svelte';
+	import type { LineSelectionParams } from '$lib/hunkDiff/lineSelection.svelte';
 
 	interface Props {
 		filePath: string;
@@ -26,9 +26,16 @@
 		onQuoteSelection?: () => void;
 		onCopySelection?: () => void;
 		numberHeaderWidth?: number;
+		staged?: boolean;
+		stagedLines?: LineId[];
+		hideCheckboxes?: boolean;
+		handleLineContextMenu?: (params: ContextMenuParams) => void;
+		clickOutsideExcludeElement?: HTMLElement;
+		comment?: string;
 	}
 
 	const {
+		comment,
 		filePath,
 		content,
 		onLineClick,
@@ -40,16 +47,23 @@
 		selectedLines,
 		numberHeaderWidth,
 		onCopySelection,
-		onQuoteSelection
+		onQuoteSelection,
+		staged,
+		stagedLines,
+		hideCheckboxes,
+		handleLineContextMenu,
+		clickOutsideExcludeElement
 	}: Props = $props();
 
-	const lineSelection = $derived(new LineSelection(onLineClick));
+	const lineSelection = new LineSelection();
 	const parser = $derived(parserFromFilename(filePath));
 	const renderRows = $derived(
 		generateRows(filePath, content, inlineUnifiedDiffs, parser, selectedLines)
 	);
+	const clickable = $derived(!!onLineClick);
 
 	$effect(() => lineSelection.setRows(renderRows));
+	$effect(() => lineSelection.setOnLineClick(onLineClick));
 
 	const hasSelectedLines = $derived(renderRows.filter((row) => row.isSelected).length > 0);
 
@@ -58,6 +72,33 @@
 		if (hasSelectedLines) clearLineSelection?.();
 		lineSelection.onEnd();
 	}
+
+	function getStageState(row: Row): boolean | undefined {
+		if (staged === undefined) return undefined;
+		if (stagedLines === undefined || stagedLines.length === 0) return staged;
+		return stagedLines.some(
+			(line) => line.newLine === row.afterLineNumber && line.oldLine === row.beforeLineNumber
+		);
+	}
+
+	const showingExtraColumn = $derived(staged !== undefined && !hideCheckboxes);
+	const commentNumericColSpan = $derived(showingExtraColumn ? 3 : 2);
+	const commentRows = $derived.by(() => {
+		if (!comment) return undefined;
+		return generateRows(
+			filePath,
+			[
+				{
+					sectionType: SectionType.Context,
+					lines: [{ beforeLineNumber: 0, afterLineNumber: 0, content: comment }]
+				}
+			],
+			false,
+			parser,
+			[]
+		);
+	});
+	const commentRow = $derived(commentRows?.[0]);
 </script>
 
 <tbody
@@ -67,14 +108,24 @@
 	ontouchmove={(ev) => lineSelection.onTouchMove(ev)}
 	ontouchend={() => lineSelection.onEnd()}
 	use:clickOutside={{
-		handler: handleClearSelection
+		handler: handleClearSelection,
+		excludeElement: clickOutsideExcludeElement
 	}}
 >
+	{#if commentRow}
+		<tr>
+			<td class="diff-comment__number-column" colspan={commentNumericColSpan}>comment</td>
+			<td style="--tab-size: {tabSize};" class="diff-comment">
+				{@html commentRow.tokens.join('')}
+			</td>
+		</tr>
+	{/if}
+
 	{#each renderRows as row, idx}
 		<HunkDiffRow
 			{idx}
 			{row}
-			{onLineClick}
+			{clickable}
 			{lineSelection}
 			{tabSize}
 			{wrapText}
@@ -84,6 +135,9 @@
 			{onCopySelection}
 			clearLineSelection={handleClearSelection}
 			{hoveringOverTable}
+			staged={getStageState(row)}
+			{hideCheckboxes}
+			{handleLineContextMenu}
 		/>
 	{/each}
 </tbody>
@@ -91,5 +145,32 @@
 <style lang="postcss">
 	tbody {
 		z-index: var(--z-lifted);
+	}
+	.diff-comment {
+		width: 100%;
+		font-size: 12px;
+		padding-left: 4px;
+		line-height: 1.25;
+		tab-size: var(--tab-size);
+		white-space: pre;
+		user-select: text;
+		cursor: text;
+		text-wrap: wrap;
+		border-left: 1px solid var(--clr-border-2);
+		border-bottom: 1px solid var(--clr-border-2);
+		background-color: var(--clr-diff-count-bg);
+	}
+
+	.diff-comment__number-column {
+		color: var(--clr-diff-count-text);
+		border-bottom: 1px solid var(--clr-diff-count-border);
+		background-color: var(--clr-diff-count-bg);
+		font-size: 11px;
+		text-align: center;
+		padding: 0 4px;
+		text-align: right;
+		vertical-align: top;
+		user-select: none;
+		touch-action: none;
 	}
 </style>

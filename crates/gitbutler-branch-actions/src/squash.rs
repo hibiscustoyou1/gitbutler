@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::{bail, Context, Ok, Result};
 use but_rebase::RebaseStep;
 use gitbutler_command_context::CommandContext;
@@ -15,7 +13,11 @@ use gitbutler_repo::{
     RepositoryExt as _,
 };
 use gitbutler_stack::{stack_context::CommandContextExt, StackId};
-use gitbutler_workspace::{checkout_branch_trees, compute_updated_branch_head, BranchHeadAndTree};
+#[allow(deprecated)]
+use gitbutler_workspace::{
+    branch_trees::{update_uncommited_changes, WorkspaceState},
+    checkout_branch_trees, compute_updated_branch_head,
+};
 use itertools::Itertools;
 
 use crate::{
@@ -51,6 +53,7 @@ fn do_squash_commits(
     desitnation_id: git2::Oid,
     perm: &mut WorktreeWritePermission,
 ) -> Result<()> {
+    let old_workspace = WorkspaceState::create(ctx, perm.read_permission())?;
     let vb_state = ctx.project().virtual_branches();
     let stack = vb_state.get_stack_in_workspace(stack_id)?;
     let default_target = vb_state.get_default_target()?;
@@ -138,9 +141,13 @@ fn do_squash_commits(
     let final_tree = squash_tree(ctx, &source_commits, destination_commit)?;
 
     // Squash commit messages string separating with newlines
-    let source_messages = source_commits
-        .iter()
-        .map(|c| c.message().unwrap_or_default())
+    let new_message = Some(destination_commit)
+        .into_iter()
+        .chain(source_commits.iter())
+        .filter_map(|c| {
+            let msg = c.message().unwrap_or_default();
+            (!msg.trim().is_empty()).then_some(msg)
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let parents: Vec<_> = destination_commit.parents().collect();
@@ -152,7 +159,7 @@ fn do_squash_commits(
             None,
             &destination_commit.author(),
             &destination_commit.author(),
-            &format!("{}\n{}", destination_commit.message_bstr(), source_messages),
+            &new_message,
             &final_tree,
             &parents.iter().collect::<Vec<_>>(),
             destination_commit.gitbutler_headers(),
@@ -192,26 +199,26 @@ fn do_squash_commits(
 
     let new_stack_head = output.top_commit.to_git2();
 
-    let BranchHeadAndTree {
-        head: new_head_oid,
-        tree: new_tree_oid,
-    } = compute_updated_branch_head(ctx.repo(), &stack, new_stack_head)?;
+    let (new_head_oid, new_tree_oid) = if ctx.app_settings().feature_flags.v3 {
+        (new_stack_head, None)
+    } else {
+        #[allow(deprecated)]
+        let res = compute_updated_branch_head(ctx.repo(), &stack, new_stack_head)?;
+        (res.head, Some(res.tree))
+    };
 
-    stack.set_stack_head(ctx, new_head_oid, Some(new_tree_oid))?;
+    stack.set_stack_head(ctx, new_head_oid, new_tree_oid)?;
 
-    checkout_branch_trees(ctx, perm)?;
+    let new_workspace = WorkspaceState::create(ctx, perm.read_permission())?;
+    if ctx.app_settings().feature_flags.v3 {
+        update_uncommited_changes(ctx, old_workspace, new_workspace, perm)?;
+    } else {
+        #[allow(deprecated)]
+        checkout_branch_trees(ctx, perm)?;
+    }
     crate::integration::update_workspace_commit(&vb_state, ctx)
         .context("failed to update gitbutler workspace")?;
-
-    let mut new_heads: HashMap<String, git2::Commit<'_>> = HashMap::new();
-    for reference in output.references {
-        let commit = ctx.repo().find_commit(reference.commit_id.to_git2())?;
-        if let but_core::Reference::Virtual(name) = reference.reference {
-            new_heads.insert(name, commit);
-        }
-    }
-    // Set the series heads accordingly in one go
-    stack.set_all_heads(ctx, new_heads)?;
+    stack.set_heads_from_rebase_output(ctx, output.references)?;
     Ok(())
 }
 

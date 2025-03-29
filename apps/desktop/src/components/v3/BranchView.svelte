@@ -1,99 +1,155 @@
 <script lang="ts">
+	import BranchReview from '$components/BranchReview.svelte';
 	import ReduxResult from '$components/ReduxResult.svelte';
-	import Resizer from '$components/Resizer.svelte';
-	import ScrollableContainer from '$components/ScrollableContainer.svelte';
-	import Branch from '$components/v3/Branch.svelte';
-	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
+	import BranchBadge from '$components/v3/BranchBadge.svelte';
+	import ChangedFiles from '$components/v3/ChangedFiles.svelte';
+	import Drawer from '$components/v3/Drawer.svelte';
+	import newBranchSmolSVG from '$lib/assets/empty-state/new-branch-smol.svg?raw';
 	import { StackService } from '$lib/stacks/stackService.svelte';
-	import { getContextStoreBySymbol, inject } from '@gitbutler/shared/context';
-	import { persisted } from '@gitbutler/shared/persisted';
-	import type { Snippet } from 'svelte';
+	import { combineResults } from '$lib/state/helpers';
+	import { UserService } from '$lib/user/userService';
+	import { inject } from '@gitbutler/shared/context';
+	import AvatarGroup from '@gitbutler/ui/avatar/AvatarGroup.svelte';
+	import { getTimeAgo } from '@gitbutler/ui/utils/timeAgo';
 
 	interface Props {
 		stackId: string;
 		projectId: string;
-		selectedBranchName: string;
-		selectedCommitId?: string;
-		children: Snippet;
+		branchName: string;
 	}
 
-	const { stackId, projectId, selectedBranchName, selectedCommitId, children }: Props = $props();
+	const { stackId, projectId, branchName }: Props = $props();
 
-	const [stackService] = inject(StackService);
-	const userSettings = getContextStoreBySymbol<Settings>(SETTINGS);
+	const [stackService, userService] = inject(StackService, UserService);
+	const user = $derived(userService.user);
 
-	const stackBranchWidthKey = $derived('defaultStackBranchWidth_ ' + projectId);
-	const result = $derived(stackService.branches(projectId, stackId).current);
+	const branchResult = $derived(stackService.branchByName(projectId, stackId, branchName));
+	const branchDetailsResult = $derived(stackService.branchDetails(projectId, stackId, branchName));
+	const branchCommitsResult = $derived(stackService.commits(projectId, stackId, branchName));
 
-	let resizeStackBranches = $state<HTMLElement>();
-	let stackBranchWidth = $derived(persisted<number>(22.5, stackBranchWidthKey));
+	function getGravatarUrl(email: string, existingGravatarUrl: string): string {
+		if ($user?.email === undefined) {
+			return existingGravatarUrl;
+		}
+		if (email === $user.email) {
+			return $user.picture ?? existingGravatarUrl;
+		}
+		return existingGravatarUrl;
+	}
 </script>
 
-<div class="branch-view">
-	<ReduxResult {result}>
-		{#snippet children(branches)}
-			<div class="branches" bind:this={resizeStackBranches} style:width={$stackBranchWidth + 'rem'}>
-				<Resizer
-					viewport={resizeStackBranches}
-					direction="right"
-					minWidth={22.5}
-					zIndex="var(--z-modal)"
-					onWidth={(value) => {
-						$stackBranchWidth = value / (16 * $userSettings.zoom);
-					}}
-				/>
-				{#if stackId && branches.length >= 0}
-					<ScrollableContainer wide>
-						<div class="branch-scroll-container">
-							{#each branches as branch, i (branch.name)}
-								{@const first = i === 0}
-								{@const last = i === branches.length - 1}
-								<Branch
-									{projectId}
-									{stackId}
-									branchName={branch.name}
-									selected={selectedBranchName === branch.name}
-									{selectedCommitId}
-									{first}
-									{last}
+{#if branchName}
+	<ReduxResult result={combineResults(branchResult.current, branchDetailsResult.current)}>
+		{#snippet children([branch, branchDetails])}
+			<Drawer {projectId} {stackId} title={branch.name}>
+				{#if branchCommitsResult.current.data && branchCommitsResult.current.data.length > 0}
+					<div class="branch-view">
+						<div class="branch-view__header-container">
+							<div class="text-12 branch-view__header-details-row">
+								<BranchBadge pushStatus={branchDetails.pushStatus} />
+								<span class="branch-view__details-divider">•</span>
+
+								{#if branchDetails.isConflicted}
+									<span class="branch-view__header-details-row-conflict">Has conflicts</span>
+									<span class="branch-view__details-divider">•</span>
+								{/if}
+
+								<span>Contributors:</span>
+								<AvatarGroup
+									maxAvatars={2}
+									avatars={branchDetails.authors.map((a) => ({
+										name: a.name,
+										srcUrl: getGravatarUrl(a.email, a.gravatarUrl)
+									}))}
 								/>
-							{/each}
+
+								<span class="branch-view__details-divider">•</span>
+
+								<span>{getTimeAgo(new Date(branchDetails.lastUpdatedAt))}</span>
+							</div>
 						</div>
-					</ScrollableContainer>
+
+						<BranchReview {stackId} {projectId} {branchName} />
+
+						<ChangedFiles
+							{projectId}
+							{stackId}
+							selectionId={{ type: 'branch', branchName, stackId }}
+						/>
+					</div>
+				{:else}
+					<div class="branch-view__empty-state">
+						<div class="branch-view__empty-state__image">
+							{@html newBranchSmolSVG}
+						</div>
+						<h3 class="text-18 text-semibold branch-view__empty-state__title">
+							This is a new branch
+						</h3>
+						<p class="text-13 text-body branch-view__empty-state__description">
+							Commit your changes here. You can stack additional branches or apply them
+							independently. You can also drag and drop files to start a new commit.
+						</p>
+					</div>
 				{/if}
-			</div>
+			</Drawer>
 		{/snippet}
 	</ReduxResult>
-	{@render children()}
-</div>
+{/if}
 
 <style>
 	.branch-view {
-		position: relative;
-		height: 100%;
-		flex-grow: 1;
 		display: flex;
-		border-radius: 0 var(--radius-ml) var(--radius-ml);
-	}
-
-	.branches {
-		position: relative;
-		display: flex;
-		width: 22.5rem;
 		flex-direction: column;
+		gap: 16px;
+		align-self: stretch;
+		height: 100%;
 		overflow: hidden;
-
-		background-color: transparent;
-		opacity: 1;
-		background-image: radial-gradient(
-			oklch(from var(--clr-scale-ntrl-50) l c h / 0.5) 0.6px,
-			#ffffff00 0.6px
-		);
-		background-size: 6px 6px;
-		border-right: 1px solid var(--clr-border-2);
 	}
 
-	.branch-scroll-container {
-		padding: 14px;
+	.branch-view__header-container {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 16px;
+	}
+
+	.branch-view__header-details-row {
+		color: var(--clr-text-2);
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.branch-view__header-details-row-conflict {
+		color: var(--clr-theme-err-element);
+	}
+
+	.branch-view__details-divider {
+		color: var(--clr-text-3);
+	}
+
+	/* EMPTY STATE */
+	.branch-view__empty-state {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		height: 100%;
+		padding: 30px;
+		max-width: 540px;
+		margin: 0 auto;
+	}
+
+	.branch-view__empty-state__image {
+		width: 180px;
+		margin-bottom: 20px;
+	}
+
+	.branch-view__empty-state__title {
+		margin-bottom: 10px;
+	}
+
+	.branch-view__empty-state__description {
+		color: var(--clr-text-2);
+		text-wrap: balance;
 	}
 </style>

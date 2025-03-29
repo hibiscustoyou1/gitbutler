@@ -1,18 +1,18 @@
 <script lang="ts">
 	import { standardConfig } from '$lib/richText/config/config';
 	import { standardTheme } from '$lib/richText/config/theme';
-	import { emojiTextNodeTransform } from '$lib/richText/plugins/emoji';
+	import EmojiPlugin from '$lib/richText/plugins/Emoji.svelte';
+	import MarkdownTransitionPlugin from '$lib/richText/plugins/markdownTransition.svelte';
+	import OnChangePlugin, { type OnChangeCallback } from '$lib/richText/plugins/onChange.svelte';
+	import { insertTextAtCaret } from '$lib/richText/selection';
 	import {
-		$convertToMarkdownString as convertToMarkdownString,
-		$convertFromMarkdownString as convertFromMarkdownString
-	} from '@lexical/markdown';
-	import {
-		$createParagraphNode as createParagraphNode,
-		$createTextNode as createTextNode,
+		COMMAND_PRIORITY_CRITICAL,
 		$getRoot as getRoot,
-		TextNode
+		KEY_DOWN_COMMAND,
+		FOCUS_COMMAND,
+		BLUR_COMMAND
 	} from 'lexical';
-	import { onMount, type Snippet } from 'svelte';
+	import { type Snippet } from 'svelte';
 	import {
 		Composer,
 		ContentEditable,
@@ -30,8 +30,6 @@
 		CodeActionMenuPlugin,
 		MarkdownShortcutPlugin,
 		ALL_TRANSFORMERS,
-		Toolbar,
-		StateStoreRichTextUpdator,
 		LinkPlugin
 	} from 'svelte-lexical';
 
@@ -39,12 +37,37 @@
 		namespace: string;
 		markdown: boolean;
 		onError: (error: unknown) => void;
-		toolBar?: Snippet;
+		styleContext: 'client-editor' | 'chat-input';
 		plugins?: Snippet;
 		placeholder?: string;
+		onFocus?: () => void;
+		onBlur?: () => void;
+		onChange?: OnChangeCallback;
+		onKeyDown?: (event: KeyboardEvent | null) => boolean;
+		initialText?: string;
 	};
 
-	const { namespace, markdown, onError, toolBar, plugins, placeholder }: Props = $props();
+	const {
+		namespace,
+		markdown,
+		onError,
+		styleContext,
+		plugins,
+		placeholder,
+		onFocus,
+		onBlur,
+		onChange,
+		onKeyDown,
+		initialText
+	}: Props = $props();
+
+	/** Standard configuration for our commit message editor. */
+	const initialConfig = standardConfig({
+		initialText,
+		namespace,
+		theme: standardTheme,
+		onError
+	});
 
 	/**
 	 * Instance of the lexical composer, used for manipulating the contents of the editor
@@ -52,64 +75,92 @@
 	 */
 	let composer = $state<ReturnType<typeof Composer>>();
 
-	/** Standard configuration for our commit message editor. */
-	const initialConfig = standardConfig({
-		namespace,
-		theme: standardTheme,
-		onError
-	});
-
 	let editorDiv: HTMLDivElement | undefined = $state();
+	const editor = $derived(composer?.getEditor());
 
-	onMount(() => {
-		const unlistenEmoji = composer
-			?.getEditor()
-			.registerNodeTransform(TextNode, emojiTextNodeTransform);
-		return () => {
-			unlistenEmoji?.();
-		};
-	});
+	let emojiPlugin = $state<ReturnType<typeof EmojiPlugin>>();
+
+	// TODO: Change this plugin in favor of a toggle button.
+	const markdownTransitionPlugin = new MarkdownTransitionPlugin(markdown);
 
 	$effect(() => {
-		const editor = composer?.getEditor();
-		if (markdown) {
-			editor?.update(() => {
-				convertFromMarkdownString(getRoot().getTextContent(), ALL_TRANSFORMERS);
-			});
-		} else {
-			getPlaintext((text) => {
-				editor?.update(() => {
-					const root = getRoot();
-					root.clear();
-					const paragraph = createParagraphNode();
-					paragraph.append(createTextNode(text));
-					root.append(paragraph);
-				});
-			});
+		if (editor) {
+			markdownTransitionPlugin.setEditor(editor);
 		}
 	});
 
-	export function getPlaintext(callback: (text: string) => void) {
-		const editor = composer?.getEditor();
-		if (!editor) return;
-		const state = editor.getEditorState();
-		state.read(() => {
-			const markdown = convertToMarkdownString(ALL_TRANSFORMERS);
-			callback(markdown);
+	$effect(() => {
+		markdownTransitionPlugin.setMarkdown(markdown);
+	});
+
+	$effect(() => {
+		if (editor) {
+			const unregidterKeyDown = editor.registerCommand<KeyboardEvent | null>(
+				KEY_DOWN_COMMAND,
+				(e) => {
+					if (emojiPlugin?.isBusy()) {
+						return false;
+					}
+					return onKeyDown?.(e) ?? false;
+				},
+				COMMAND_PRIORITY_CRITICAL
+			);
+			const unregisterFocus = editor.registerCommand(
+				FOCUS_COMMAND,
+				() => {
+					onFocus?.();
+					return false;
+				},
+				COMMAND_PRIORITY_CRITICAL
+			);
+			const unregisterBlur = editor.registerCommand(
+				BLUR_COMMAND,
+				() => {
+					onBlur?.();
+					return false;
+				},
+				COMMAND_PRIORITY_CRITICAL
+			);
+
+			return () => {
+				unregidterKeyDown();
+				unregisterFocus();
+				unregisterBlur();
+			};
+		}
+	});
+
+	export function getPlaintext(): Promise<string | undefined> {
+		return new Promise((resolve) => {
+			editor?.read(() => {
+				const text = getRoot().getTextContent();
+				resolve(text);
+			});
 		});
+	}
+
+	export function clear() {
+		editor?.update(() => {
+			const root = getRoot();
+			root.clear();
+		});
+	}
+
+	export function focus() {
+		editor?.focus();
+	}
+
+	export function insertText(text: string) {
+		focus();
+		if (editor) {
+			insertTextAtCaret(editor, text);
+		}
 	}
 </script>
 
 <Composer {initialConfig} bind:this={composer}>
-	{#if toolBar}
-		<Toolbar>
-			<StateStoreRichTextUpdator />
-			{@render toolBar()}
-		</Toolbar>
-	{/if}
-
-	<div class="editor-container" bind:this={editorDiv}>
-		<div class="editor-scroller">
+	<div class="lexical-container lexical-{styleContext}" bind:this={editorDiv}>
+		<div class="editor-scroller scrollbar">
 			<div class="editor">
 				<ContentEditable />
 				{#if placeholder}
@@ -117,6 +168,9 @@
 				{/if}
 			</div>
 		</div>
+
+		<EmojiPlugin bind:this={emojiPlugin} />
+		<OnChangePlugin {onChange} />
 
 		{#if markdown}
 			<AutoFocusPlugin />
@@ -131,17 +185,18 @@
 			<MarkdownShortcutPlugin transformers={ALL_TRANSFORMERS} />
 			<RichTextPlugin />
 			<SharedHistoryPlugin />
-			{#if plugins}
-				{@render plugins()}
-			{/if}
 		{:else}
 			<PlainTextPlugin />
+		{/if}
+
+		{#if plugins}
+			{@render plugins()}
 		{/if}
 	</div>
 </Composer>
 
-<style>
-	.editor-container {
+<style lang="postcss">
+	.lexical-container {
 		flex-grow: 1;
 		background-color: var(--clr-bg-1);
 		position: relative;
@@ -149,8 +204,22 @@
 	}
 
 	.editor-scroller {
+		border: 0;
+		display: flex;
+		flex-direction: column;
+		position: relative;
+		outline: 0;
+		z-index: 0;
+		overflow: auto;
 		height: 100%;
 		/* It's unclear why the resizer is on by default on this element. */
 		resize: none;
+	}
+
+	.editor {
+		flex: auto;
+		position: relative;
+		resize: vertical;
+		z-index: -1;
 	}
 </style>

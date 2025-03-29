@@ -1,12 +1,11 @@
 <script lang="ts">
+	import ScrollableContainer from '$components/ConfigurableScrollableContainer.svelte';
 	import CreatePost from '$components/CreatePost.svelte';
 	import Post from '$components/Post.svelte';
-	import ScrollableContainer from '$components/ScrollableContainer.svelte';
 	import { ProjectService } from '$lib/project/projectService';
 	import { getContext } from '@gitbutler/shared/context';
 	import { getFeed, getFeedLastPost } from '@gitbutler/shared/feeds/feedsPreview.svelte';
 	import { FeedService } from '@gitbutler/shared/feeds/service';
-	import { ProjectService as CloudProjectService } from '@gitbutler/shared/organizations/projectService';
 	import { getFeedIdentityForRepositoryId } from '@gitbutler/shared/organizations/projectsPreview.svelte';
 	import { AppState } from '@gitbutler/shared/redux/store.svelte';
 
@@ -14,12 +13,9 @@
 	const feedService = getContext(FeedService);
 	const projectService = getContext(ProjectService);
 	const project = projectService.project;
-	const cloudProjectService = getContext(CloudProjectService);
 
 	const feedIdentity = $derived(
-		$project?.api
-			? getFeedIdentityForRepositoryId(appState, cloudProjectService, $project.api.repository_id)
-			: undefined
+		$project?.api ? getFeedIdentityForRepositoryId($project.api.repository_id) : undefined
 	);
 
 	const feed = $derived.by(() => {

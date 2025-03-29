@@ -1,6 +1,7 @@
-import { key } from '$lib/selection/key';
+import { key, type SelectionId } from '$lib/selection/key';
 import { get, type Readable } from 'svelte/store';
-import type { AnyCommit, DetailedCommit } from '$lib/commits/commit';
+import type { AnyCommit } from '$lib/commits/commit';
+import type { CommitDropData } from '$lib/commits/dropHandler';
 import type { AnyFile } from '$lib/files/file';
 import type { TreeChange } from '$lib/hunks/change';
 import type { Hunk, HunkLock } from '$lib/hunks/hunk';
@@ -35,25 +36,25 @@ export class ChangeDropData {
 		 * dragged.
 		 */
 		private selection: IdSelection,
-		readonly commitId?: string
+		readonly selectionId: SelectionId
 	) {}
 
-	changedPaths(): string[] {
-		if (this.selection.has(this.file.path, this.commitId)) {
-			return this.selection.values().map((value) => `${value.path}:${value.commitId}`);
+	changedPaths(params: SelectionId): string[] {
+		if (this.selection.has(this.file.path, this.selectionId)) {
+			return this.selection.keys(params);
 		} else {
-			return [key(this.file.path, this.commitId)];
+			return [key({ ...this.selectionId, path: this.file.path })];
 		}
 	}
 
 	get isCommitted(): boolean {
-		return !!this.commitId;
+		return this.selectionId.type === 'commit' || this.selectionId.type === 'branch';
 	}
 }
 
 export class FileDropData {
 	constructor(
-		readonly branchId: string,
+		readonly stackId: string,
 		readonly file: AnyFile,
 		readonly commit: AnyCommit | undefined,
 		/**
@@ -78,15 +79,6 @@ export class FileDropData {
 	get isCommitted(): boolean {
 		return !!this.commit;
 	}
-}
-
-export class CommitDropData {
-	constructor(
-		public readonly branchId: string,
-		public readonly commit: DetailedCommit,
-		public readonly isHeadCommit: boolean,
-		public readonly seriesName?: string
-	) {}
 }
 
 export type DropData = FileDropData | HunkDropData | CommitDropData | ChangeDropData;

@@ -1,20 +1,28 @@
-import { DEFAULT_PR_SUMMARY_MAIN_DIRECTIVE, getPrTemplateDirective } from './prompts';
-import {
-	OpenAIModelName,
-	type AIClient,
-	AnthropicModelName,
-	ModelKind,
-	MessageRole,
-	type Prompt
-} from './types';
 import { AnthropicAIClient } from '$lib/ai/anthropicClient';
 import { ButlerAIClient } from '$lib/ai/butlerClient';
+import { formatStagedChanges } from '$lib/ai/diffFormatting';
 import {
 	DEFAULT_OLLAMA_ENDPOINT,
 	DEFAULT_OLLAMA_MODEL_NAME,
 	OllamaClient
 } from '$lib/ai/ollamaClient';
 import { OpenAIClient } from '$lib/ai/openAIClient';
+import {
+	AUTOCOMPLETE_SUGGESTION_PROMPT_CONTENT,
+	DEFAULT_PR_SUMMARY_MAIN_DIRECTIVE,
+	FILL_MARKER,
+	getPrTemplateDirective
+} from '$lib/ai/prompts';
+import {
+	OpenAIModelName,
+	type AIClient,
+	AnthropicModelName,
+	ModelKind,
+	MessageRole,
+	type Prompt,
+	type PromptMessage,
+	type FileChange
+} from '$lib/ai/types';
 import { splitMessage } from '$lib/utils/commitMessage';
 import { get } from 'svelte/store';
 import type { GitConfigService } from '$lib/config/gitConfigService';
@@ -123,7 +131,7 @@ export class AIService {
 	async getOpenAIModleName() {
 		return await this.gitConfig.getWithDefault<OpenAIModelName>(
 			GitAIConfigKey.OpenAIModelName,
-			OpenAIModelName.GPT35Turbo
+			OpenAIModelName.GPT4oMini
 		);
 	}
 
@@ -317,6 +325,36 @@ export class AIService {
 
 		const { title, description } = splitMessage(message);
 		return description ? `${title}\n\n${description}` : title;
+	}
+	async autoCompleteCommitMessage({
+		currentValue,
+		suffix,
+		stagedChanges
+	}: {
+		currentValue: string;
+		suffix: string;
+		stagedChanges: FileChange[];
+	}): Promise<string | undefined> {
+		const aiClient = await this.buildClient();
+		if (!aiClient) return;
+
+		const prompt: PromptMessage[] = [];
+
+		const systemContent = `${AUTOCOMPLETE_SUGGESTION_PROMPT_CONTENT}\n\n${formatStagedChanges(stagedChanges)}`;
+
+		prompt.push({
+			role: MessageRole.System,
+			content: systemContent
+		});
+
+		// This is the actual completion trigger
+		prompt.push({
+			role: MessageRole.User,
+			content: `${currentValue}${FILL_MARKER}${suffix}`
+		});
+
+		const message = await aiClient.evaluate(prompt);
+		return message;
 	}
 
 	async summarizeBranch({

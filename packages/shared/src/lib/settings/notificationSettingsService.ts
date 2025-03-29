@@ -1,4 +1,7 @@
-import { upsertNotificationSettings } from './notificationSetttingsSlice';
+import { InterestStore, type Interest } from '$lib/interest/interestStore';
+import { errorToLoadable } from '$lib/network/loadable';
+import { POLLING_GLACIALLY } from '$lib/polling';
+import { notificationSettingsTable } from '$lib/settings/notificationSetttingsSlice';
 import {
 	apiToNotificationSettings,
 	NOTIFICATION_SETTINGS_KEY,
@@ -6,10 +9,7 @@ import {
 	type ApiNotificationSettings,
 	type LoadableNotificationSettings,
 	type PatchNotificationSettingsParams
-} from './types';
-import { InterestStore, type Interest } from '$lib/interest/interestStore';
-import { errorToLoadable } from '$lib/network/loadable';
-import { POLLING_GLACIALLY } from '$lib/polling';
+} from '$lib/settings/types';
 import type { HttpClient } from '$lib/network/httpClient';
 import type { AppDispatch } from '$lib/redux/store.svelte';
 
@@ -26,6 +26,9 @@ export class NotificationSettingsService {
 	getNotificationSettingsInterest(): Interest {
 		return this.notificationSettingsInterest
 			.findOrCreateSubscribable({ key: NOTIFICATION_SETTINGS_KEY }, async () => {
+				this.appDispatch.dispatch(
+					notificationSettingsTable.addOne({ status: 'loading', id: NOTIFICATION_SETTINGS_KEY })
+				);
 				try {
 					const apiNotificationSettings =
 						await this.httpClient.get<ApiNotificationSettings>('settings/notifications');
@@ -36,10 +39,10 @@ export class NotificationSettingsService {
 						value: apiToNotificationSettings(apiNotificationSettings)
 					};
 
-					this.appDispatch.dispatch(upsertNotificationSettings(notificationSettings));
+					this.appDispatch.dispatch(notificationSettingsTable.upsertOne(notificationSettings));
 				} catch (error: unknown) {
 					this.appDispatch.dispatch(
-						upsertNotificationSettings(errorToLoadable(error, NOTIFICATION_SETTINGS_KEY))
+						notificationSettingsTable.upsertOne(errorToLoadable(error, NOTIFICATION_SETTINGS_KEY))
 					);
 				}
 			})
