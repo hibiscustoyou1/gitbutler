@@ -1,24 +1,24 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import InfoMessage, { type MessageStyle } from '$components/InfoMessage.svelte';
 	import Section from '$components/Section.svelte';
-	import { PostHogWrapper } from '$lib/analytics/posthog';
+	import { POSTHOG_WRAPPER } from '$lib/analytics/posthog';
 	import { invoke } from '$lib/backend/ipc';
-	import { ProjectsService } from '$lib/project/projectsService';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { projectPath } from '$lib/routes/routes.svelte';
 	import { parseRemoteUrl } from '$lib/url/gitUrl';
-	import { getContext } from '@gitbutler/shared/context';
+	import { inject } from '@gitbutler/shared/context';
 	import { persisted } from '@gitbutler/shared/persisted';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Spacer from '@gitbutler/ui/Spacer.svelte';
-	import Textbox from '@gitbutler/ui/Textbox.svelte';
+	import { Button, Spacer, Textbox } from '@gitbutler/ui';
+
 	import * as Sentry from '@sentry/sveltekit';
 	import { documentDir } from '@tauri-apps/api/path';
 	import { join } from '@tauri-apps/api/path';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 
-	const projectsService = getContext(ProjectsService);
-	const posthog = getContext(PostHogWrapper);
+	const projectsService = inject(PROJECTS_SERVICE);
+	const posthog = inject(POSTHOG_WRAPPER);
 
 	let loading = $state(false);
 	let errors = $state<{ label: string }[]>([]);
@@ -44,6 +44,21 @@
 		if (!selectedPath || !selectedPath[0]) return;
 
 		targetDirPath = Array.isArray(selectedPath) ? selectedPath[0] : selectedPath;
+	}
+
+	function getErrorMessage(error: unknown): string {
+		if (error instanceof Error) return error.message;
+
+		if (
+			typeof error === 'object' &&
+			error !== null &&
+			'message' in error &&
+			typeof error.message === 'string'
+		) {
+			return error.message;
+		}
+
+		return String(error);
 	}
 
 	async function cloneRepository() {
@@ -75,12 +90,17 @@
 			});
 
 			posthog.capture('Repository Cloned', { protocol: remoteUrl.protocol });
-			await projectsService.addProject(targetDir);
+			const project = await projectsService.addProject(targetDir);
+			if (!project) {
+				throw new Error('Failed to add project after cloning.');
+			}
+			goto(projectPath(project.id));
 		} catch (e) {
 			Sentry.captureException(e);
-			posthog.capture('Repository Clone Failure', { error: String(e) });
+			const errorMessage = getErrorMessage(e);
+			posthog.capture('Repository Clone Failure', { error: errorMessage });
 			errors.push({
-				label: String(e)
+				label: errorMessage
 			});
 		} finally {
 			loading = false;
@@ -104,7 +124,7 @@
 	</div>
 	<div class="clone__field repositoryTargetPath">
 		<div class="text-13 text-semibold clone__field--label">Where to clone</div>
-		<Textbox bind:value={targetDirPath} placeholder={'/Users/tipsy/Documents'} />
+		<Textbox bind:value={targetDirPath} placeholder="/Users/tipsy/Documents" />
 		<Button kind="outline" disabled={loading} onclick={handleCloneTargetSelect}>Choose..</Button>
 	</div>
 </Section>
@@ -164,9 +184,9 @@
 
 <style>
 	.clone-title {
+		margin-bottom: 20px;
 		color: var(--clr-scale-ntrl-0);
 		line-height: 1;
-		margin-bottom: 20px;
 	}
 
 	.clone__field {
@@ -181,8 +201,8 @@
 
 	.clone__actions {
 		display: flex;
-		gap: 8px;
 		justify-content: end;
+		gap: 8px;
 	}
 
 	.clone__info-message {

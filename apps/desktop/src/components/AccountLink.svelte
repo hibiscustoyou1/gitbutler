@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { User } from '$lib/user/user';
-	import { getContextStore } from '@gitbutler/shared/context';
-	import Icon from '@gitbutler/ui/Icon.svelte';
 	import { goto } from '$app/navigation';
+	import { USER } from '$lib/user/user';
+	import { inject } from '@gitbutler/shared/context';
+	import { Icon } from '@gitbutler/ui';
 
 	interface Props {
 		pop?: boolean;
@@ -11,7 +11,7 @@
 
 	const { pop = false, isNavCollapsed = false }: Props = $props();
 
-	const user = getContextStore(User);
+	const user = inject(USER);
 </script>
 
 <button
@@ -24,7 +24,7 @@
 	{#if !isNavCollapsed}
 		<span class="name text-13 text-semibold">
 			{#if $user}
-				{$user.name || $user.given_name || $user.email}
+				{$user.name || $user.email}
 			{:else}
 				Account
 			{/if}
@@ -43,28 +43,28 @@
 	.btn {
 		display: flex;
 		align-items: center;
-		overflow-x: hidden;
-		gap: 8px;
 
 		height: var(--size-cta);
 		padding: 6px 8px;
+		overflow-x: hidden;
+		gap: 8px;
 		border-radius: var(--radius-m);
 
 		color: var(--clr-scale-ntrl-50);
+
+		cursor: pointer;
 		transition:
 			background-color var(--transition-fast),
 			color var(--transition-fast),
 			filter var(--transition-fast);
 
-		cursor: pointer;
-
 		&.pop {
-			color: var(--clr-scale-pop-10);
 			background: var(--clr-scale-pop-70);
+			color: var(--clr-scale-pop-10);
 
 			&:hover {
+				background: color-mix(in srgb, var(--clr-scale-pop-70) 90%, var(--clr-scale-pop-50));
 				color: var(--clr-scale-pop-10);
-				background: oklch(from var(--clr-scale-pop-70) calc(l - 0.03) c h);
 			}
 		}
 
@@ -74,15 +74,15 @@
 		}
 	}
 	.name {
-		white-space: nowrap;
-		text-overflow: ellipsis;
 		overflow-x: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.anon-icon,
 	.profile-picture {
-		border-radius: var(--radius-m);
 		width: 20px;
 		height: 20px;
+		border-radius: var(--radius-m);
 	}
 	.anon-icon {
 		display: flex;
@@ -95,9 +95,9 @@
 
 	/* MODIFIERS */
 	.btn.collapsed {
-		overflow-x: initial;
-		padding: 8px;
 		height: auto;
+		padding: 8px;
+		overflow-x: initial;
 
 		& .anon-icon,
 		.profile-picture {

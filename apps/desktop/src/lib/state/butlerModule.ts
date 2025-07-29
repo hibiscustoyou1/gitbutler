@@ -1,5 +1,9 @@
-import { buildMutationHooks, buildQueryHooks } from './customHooks.svelte';
-import { isMutationDefinition, isQueryDefinition } from './helpers';
+import {
+	buildMutationHook,
+	buildQueryHooks,
+	type MutationHook
+} from '$lib/state/customHooks.svelte';
+import { isMutationDefinition, isQueryDefinition } from '$lib/state/helpers';
 import { type Reactive } from '@gitbutler/shared/storeUtils';
 import {
 	type BaseQueryFn,
@@ -13,14 +17,23 @@ import {
 	type MutationDefinition,
 	type QueryResultSelectorResult,
 	type ApiModules,
-	type MutationActionCreatorResult
+	type QueryActionCreatorResult,
+	type StartQueryActionCreatorOptions
 } from '@reduxjs/toolkit/query';
-import type { tauriBaseQuery } from './backendQuery';
-import type { HookContext } from './context';
+import type { TauriBaseQueryFn } from '$lib/state/backendQuery';
+import type { HookContext } from '$lib/state/context';
+import type { Readable } from 'svelte/store';
 
 /** Gives our module a namespace in the extended `ApiModules` interface. */
-const butlerModuleName = Symbol();
+export const butlerModuleName = Symbol();
 type ButlerModule = typeof butlerModuleName;
+
+export type ExtraOptions = {
+	// I have tried in vain to make this property required, but getting
+	// types working correctly for `extraOptions` would be sick.
+	// TODO: Find a way to make `actionName` required.
+	actionName?: string;
+};
 
 /**
  * Extends the `ApiModules` interface with new definitions.
@@ -44,7 +57,7 @@ declare module '@reduxjs/toolkit/query' {
 				[K in keyof Definitions]: Definitions[K] extends CustomQuery<any>
 					? QueryHooks<Definitions[K]>
 					: Definitions[K] extends MutationDefinition<any, any, any, any>
-						? MutationHooks<Definitions[K]>
+						? MutationHook<Definitions[K]>
 						: Definitions[K];
 			};
 		};
@@ -55,10 +68,10 @@ type CustomEndpoints<T> = {
 	[x: string]: EndpointDefinition<any, any, any, any> & { [K in keyof T]: T[K] };
 };
 
-type ExtensionDefinitions = ApiModules<
-	BaseQueryFn,
+export type ExtensionDefinitions = ApiModules<
+	TauriBaseQueryFn,
 	CustomEndpoints<
-		QueryHooks<CustomQuery<any>> & MutationHooks<MutationDefinition<any, any, any, any>>
+		QueryHooks<CustomQuery<any>> & MutationHook<MutationDefinition<any, TauriBaseQueryFn, any, any>>
 	>,
 	string,
 	string
@@ -75,25 +88,57 @@ export function butlerModule(ctx: HookContext): Module<ButlerModule> {
 		name: butlerModuleName,
 
 		init(api, _options, _context) {
-			const anyApi = api as any as Api<any, ExtensionDefinitions, string, string, ButlerModule>;
+			const anyApi = api as any as Api<
+				TauriBaseQueryFn,
+				ExtensionDefinitions,
+				string,
+				string,
+				ButlerModule
+			>;
 			return {
 				injectEndpoint(endpointName, definition) {
 					const endpoint = anyApi.endpoints[endpointName]!; // Known to exist.
 					if (isQueryDefinition(definition)) {
-						const { useQuery, useQueryState } = buildQueryHooks({
-							endpointName,
-							api,
-							ctx
-						});
+						const { fetch, useQuery, useQueryState, useQueries, useQueryTimeStamp } =
+							buildQueryHooks({
+								endpointName,
+								api,
+								ctx
+							});
+						endpoint.fetch = fetch;
 						endpoint.useQuery = useQuery;
 						endpoint.useQueryState = useQueryState;
+						endpoint.useQueries = useQueries;
+						endpoint.useQueryTimeStamp = useQueryTimeStamp;
 					} else if (isMutationDefinition(definition)) {
-						const { useMutation } = buildMutationHooks({
+						// TODO: Find a way to get a typed `extraOptions` object.
+						let actionName = undefined;
+						if (
+							definition.extraOptions &&
+							typeof definition.extraOptions === 'object' &&
+							'actionName' in definition.extraOptions &&
+							typeof definition.extraOptions.actionName === 'string'
+						) {
+							actionName = definition.extraOptions.actionName;
+						}
+						let command = undefined;
+						if (
+							definition.extraOptions &&
+							typeof definition.extraOptions === 'object' &&
+							'command' in definition.extraOptions &&
+							typeof definition.extraOptions.command === 'string'
+						) {
+							command = definition.extraOptions.command;
+						}
+						const { mutate, useMutation } = buildMutationHook({
 							endpointName,
+							actionName,
+							command,
 							api,
 							ctx
 						});
 						endpoint.useMutation = useMutation;
+						endpoint.mutate = mutate;
 					}
 				}
 			};
@@ -105,20 +150,21 @@ export function butlerModule(ctx: HookContext): Module<ButlerModule> {
  * Custom return type for the `QueryHooks` extensions.
  */
 export type CustomResult<T extends QueryDefinition<any, any, any, any>> =
+	QueryResultSelectorResult<T>;
+
+/**
+ * Custom return type for the `QueryHooks` extensions with refetch.
+ */
+export type CustomQueryResult<T extends QueryDefinition<any, any, any, any>> =
 	QueryResultSelectorResult<T> & {
-		/**
-		 * Allows using the result from one query in the arguments to another.
-		 *
-		 * Example: ```
-		 *   const result = $derived(
-		 *     someService
-		 *       .getData(someId).current
-		 *       .andThen((data) => anotherService.getData(data.id)).current
-		 *   );
-		 * ```
-		 */
-		andThen<S extends (arg1: ResultTypeFrom<T>) => any>(fn: S): ReturnType<S>;
+		refetch: () => Promise<void>;
 	};
+
+/**
+ * Shorthand useful for service interfaces.
+ */
+export type ReactiveResult<T> = Reactive<CustomResult<CustomQuery<T>>>;
+export type AsyncResult<T> = Promise<CustomResult<CustomQuery<T>>>;
 
 /**
  * It would be great to understand why it is necessary to set the args type
@@ -134,7 +180,10 @@ type CustomArgs = any;
  * having two is to be able to use `EntityAdapter`, and then select items
  * using the built-in selectors.
  */
-type Transformer<T extends CustomQuery<any>> = (arg: ResultTypeFrom<T>) => unknown;
+type Transformer<T extends CustomQuery<any>> = (
+	queryResult: ResultTypeFrom<T>,
+	queryArgs: QueryArgFrom<T>
+) => unknown;
 
 /**
  * We need a default transformer because of some typescript weirdness that
@@ -142,24 +191,46 @@ type Transformer<T extends CustomQuery<any>> = (arg: ResultTypeFrom<T>) => unkno
  * call. It works largely the same, except that you must explicitly specify
  * the transformer argument type to avoid inference errors.
  */
-type DefaultTransformer<T extends CustomQuery<any>> = (arg: ResultTypeFrom<T>) => ResultTypeFrom<T>;
+type DefaultTransformer<T extends CustomQuery<any>> = (
+	queryResult: ResultTypeFrom<T>,
+	queryArgs: QueryArgFrom<T>
+) => ResultTypeFrom<T>;
 
 /**
  * A custom defintion of our queries since it needs to be referenced in a few
  * different places.
  */
-export type CustomQuery<T> = QueryDefinition<CustomArgs, typeof tauriBaseQuery, string, T>;
+export type CustomQuery<T> = QueryDefinition<CustomArgs, TauriBaseQueryFn, string, T>;
+
+/** Options for queries. */
+export type QueryOptions = StartQueryActionCreatorOptions & { forceRefetch?: boolean };
 
 /**
  * Declaration of custom methods for queries.
  */
 type QueryHooks<D extends CustomQuery<unknown>> = {
 	/** Execute query and return results. */
+	subscribe: (
+		args: QueryArgFrom<D>,
+		options: QueryOptions
+	) => QueryActionCreatorResult<CustomQuery<ResultTypeFrom<D>>>;
+	/** Fetch as promise, non-reactive. */
+	fetch: <T extends Transformer<D> | undefined = DefaultTransformer<D>>(
+		args: QueryArgFrom<D>,
+		options?: { transform?: T; forceRefetch?: boolean }
+	) => Promise<T extends Transformer<D> ? ReturnType<T> : ResultTypeFrom<D>>;
+	/** Execute query and return results. */
 	useQuery: <T extends Transformer<D> | undefined = DefaultTransformer<D>>(
 		args: QueryArgFrom<D>,
-		options?: { transform?: T }
+		options?: { transform?: T } & StartQueryActionCreatorOptions
 	) => Reactive<
-		CustomResult<CustomQuery<T extends Transformer<D> ? ReturnType<T> : ResultTypeFrom<D>>>
+		CustomQueryResult<CustomQuery<T extends Transformer<D> ? ReturnType<T> : ResultTypeFrom<D>>>
+	>;
+	useQueryStore: <T extends Transformer<D> | undefined = DefaultTransformer<D>>(
+		args: QueryArgFrom<D>,
+		options?: { transform?: T } & StartQueryActionCreatorOptions
+	) => Readable<
+		CustomQueryResult<CustomQuery<T extends Transformer<D> ? ReturnType<T> : ResultTypeFrom<D>>>
 	>;
 	/** Execute query on existing state. */
 	useQueryState: <T extends Transformer<D> | undefined = DefaultTransformer<D>>(
@@ -168,16 +239,11 @@ type QueryHooks<D extends CustomQuery<unknown>> = {
 	) => Reactive<
 		CustomResult<CustomQuery<T extends Transformer<D> ? ReturnType<T> : ResultTypeFrom<D>>>
 	>;
-};
-
-/**
- * Declaration of custom methods for mutations.
- */
-type MutationHooks<Definition extends MutationDefinition<any, any, string, any>> = {
-	/** Execute query and return results. */
-	useMutation: (
-		args: QueryArgFrom<Definition>
-	) => MutationActionCreatorResult<
-		MutationDefinition<CustomArgs, BaseQueryFn, string, ResultTypeFrom<Definition>>
+	useQueries: <T extends Transformer<D> | undefined = DefaultTransformer<D>>(
+		queryArgs: QueryArgFrom<D>[],
+		options?: { transform?: T } & StartQueryActionCreatorOptions
+	) => Reactive<
+		CustomResult<CustomQuery<T extends Transformer<D> ? ReturnType<T> : ResultTypeFrom<D>>>[]
 	>;
+	useQueryTimeStamp: (queryArgs: QueryArgFrom<D>) => Reactive<number | undefined>;
 };

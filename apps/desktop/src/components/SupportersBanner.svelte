@@ -1,4 +1,5 @@
 <script lang="ts">
+	import bannerImgSVG from '$lib/assets/supporters.svg?raw';
 	import { openExternalUrl } from '$lib/utils/url';
 </script>
 
@@ -7,6 +8,10 @@
 	class="banner"
 	onclick={async () => await openExternalUrl('https://docs.gitbutler.com/community/supporters')}
 >
+	<div class="banner-img-wrap">
+		{@html bannerImgSVG}
+	</div>
+
 	<div class="banner-content">
 		<h4 class="banner-label text-14 text-bold">Thank you to all GitButler early supporters</h4>
 		<i class="banner-arrow-wrap">
@@ -25,16 +30,16 @@
 			</svg>
 		</i>
 	</div>
-	<img class="banner-img" src="/images/banners/support.svg" alt="" />
 </button>
 
 <style>
 	.banner {
 		display: flex;
-		align-items: center;
+		position: relative;
+		flex-direction: column;
 		padding: 16px;
 		border-radius: var(--radius-m);
-		background-color: #d7f2f1;
+		background-color: var(--clr-theme-pop-soft);
 
 		&:hover {
 			& .banner-arrow-wrap {
@@ -49,7 +54,7 @@
 
 	.banner-content {
 		display: inline;
-		color: #000;
+		color: var(--clr-theme-pop-on-soft);
 		text-align: left;
 	}
 
@@ -57,37 +62,47 @@
 		display: inline;
 	}
 
-	.banner-img {
-		width: 52px;
-		height: auto;
+	.banner-img-wrap {
+		position: relative;
+		width: 100%;
+		height: 40px;
+		/* background-color: #00000043; */
+
+		& :global(svg) {
+			position: absolute;
+			right: 0;
+			bottom: 0;
+			width: 106px;
+			height: auto;
+		}
 	}
 
 	/* ARROW */
 
 	.banner-arrow-wrap {
-		position: relative;
 		display: inline-flex;
-		transform: translateY(2px);
+		position: relative;
 		width: 8px;
 		height: 12px;
+		transform: translateY(2px);
 		transition: width 0.2s;
 	}
 
 	.banner-arrow-tail {
 		position: absolute;
 		top: 50%;
-		transform: translateY(-50%);
 		left: 0;
 		width: 0%;
 		height: 1px;
+		transform: translateY(-50%);
 		background-color: currentColor;
 		transition: width 0.2s;
 	}
 
 	.banner-arrow-head {
 		position: absolute;
-		right: 0;
 		top: 0;
+		right: 0;
 		height: 100%;
 
 		& path {

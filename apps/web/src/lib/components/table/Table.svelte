@@ -1,6 +1,6 @@
 <script lang="ts">
-	import TableHead from './TableHead.svelte';
-	import { type ColumnTypes } from './types';
+	import TableHead from '$lib/components/table/TableHead.svelte';
+	import { type ColumnTypes } from '$lib/components/table/types';
 	import { type Snippet } from 'svelte';
 
 	type Props = {
@@ -26,7 +26,6 @@
 
 		width: 100%;
 		border-collapse: separate;
-		/* border-collapse: collapse; */
 		border-spacing: 0;
 	}
 </style>

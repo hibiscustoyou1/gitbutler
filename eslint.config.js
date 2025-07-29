@@ -4,13 +4,15 @@ import svelte from 'eslint-plugin-svelte';
 import globals from 'globals';
 import ts from 'typescript-eslint';
 import pluginImportX from 'eslint-plugin-import-x';
+import noRelativeImportPaths from '@gitbutler/no-relative-imports';
+import { createNextImportResolver } from 'eslint-import-resolver-next';
 
 export default ts.config(
 	js.configs.recommended,
 	...ts.configs.recommended,
-	...svelte.configs['flat/recommended'],
+	...svelte.configs.recommended,
 	prettier,
-	...svelte.configs['flat/prettier'],
+	...svelte.configs.prettier,
 	{
 		languageOptions: {
 			globals: {
@@ -22,6 +24,7 @@ export default ts.config(
 			}
 		},
 		rules: {
+			'no-console': ['error', { allow: ['warn', 'error'] }],
 			'@typescript-eslint/no-namespace': 'off',
 			'@typescript-eslint/no-empty-function': 'off',
 			'@typescript-eslint/no-explicit-any': 'off',
@@ -57,16 +60,20 @@ export default ts.config(
 						'object',
 						'type'
 					],
-					'newlines-between': 'never'
+					// Add explicit pathGroups to define what imports go in which groups
+					pathGroups: [
+						// Define monorepo paths as internal
+						{ pattern: 'apps/**', group: 'internal' },
+						{ pattern: 'packages/**', group: 'internal' },
+						// Add SvelteKit paths
+						{ pattern: '$lib/**', group: 'internal' },
+						{ pattern: '$components/**', group: 'internal' },
+						{ pattern: '$app/**', group: 'internal' }
+					],
+					// Ensure certain import types are only categorized by their type
+					pathGroupsExcludedImportTypes: ['builtin', 'external', 'object', 'type']
 				}
 			],
-			'import-x/no-unresolved': [
-				'error',
-				{
-					ignore: ['^\\$app', '^\\$env']
-				}
-			],
-			'import-x/no-relative-packages': 'error', // Don't allow packages to have relative imports between each other
 			'func-style': [2, 'declaration'],
 			'no-return-await': 'off',
 			'svelte/no-at-html-tags': 'off',
@@ -77,37 +84,46 @@ export default ts.config(
 					submit: true,
 					reset: true
 				}
-			]
+			],
+			'no-relative-import-paths/no-relative-import-paths': 'error',
+			'no-undef': 'off', // eslint faq advises `no-undef` turned off for typescript projects.
+			'svelte/require-each-key': 'off',
+			'svelte/no-inspect': 'error',
+			'svelte/no-at-debug-tags': 'error',
+			'svelte/no-unused-props': 'error'
 		},
+
 		settings: {
 			'import-x/extensions': ['.ts'],
 			'import-x/parsers': {
 				'@typescript-eslint/parser': ['.ts']
 			},
-			'import-x/resolver': {
-				typescript: {
-					project: [
-						'./apps/desktop/tsconfig.json',
-						'./apps/desktop/.svelte-kit/tsconfig.json',
-						'./apps/web/tsconfig.json',
-						'./apps/web/.svelte-kit/tsconfig.json',
-						'./packages/**/tsconfig.json',
-						'./packages/ui/.svelte-kit/tsconfig.json',
-						'./packages/shared/.svelte-kit/tsconfig.json'
-					]
-				}
-			}
+			'import-x/resolver-next': [
+				createNextImportResolver({
+					typescript: {
+						project: [
+							'./apps/**/tsconfig.json',
+							'./apps/desktop/.svelte-kit/tsconfig.json',
+							'./apps/web/.svelte-kit/tsconfig.json',
+							'./packages/**/tsconfig.json',
+							'./packages/ui/.svelte-kit/tsconfig.json',
+							'./packages/shared/.svelte-kit/tsconfig.json'
+						]
+					}
+				})
+			]
 		},
 		plugins: {
-			'import-x': pluginImportX
+			'import-x': pluginImportX,
+			'no-relative-import-paths': noRelativeImportPaths
 		}
 	},
 	{
-		files: ['**/*.svelte'],
+		files: ['**/*.svelte', '**/*.svelte.ts'],
 		...ts.configs.disableTypeChecked
 	},
 	{
-		files: ['**/*.svelte'],
+		files: ['**/*.svelte', '**/*.svelte.ts'],
 		languageOptions: {
 			parserOptions: {
 				parser: ts.parser
@@ -122,6 +138,7 @@ export default ts.config(
 			'**/node_modules',
 			'**/butler/target',
 			'**/build',
+			'**/static',
 			'**/dist',
 			'.svelte-kit',
 			'**/package',

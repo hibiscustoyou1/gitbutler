@@ -3,7 +3,7 @@ use anyhow::Result;
 mod args;
 use args::Args;
 
-use crate::args::{project, snapshot, vbranch};
+use crate::args::{project, vbranch};
 
 mod command;
 
@@ -20,14 +20,6 @@ fn main() -> Result<()> {
         args::Subcommands::IntegrateUpstream { mode } => {
             let project = command::prepare::project_from_path(args.current_dir)?;
             command::workspace::update(project, mode)
-        }
-        args::Subcommands::UnapplyOwnership {
-            filepath,
-            from_line,
-            to_line,
-        } => {
-            let project = command::prepare::project_from_path(args.current_dir)?;
-            command::ownership::unapply(project, filepath, from_line, to_line)
         }
         args::Subcommands::Branch(vbranch::Platform { cmd }) => {
             let project = command::prepare::project_from_path(args.current_dir)?;
@@ -86,18 +78,6 @@ fn main() -> Result<()> {
                 command::project::list(ctrl)
             }
         },
-        args::Subcommands::Snapshot(snapshot::Platform { cmd }) => {
-            let project = command::prepare::project_from_path(args.current_dir)?;
-            match cmd {
-                Some(snapshot::SubCommands::Restore { snapshot_id }) => {
-                    command::snapshot::restore(project, snapshot_id)
-                }
-                Some(snapshot::SubCommands::Diff { snapshot_id }) => {
-                    command::snapshot::diff(project, snapshot_id)
-                }
-                None => command::snapshot::list(project),
-            }
-        }
     }
 }
 

@@ -1,14 +1,15 @@
 <script lang="ts">
-	import DecorativeSplitView from './DecorativeSplitView.svelte';
-	import ProjectSwitcher from './ProjectSwitcher.svelte';
+	import DecorativeSplitView from '$components/DecorativeSplitView.svelte';
 	import InfoMessage from '$components/InfoMessage.svelte';
+	import ProjectSwitcher from '$components/ProjectSwitcher.svelte';
 	import loadErrorSvg from '$lib/assets/illustrations/load-error.svg?raw';
 
 	interface Props {
+		projectId?: string;
 		error?: any;
 	}
 
-	const { error = undefined }: Props = $props();
+	const { projectId, error = undefined }: Props = $props();
 </script>
 
 <DecorativeSplitView img={loadErrorSvg}>
@@ -21,7 +22,7 @@
 			{/snippet}
 		</InfoMessage>
 
-		<ProjectSwitcher />
+		<ProjectSwitcher {projectId} />
 	</div>
 </DecorativeSplitView>
 

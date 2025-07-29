@@ -1,4 +1,5 @@
 import { apiToBranch } from '$lib/branches/types';
+import { InjectionToken } from '$lib/context';
 import { InterestStore, type Interest } from '$lib/interest/interestStore';
 import { errorToLoadable } from '$lib/network/loadable';
 import { projectTable } from '$lib/organizations/projectsSlice';
@@ -42,6 +43,8 @@ function toApiUpdateParams(real: UpdateParams): ApiUpdateParams {
 	};
 }
 
+export const PROJECT_SERVICE = new InjectionToken<ProjectService>('ProjectService');
+
 export class ProjectService {
 	private readonly projectInterests = new InterestStore<{ repositoryId: string }>(POLLING_REGULAR);
 	private readonly userProjectsInterests = new InterestStore<{ unused: 'unused' }>(
@@ -75,7 +78,7 @@ export class ProjectService {
 						})
 					);
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(projectTable.upsertOne(errorToLoadable(error, repositoryId)));
+					this.appDispatch.dispatch(projectTable.addOne(errorToLoadable(error, repositoryId)));
 				}
 			})
 			.createInterest();
@@ -125,7 +128,6 @@ export class ProjectService {
 	async getProjectPatchStacks(slug: string): Promise<Branch[]> {
 		try {
 			const apiBranches = await this.httpClient.get<ApiBranch[]>(`patch_stack/${slug}`);
-			console.log('apiBranches', apiBranches);
 			return apiBranches.map(apiToBranch);
 		} catch (error) {
 			console.error(`Error fetching patch stacks for ${slug}:`, error);
@@ -230,6 +232,18 @@ export class ProjectService {
 		const apiProject = await this.httpClient.patch<ApiProject>(`projects/${repositoryId}`, {
 			body: toApiUpdateParams(params)
 		});
+		const project = apiToProject(apiProject);
+
+		this.appDispatch.dispatch(
+			projectTable.upsertOne({ status: 'found', id: project.repositoryId, value: project })
+		);
+		return project;
+	}
+
+	async disconnectProject(repositoryId: string) {
+		const apiProject = await this.httpClient.post<ApiProject>(
+			`projects/${repositoryId}/disconnect`
+		);
 		const project = apiToProject(apiProject);
 
 		this.appDispatch.dispatch(

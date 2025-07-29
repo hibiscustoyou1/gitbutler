@@ -1,75 +1,84 @@
 <script lang="ts">
-	import ProjectSetupTarget from './ProjectSetupTarget.svelte';
+	import { goto } from '$app/navigation';
 	import DecorativeSplitView from '$components/DecorativeSplitView.svelte';
 	import KeysForm from '$components/KeysForm.svelte';
-	import { PostHogWrapper } from '$lib/analytics/posthog';
+	import ProjectSetupTarget from '$components/ProjectSetupTarget.svelte';
+	import ReduxResult from '$components/ReduxResult.svelte';
+	import { POSTHOG_WRAPPER } from '$lib/analytics/posthog';
 	import newProjectSvg from '$lib/assets/illustrations/new-project.svg?raw';
-	import { BaseBranchService, type RemoteBranchInfo } from '$lib/baseBranch/baseBranchService';
-	import { BranchController } from '$lib/branches/branchController';
+	import { BASE_BRANCH_SERVICE } from '$lib/baseBranch/baseBranchService.svelte';
 	import { platformName } from '$lib/platform/platform';
-	import { Project } from '$lib/project/project';
-	import { ProjectsService } from '$lib/project/projectsService';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import { goto } from '$app/navigation';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { TestId } from '$lib/testing/testIds';
+	import { inject } from '@gitbutler/shared/context';
+	import { Button } from '@gitbutler/ui';
+	import type { RemoteBranchInfo } from '$lib/baseBranch/baseBranch';
 
 	interface Props {
+		projectId: string;
 		remoteBranches: RemoteBranchInfo[];
 	}
 
-	const { remoteBranches }: Props = $props();
+	const { projectId, remoteBranches }: Props = $props();
 
-	const project = getContext(Project);
-	const projectsService = getContext(ProjectsService);
-	const branchController = getContext(BranchController);
-	const baseBranchService = getContext(BaseBranchService);
-	const posthog = getContext(PostHogWrapper);
+	const projectsService = inject(PROJECTS_SERVICE);
+	const baseService = inject(BASE_BRANCH_SERVICE);
+	const posthog = inject(POSTHOG_WRAPPER);
+	const projectResult = $derived(projectsService.getProject(projectId));
+	const [setBaseBranchTarget, settingBranch] = baseService.setTarget;
 
 	let selectedBranch = $state(['', '']);
-	let loading = $state(false);
 
 	async function setTarget() {
 		if (!selectedBranch[0] || selectedBranch[0] === '') return;
 
-		loading = true;
 		try {
-			// TODO: Refactor temporary solution to forcing Windows to use system executable
-			if (platformName === 'windows') {
-				project.preferred_key = 'systemExecutable';
-				await projectsService.updateProject(project);
-				await baseBranchService.refresh();
-			}
-			await branchController.setTarget(selectedBranch[0], selectedBranch[1]);
-			goto(`/${project.id}/`, { invalidateAll: true });
+			await setBaseBranchTarget({
+				projectId: projectId,
+				branch: selectedBranch[0],
+				pushRemote: selectedBranch[1]
+			});
+			goto(`/${projectId}/`, { invalidateAll: true });
 		} finally {
 			posthog.capture('Project Setup Complete');
-			loading = false;
 		}
 	}
 </script>
 
-<DecorativeSplitView img={newProjectSvg}>
+<DecorativeSplitView img={newProjectSvg} testId={TestId.ProjectSetupPage}>
 	{#if selectedBranch[0] && selectedBranch[0] !== '' && platformName !== 'windows'}
 		{@const [remoteName, branchName] = selectedBranch[0].split(/\/(.*)/s)}
-		<KeysForm {remoteName} {branchName} disabled={loading} />
+		<KeysForm {projectId} {remoteName} {branchName} disabled={settingBranch.current.isLoading} />
 		<div class="actions">
-			<Button kind="outline" disabled={loading} onclick={() => (selectedBranch[0] = '')}>
+			<Button
+				kind="outline"
+				disabled={settingBranch.current.isLoading}
+				onclick={() => (selectedBranch[0] = '')}
+			>
 				Back
 			</Button>
-			<Button style="pop" {loading} onclick={setTarget} testId="accept-git-auth">Let's go!</Button>
+			<Button
+				style="pop"
+				loading={settingBranch.current.isLoading}
+				onclick={setTarget}
+				testId={TestId.ProjectSetupGitAuthPageButton}>Let's go!</Button
+			>
 		</div>
 	{:else}
-		<ProjectSetupTarget
-			projectName={project.title}
-			{remoteBranches}
-			onBranchSelected={async (branch) => {
-				selectedBranch = branch;
-				// TODO: Temporary solution to forcing Windows to use system executable
-				if (platformName === 'windows') {
-					setTarget();
-				}
-			}}
-		/>
+		<ReduxResult {projectId} result={projectResult.current}>
+			{#snippet children(project)}
+				<ProjectSetupTarget
+					{projectId}
+					projectName={project.title}
+					{remoteBranches}
+					onBranchSelected={async (branch) => {
+						selectedBranch = branch;
+						if (platformName !== 'windows') return;
+						setTarget();
+					}}
+				/>
+			{/snippet}
+		</ReduxResult>
 	{/if}
 </DecorativeSplitView>
 

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getColorFromBranchType } from '@gitbutler/ui/utils/getColorFromBranchType';
 	import { type Snippet } from 'svelte';
-	import type { CellType } from '@gitbutler/ui/commitLines/types';
+	import type { CellType } from '@gitbutler/ui/components/commitLines/types';
 
 	interface Props {
 		type: CellType;
@@ -24,16 +24,11 @@
 
 <style lang="postcss">
 	.action-row {
-		position: relative;
 		display: flex;
-		background-color: var(--clr-bg-1);
-		border-top: 1px solid var(--clr-border-3);
+		position: relative;
 		overflow: hidden;
-
-		&:not(:last-child),
-		&.is-last {
-			border-radius: 0 0 var(--radius-m) var(--radius-m);
-		}
+		border-top: 1px solid var(--clr-border-3);
+		background-color: var(--clr-bg-1);
 	}
 
 	.action {
@@ -47,7 +42,7 @@
 
 	.commit-line-wrapper {
 		position: relative;
-		margin-left: 20px;
 		margin-right: 20px;
+		margin-left: 20px;
 	}
 </style>

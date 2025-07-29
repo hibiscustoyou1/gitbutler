@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import path from 'node:path';
 import type { Frameworks } from '@wdio/types';
@@ -30,7 +31,7 @@ export class TestRecorder {
 				'-f',
 				'x11grab',
 				'-video_size',
-				'1280x1024',
+				'1160x720',
 				'-i',
 				process.env.DISPLAY,
 				'-loglevel',

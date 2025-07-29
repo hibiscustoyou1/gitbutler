@@ -8,10 +8,28 @@ export interface HttpError {
 }
 
 /**
- * Error type that has both a message and a code. These errors can be thrown
- * by the back end code.
+ * Error type for unhandled Promise rejections.
  */
-export interface BackendError {
+export interface UnhandledPromiseError {
+	reason: Error;
 	message: string;
-	code: string;
+}
+
+/**
+ * A subclass of `Error` that won't have a toast shown for it.
+ *
+ * This is useful for errors that are get handled elsewhere but should still
+ * throw to stop execution.
+ */
+export class SilentError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'SilentError';
+	}
+
+	static from(error: Error): SilentError {
+		const e = new SilentError(error.message);
+		e.stack = error.stack;
+		return e;
+	}
 }

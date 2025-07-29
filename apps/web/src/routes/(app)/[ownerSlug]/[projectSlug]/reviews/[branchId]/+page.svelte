@@ -1,41 +1,45 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import BranchCommitsTable from '$lib/components/changes/BranchCommitsTable.svelte';
+	import PrivateProjectError from '$lib/components/errors/PrivateProjectError.svelte';
 	import Factoid from '$lib/components/infoFlexRow/Factoid.svelte';
 	import InfoFlexRow from '$lib/components/infoFlexRow/InfoFlexRow.svelte';
-	import CommitsGraph from '$lib/components/review/CommitsGraph.svelte';
+	import { USER_SERVICE } from '$lib/user/userService';
 	import { updateFavIcon } from '$lib/utils/faviconUtils';
-	import { UserService } from '$lib/user/userService';
 	import BranchStatusBadge from '@gitbutler/shared/branches/BranchStatusBadge.svelte';
-	import { BranchService } from '@gitbutler/shared/branches/branchService';
+	import Minimap from '@gitbutler/shared/branches/Minimap.svelte';
+	import { BRANCH_SERVICE } from '@gitbutler/shared/branches/branchService';
 	import { getBranchReview } from '@gitbutler/shared/branches/branchesPreview.svelte';
 	import { lookupLatestBranchUuid } from '@gitbutler/shared/branches/latestBranchLookup.svelte';
-	import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
+	import { LATEST_BRANCH_LOOKUP_SERVICE } from '@gitbutler/shared/branches/latestBranchLookupService';
 	import { BranchStatus, type Branch } from '@gitbutler/shared/branches/types';
 	import { copyToClipboard } from '@gitbutler/shared/clipboard';
-	import { getContext } from '@gitbutler/shared/context';
+	import { inject } from '@gitbutler/shared/context';
 	import { getContributorsWithAvatars } from '@gitbutler/shared/contributors';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
-	import { isFound, and, map } from '@gitbutler/shared/network/loadable';
-	import { AppState } from '@gitbutler/shared/redux/store.svelte';
+	import { isFound, and, isError, map } from '@gitbutler/shared/network/loadable';
+	import { APP_STATE } from '@gitbutler/shared/redux/store.svelte';
 	import {
-		WebRoutesService,
+		WEB_ROUTES_SERVICE,
 		type ProjectReviewParameters
 	} from '@gitbutler/shared/routing/webRoutes.svelte';
-	import { UploadsService } from '@gitbutler/shared/uploads/uploadsService';
-	import AsyncButton from '@gitbutler/ui/AsyncButton.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import RichTextEditor from '@gitbutler/ui/RichTextEditor.svelte';
-	import Textarea from '@gitbutler/ui/Textarea.svelte';
-	import AvatarGroup from '@gitbutler/ui/avatar/AvatarGroup.svelte';
-	import Link from '@gitbutler/ui/link/Link.svelte';
-	import Markdown from '@gitbutler/ui/markdown/Markdown.svelte';
+	import { UPLOADS_SERVICE } from '@gitbutler/shared/uploads/uploadsService';
+
+	import {
+		AsyncButton,
+		AvatarGroup,
+		Button,
+		Link,
+		Markdown,
+		RichTextEditor,
+		Textarea
+	} from '@gitbutler/ui';
 	import FileUploadPlugin, {
 		type DropFileResult
 	} from '@gitbutler/ui/richText/plugins/FileUpload.svelte';
 	import toasts from '@gitbutler/ui/toasts';
 	import dayjs from 'dayjs';
 	import relativeTime from 'dayjs/plugin/relativeTime';
-	import { goto } from '$app/navigation';
 
 	const ACCEPTED_FILE_TYPES = ['image/*', 'application/*', 'text/*', 'audio/*', 'video/*'];
 
@@ -47,12 +51,12 @@
 
 	let { data }: Props = $props();
 
-	const latestBranchLookupService = getContext(LatestBranchLookupService);
-	const branchService = getContext(BranchService);
-	const appState = getContext(AppState);
-	const routes = getContext(WebRoutesService);
-	const userService = getContext(UserService);
-	const uploadsService = getContext(UploadsService);
+	const latestBranchLookupService = inject(LATEST_BRANCH_LOOKUP_SERVICE);
+	const branchService = inject(BRANCH_SERVICE);
+	const appState = inject(APP_STATE);
+	const routes = inject(WEB_ROUTES_SERVICE);
+	const userService = inject(USER_SERVICE);
+	const uploadsService = inject(UPLOADS_SERVICE);
 	const user = $derived(userService.user);
 
 	const branchUuid = $derived(
@@ -67,7 +71,7 @@
 
 	const branch = $derived(
 		map(branchUuid?.current, (branchUuid) => {
-			return getBranchReview(appState, branchService, branchUuid);
+			return getBranchReview(branchUuid);
 		})
 	);
 
@@ -84,6 +88,28 @@
 			? getContributorsWithAvatars(branch.current.value)
 			: Promise.resolve([])
 	);
+
+	// Check if there's a 403 error in either branchUuid or branch
+	function isForbiddenError(data: any) {
+		if (!isError(data)) return false;
+
+		const errorMessage = data.error.message || '';
+		return (
+			(data.error.name === 'ApiError' && errorMessage.includes('403')) ||
+			errorMessage.includes('Forbidden') ||
+			errorMessage.includes('Access denied') ||
+			(typeof errorMessage === 'string' && errorMessage.includes('403'))
+		);
+	}
+
+	// Check if there's a 403 error
+	const hasForbiddenError = $derived(
+		isForbiddenError(branchUuid?.current) || isForbiddenError(branch?.current)
+	);
+
+	// Check for any error in the combined loadable
+	const combinedLoadable = $derived(and([branchUuid?.current, branch?.current]));
+	const hasAnyError = $derived(isError(combinedLoadable));
 
 	function visitFirstCommit(branch: Branch) {
 		if ((branch.patchCommitIds?.length || 0) === 0) return;
@@ -183,105 +209,129 @@
 	{/if}
 </svelte:head>
 
-<Loading loadable={and([branchUuid?.current, branch?.current])}>
-	{#snippet children(branch)}
-		<div class="layout">
-			<div class="information">
-				<div class="heading">
-					{#if editingSummary}
-						<Textarea bind:value={title}></Textarea>
-					{:else}
-						<p class="text-15 text-bold">{branch.title}</p>
-					{/if}
-					<div class="actions">
-						<Button icon="copy-small" kind="outline" onclick={copyLocation}>Share link</Button>
-						{@render startReview(branch)}
-						{#if branch.status === BranchStatus.Closed}
-							<AsyncButton action={async () => updateStatus(BranchStatus.Active)} kind="outline"
-								>Re-open review</AsyncButton
-							>
+{#if hasForbiddenError}
+	<PrivateProjectError />
+{:else if hasAnyError && combinedLoadable}
+	{#if isForbiddenError(combinedLoadable)}
+		<PrivateProjectError />
+	{:else if isError(combinedLoadable)}
+		<div class="error-container">
+			<h2 class="text-15 text-body text-bold">Error loading project data</h2>
+			<p class="text-13 text-body">{combinedLoadable.error.message}</p>
+		</div>
+	{/if}
+{:else}
+	<Loading loadable={combinedLoadable}>
+		{#snippet children(branch)}
+			<div class="layout">
+				<div class="information">
+					<div class="heading">
+						{#if editingSummary}
+							<Textarea bind:value={title}></Textarea>
 						{:else}
-							<AsyncButton
-								style="error"
-								kind="outline"
-								action={async () => updateStatus(BranchStatus.Closed)}>Close review</AsyncButton
+							<p class="text-15 text-bold">{branch.title}</p>
+						{/if}
+						<div class="actions">
+							<Button icon="copy-small" kind="outline" onclick={copyLocation}>Share link</Button>
+							{@render startReview(branch)}
+							{#if branch.status === BranchStatus.Closed}
+								<AsyncButton action={async () => updateStatus(BranchStatus.Active)} kind="outline"
+									>Re-open review</AsyncButton
+								>
+							{:else}
+								<AsyncButton
+									style="error"
+									kind="outline"
+									action={async () => updateStatus(BranchStatus.Closed)}>Close review</AsyncButton
+								>
+							{/if}
+						</div>
+					</div>
+					<InfoFlexRow>
+						<Factoid label="Status"><BranchStatusBadge {branch} /></Factoid>
+						<Factoid label="Commits">
+							{#if $user}
+								<Minimap
+									branchUuid={branch.uuid}
+									ownerSlug={data.ownerSlug}
+									projectSlug={data.projectSlug}
+									horizontal
+									user={$user}
+								/>
+							{/if}
+						</Factoid>
+						{#if branch.forgeUrl}
+							<Factoid label="PR"
+								><Link href={branch.forgeUrl} target="_blank"
+									>{branch.forgeDescription || '#unknown'}</Link
+								></Factoid
 							>
+						{/if}
+						<Factoid label="Authors">
+							{#await contributors then contributors}
+								<AvatarGroup avatars={contributors}></AvatarGroup>
+							{/await}
+						</Factoid>
+						<Factoid label="Updated">
+							{dayjs(branch.updatedAt).fromNow()}
+						</Factoid>
+						<Factoid label="Version">
+							{branch.version}
+						</Factoid>
+					</InfoFlexRow>
+					<div class="summary">
+						{#if editingSummary}
+							<div class="summary-wrapper">
+								<RichTextEditor
+									namespace="review-description"
+									markdown={false}
+									onError={console.error}
+									styleContext="chat-input"
+									initialText={branch.description}
+									onInput={(text) => (summary = text)}
+								>
+									{#snippet plugins()}
+										<FileUploadPlugin onDrop={handleDropFiles} />
+									{/snippet}
+								</RichTextEditor>
+							</div>
+
+							<div class="summary-actions">
+								<Button kind="outline" onclick={abortEditingSummary}>Cancel</Button>
+								<AsyncButton style="pop" action={saveSummary}>Save</AsyncButton>
+							</div>
+						{:else if branch.description}
+							<div class="text-13 summary-text">
+								<Markdown content={branch.description} />
+							</div>
+							{#if branch.permissions.canWrite}
+								<div>
+									<Button kind="outline" onclick={editSummary}>Change details</Button>
+								</div>
+							{/if}
+						{:else}
+							<div class="summary-placeholder">
+								<p class="text-13 clr-text-2">No summary provided.</p>
+								{#if branch.permissions.canWrite}
+									<p class="text-12 text-body clr-text-2">
+										<em>
+											Summaries provide context on the branch's purpose and helps team members
+											understand it's changes.
+										</em>
+									</p>
+									<Button icon="plus-small" kind="outline" onclick={editSummary}>Add summary</Button
+									>
+								{/if}
+							</div>
 						{/if}
 					</div>
 				</div>
-				<InfoFlexRow>
-					<Factoid label="Status"><BranchStatusBadge {branch} /></Factoid>
-					<Factoid label="Commits">
-						<CommitsGraph {branch} />
-					</Factoid>
-					{#if branch.forgeUrl}
-						<Factoid label="PR"
-							><Link href={branch.forgeUrl}>{branch.forgeDescription || '#unknown'}</Link></Factoid
-						>
-					{/if}
-					<Factoid label="Authors">
-						{#await contributors then contributors}
-							<AvatarGroup avatars={contributors}></AvatarGroup>
-						{/await}
-					</Factoid>
-					<Factoid label="Updated">
-						{dayjs(branch.updatedAt).fromNow()}
-					</Factoid>
-					<Factoid label="Version">
-						{branch.version}
-					</Factoid>
-				</InfoFlexRow>
-				<div class="summary">
-					{#if editingSummary}
-						<div class="summary-wrapper">
-							<RichTextEditor
-								namespace="review-description"
-								markdown={false}
-								onError={console.error}
-								styleContext="chat-input"
-								initialText={branch.description}
-								onChange={(text) => (summary = text)}
-							>
-								{#snippet plugins()}
-									<FileUploadPlugin onDrop={handleDropFiles} />
-								{/snippet}
-							</RichTextEditor>
-						</div>
 
-						<div class="summary-actions">
-							<Button kind="outline" onclick={abortEditingSummary}>Cancel</Button>
-							<AsyncButton style="pop" action={saveSummary}>Save</AsyncButton>
-						</div>
-					{:else if branch.description}
-						<div class="text-13 summary-text">
-							<Markdown content={branch.description} />
-						</div>
-						{#if branch.permissions.canWrite}
-							<div>
-								<Button kind="outline" onclick={editSummary}>Change details</Button>
-							</div>
-						{/if}
-					{:else}
-						<div class="summary-placeholder">
-							<p class="text-13 text-clr2">No summary provided.</p>
-							{#if branch.permissions.canWrite}
-								<p class="text-12 text-body text-clr2">
-									<em>
-										Summaries provide context on the branch's purpose and helps team members
-										understand it's changes.
-									</em>
-								</p>
-								<Button icon="plus-small" kind="outline" onclick={editSummary}>Add summary</Button>
-							{/if}
-						</div>
-					{/if}
-				</div>
+				<BranchCommitsTable {branch} {data} />
 			</div>
-
-			<BranchCommitsTable {branch} {data} />
-		</div>
-	{/snippet}
-</Loading>
+		{/snippet}
+	</Loading>
+{/if}
 
 <style lang="postcss">
 	.layout {
@@ -290,17 +340,17 @@
 		gap: var(--layout-col-gap);
 
 		@media (--desktop-small-viewport) {
-			grid-template-columns: unset;
 			display: flex;
+			grid-template-columns: unset;
 			flex-direction: column;
 		}
 	}
 
 	.information {
 		display: flex;
-		gap: 24px;
 		flex-direction: column;
 		padding-right: 20px;
+		gap: 24px;
 
 		@media (--tablet-viewport) {
 			padding-right: 0;
@@ -309,8 +359,8 @@
 
 	.heading {
 		display: flex;
-		gap: 16px;
 		flex-direction: column;
+		gap: 16px;
 	}
 
 	.summary {
@@ -320,6 +370,10 @@
 	}
 
 	.summary-text {
+		padding: 12px;
+		border: 1px solid #ddd;
+		border-radius: 9px;
+		background-color: #fff;
 		line-height: 160%;
 	}
 
@@ -332,9 +386,9 @@
 
 	.summary-wrapper {
 		flex-shrink: 0;
-		background-color: var(--clr-bg-1);
 		padding: 6px;
 		border: 1px solid var(--clr-border-2);
 		border-radius: var(--radius-m);
+		background-color: var(--clr-bg-1);
 	}
 </style>

@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { getEditor } from '../context';
-	import { getSelectionPosition } from '../selection';
+	import { getEditor } from '$lib/richText/context';
+	import { getSelectionPosition } from '$lib/richText/selection';
 	import { clickOutside } from '$lib/utils/clickOutside';
 	import { portal } from '$lib/utils/portal';
 	import {
@@ -11,7 +11,7 @@
 		KEY_ESCAPE_COMMAND
 	} from 'lexical';
 	import { fly } from 'svelte/transition';
-	import type { EmojiInfo } from '$lib/emoji/utils';
+	import type { EmojiInfo } from '$components/emoji/utils';
 
 	type Props = {
 		suggestedEmojis: EmojiInfo[] | undefined;
@@ -90,9 +90,17 @@
 		return true;
 	}
 
+	let windowScrollY = $state(window.scrollY);
+	const selectionPosition = $derived(getSelectionPosition(windowScrollY));
+
 	$effect(() => {
 		if (suggestedEmojis !== undefined && suggestedEmojis.length > 0) {
-			position = getSelectionPosition();
+			position = selectionPosition;
+		}
+	});
+
+	$effect(() => {
+		if (suggestedEmojis !== undefined && suggestedEmojis.length > 0) {
 			selectedSuggestionIndex = 0;
 
 			const unregisterArrowUp = editor.registerCommand(
@@ -131,9 +139,11 @@
 	});
 </script>
 
+<svelte:window bind:scrollY={windowScrollY} />
+
 {#if position && suggestedEmojis !== undefined}
 	<div
-		class="floating-popup"
+		class="floating-popup hide-native-scrollbar"
 		style:left={position.left + 'px'}
 		style:top={position.top - offsetHeight - 6 + 'px'}
 		bind:offsetHeight
@@ -146,49 +156,47 @@
 		}}
 		transition:fly={{ y: 5, duration: 120 }}
 	>
-		<div>
-			<ul class="emoji-suggestion__list">
-				{#each suggestedEmojis as emoji, idx}
-					<li role="listitem">
-						<button type="button" onclick={() => selectSuggestion(emoji)}>
-							<div
-								id="emoji-suggestion__item-{idx}"
-								class="emoji-suggestion__item"
-								class:selected={idx === selectedSuggestionIndex}
-							>
-								<p class="text-13">{emoji.unicode}</p>
-								<p class="text-13 emoji-sussestion__name">{emoji.label}</p>
-							</div>
-						</button>
-					</li>
-				{/each}
-			</ul>
-		</div>
+		<ul class="emoji-suggestion__list">
+			{#each suggestedEmojis as emoji, idx}
+				<li role="listitem">
+					<button
+						type="button"
+						onclick={() => selectSuggestion(emoji)}
+						id="emoji-suggestion__item-{idx}"
+						class="emoji-suggestion__item"
+						class:selected={idx === selectedSuggestionIndex}
+					>
+						<p class="text-13">{emoji.unicode}</p>
+						<p class="text-13 emoji-sussestion__name">{emoji.label}</p>
+					</button>
+				</li>
+			{/each}
+		</ul>
 	</div>
 {/if}
 
 <style lang="postcss">
 	.floating-popup {
 		display: flex;
+		z-index: var(--z-ground);
 		position: absolute;
+		width: fit-content;
+		overflow-y: auto;
+		border: 1px solid var(--clr-border-2);
 		border-radius: var(--radius-ml);
 		background-color: var(--clr-bg-1);
 		box-shadow: var(--shadow-m);
-		border: 1px solid var(--clr-border-2);
 		box-shadow: var(--fx-shadow-m);
-		width: fit-content;
-
 		box-shadow: 0px 4px 14px 0px rgba(0, 0, 0, 0.06);
 	}
 
 	.emoji-suggestion__list {
-		padding: 8px 4px;
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
 
 		max-height: 100px;
-		overflow: scroll;
+		padding: 6px;
+		gap: 4px;
 
 		&::-webkit-scrollbar {
 			display: none;
@@ -196,11 +204,10 @@
 	}
 
 	.emoji-suggestion__item {
-		width: 100%;
-		padding: 2px 8px;
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		width: 100%;
+		padding: 4px;
 		gap: 16px;
 
 		&.selected {

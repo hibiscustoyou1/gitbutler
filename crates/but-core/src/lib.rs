@@ -41,13 +41,13 @@
 //!     - A list of patches in unified diff format, with easily accessible line number information. It isn't baked into the patch string itself.
 //!
 
-use bstr::{BStr, BString};
+use bstr::BString;
 use gix::object::tree::EntryKind;
 use gix::refs::FullNameRef;
 use serde::Serialize;
 use std::any::Any;
 use std::ops::{Deref, DerefMut};
-use std::path::Path;
+use std::path::PathBuf;
 
 /// Functions to obtain changes between various items.
 pub mod diff;
@@ -58,20 +58,25 @@ pub mod commit;
 /// Types for use in the user interface.
 pub mod ui;
 
+mod id;
+pub use id::Id;
+
 /// utility types
 pub mod unified_diff;
 
 /// utilities for command-invocation.
 pub mod cmd;
 
-mod settings;
-pub use settings::git::GitConfigSettings;
+/// Various settings
+pub mod settings;
+pub use settings::git::types::GitConfigSettings;
 
 mod repo_ext;
 pub use repo_ext::RepositoryExt;
 
 /// Various types
 pub mod ref_metadata;
+use crate::ref_metadata::ValueInfo;
 
 /// A trait to associate arbitrary metadata with any *Git reference name*.
 /// Note that a single reference name can have multiple distinct pieces of metadata associated with it.
@@ -99,6 +104,34 @@ pub trait RefMetadata {
         &self,
         ref_name: &gix::refs::FullNameRef,
     ) -> anyhow::Result<Self::Handle<ref_metadata::Branch>>;
+
+    /// Like [`branch()`](Self::branch()), but instead of possibly returning default values, return an
+    /// optional branch instead.
+    ///
+    /// This means the returned branch data is never the default value.
+    fn branch_opt(
+        &self,
+        ref_name: &gix::refs::FullNameRef,
+    ) -> anyhow::Result<Option<Self::Handle<ref_metadata::Branch>>> {
+        let branch = self.branch(ref_name)?;
+        Ok(if branch.is_default() {
+            None
+        } else {
+            Some(branch)
+        })
+    }
+
+    /// Like [`workspace()`](Self::workspace()), but instead of possibly returning default values, return an
+    /// optional workspace instead.
+    ///
+    /// This means the returned workspace data is never the default value.
+    fn workspace_opt(
+        &self,
+        ref_name: &gix::refs::FullNameRef,
+    ) -> anyhow::Result<Option<Self::Handle<ref_metadata::Workspace>>> {
+        let ws = self.workspace(ref_name)?;
+        Ok(if ws.is_default() { None } else { Some(ws) })
+    }
 
     /// Set workspace metadata to match `value`.
     fn set_workspace(
@@ -137,9 +170,17 @@ pub enum UnifiedDiff {
         size_in_bytes: u64,
     },
     /// A patch that if applied to the previous state of the resource would yield the current state.
+    #[serde(rename_all = "camelCase")]
     Patch {
         /// All non-overlapping hunks, including their context lines.
         hunks: Vec<unified_diff::DiffHunk>,
+        /// If `true`, a binary to text filter (`textconv` in Git config) was used to obtain the `hunks` in the diff.
+        /// This means hunk-based operations must be disabled.
+        is_result_of_binary_to_text_conversion: bool,
+        /// The total amount of lines added.
+        lines_added: u32,
+        /// The total amount of lines removed.
+        lines_removed: u32,
     },
 }
 
@@ -168,11 +209,20 @@ impl std::fmt::Display for Reference {
 /// Open a repository in such a way that the object cache is set to accelerate merge operations.
 ///
 /// As it depends on the size of the tree, the index will be loaded for that.
-pub fn open_repo_for_merging(path: &Path) -> anyhow::Result<gix::Repository> {
+pub fn open_repo_for_merging(path: impl Into<PathBuf>) -> anyhow::Result<gix::Repository> {
     let mut repo = gix::open(path)?;
     let bytes = repo.compute_object_cache_size_for_tree_diffs(&***repo.index_or_empty()?);
     repo.object_cache_size_if_unset(bytes);
     Ok(repo)
+}
+
+/// A central place for opening a standard repository at `path` configured for any operation.
+/// Note that there may be more specialized versions of `open_repo_*` that might be more suitable for
+/// specific use-cases.
+///
+/// Note that the repository isn't discovered, but must exist at `path`.
+pub fn open_repo(path: impl Into<PathBuf>) -> anyhow::Result<gix::Repository> {
+    Ok(gix::open(path)?)
 }
 
 /// An entry in the worktree that changed and thus is eligible to being committed.
@@ -189,18 +239,6 @@ pub struct TreeChange {
     pub path: BString,
     /// The specific information about this change.
     pub status: TreeStatus,
-}
-
-impl TreeChange {
-    /// Return the path at which this directory entry was previously located, if it was renamed.
-    pub fn previous_path(&self) -> Option<&BStr> {
-        match &self.status {
-            TreeStatus::Addition { .. }
-            | TreeStatus::Deletion { .. }
-            | TreeStatus::Modification { .. } => None,
-            TreeStatus::Rename { previous_path, .. } => Some(previous_path.as_ref()),
-        }
-    }
 }
 
 /// Specifically defines a [`TreeChange`].
@@ -284,6 +322,9 @@ pub enum IgnoredWorktreeTreeChangeStatus {
     Conflict,
     /// A change in the `.git/index` that was overruled by a change to the same path in the *worktree*.
     TreeIndex,
+    /// A tree-index change was effectively undone by an index-worktree change. Thus, the version in the worktree
+    /// is the same as what Git is currently tracking.
+    TreeIndexWorktreeChangeIneffective,
 }
 
 /// A way to indicate that a path in the index isn't suitable for committing and needs to be dealt with.
@@ -316,86 +357,4 @@ pub enum ModeFlags {
     TypeChangeFileToLink,
     TypeChangeLinkToFile,
     TypeChange,
-}
-
-impl ModeFlags {
-    fn calculate(old: &ChangeState, new: &ChangeState) -> Option<Self> {
-        Self::calculate_inner(old.kind, new.kind)
-    }
-
-    fn calculate_inner(
-        old: gix::object::tree::EntryKind,
-        new: gix::object::tree::EntryKind,
-    ) -> Option<Self> {
-        use gix::object::tree::EntryKind as E;
-        Some(match (old, new) {
-            (E::Blob, E::BlobExecutable) => ModeFlags::ExecutableBitAdded,
-            (E::BlobExecutable, E::Blob) => ModeFlags::ExecutableBitRemoved,
-            (E::Blob | E::BlobExecutable, E::Link) => ModeFlags::TypeChangeFileToLink,
-            (E::Link, E::Blob | E::BlobExecutable) => ModeFlags::TypeChangeLinkToFile,
-            (a, b) if a != b => ModeFlags::TypeChange,
-            _ => return None,
-        })
-    }
-}
-
-impl TreeStatus {
-    /// Learn what kind of status this is, useful if only this information is needed.
-    pub fn kind(&self) -> TreeStatusKind {
-        match self {
-            TreeStatus::Addition { .. } => TreeStatusKind::Addition,
-            TreeStatus::Deletion { .. } => TreeStatusKind::Deletion,
-            TreeStatus::Modification { .. } => TreeStatusKind::Modification,
-            TreeStatus::Rename { .. } => TreeStatusKind::Rename,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    mod flags {
-        use crate::ModeFlags;
-        use gix::objs::tree::EntryKind;
-
-        #[test]
-        fn calculate() {
-            for ((old, new), expected) in [
-                ((EntryKind::Blob, EntryKind::Blob), None),
-                (
-                    (EntryKind::Blob, EntryKind::BlobExecutable),
-                    Some(ModeFlags::ExecutableBitAdded),
-                ),
-                (
-                    (EntryKind::BlobExecutable, EntryKind::Blob),
-                    Some(ModeFlags::ExecutableBitRemoved),
-                ),
-                (
-                    (EntryKind::BlobExecutable, EntryKind::Link),
-                    Some(ModeFlags::TypeChangeFileToLink),
-                ),
-                (
-                    (EntryKind::Blob, EntryKind::Link),
-                    Some(ModeFlags::TypeChangeFileToLink),
-                ),
-                (
-                    (EntryKind::Link, EntryKind::BlobExecutable),
-                    Some(ModeFlags::TypeChangeLinkToFile),
-                ),
-                (
-                    (EntryKind::Link, EntryKind::Blob),
-                    Some(ModeFlags::TypeChangeLinkToFile),
-                ),
-                (
-                    (EntryKind::Commit, EntryKind::Blob),
-                    Some(ModeFlags::TypeChange),
-                ),
-                (
-                    (EntryKind::Blob, EntryKind::Commit),
-                    Some(ModeFlags::TypeChange),
-                ),
-            ] {
-                assert_eq!(ModeFlags::calculate_inner(old, new), expected);
-            }
-        }
-    }
 }

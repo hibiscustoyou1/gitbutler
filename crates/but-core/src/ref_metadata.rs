@@ -1,3 +1,5 @@
+use crate::Id;
+
 /// Metadata about workspaces, associated with references that are designated to a workspace,
 /// i.e. `refs/heads/gitbutler/workspaces/<name>`.
 /// Such a ref either points to a *Workspace Commit* which we rewrite at will, or a commit
@@ -11,18 +13,18 @@
 /// We would have to detect this case by validating parents, and the refs pointing to it, before
 /// using the metadata, or at least have a way to communicate possible states when trying to use
 /// this information.
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct Workspace {
     /// Standard data we want to know about any ref.
     pub ref_info: RefInfo,
 
     /// An array entry for each parent of the *workspace commit* the last time we saw it.
-    /// The first parent, and always the first parent, could have a tip that is named `Self::target_ref`,
-    /// and if so it's not meant to be visible when asking for stacks.
+    /// The first parent, and always the first parent, could have a tip named `Self::target_ref`,
+    /// and if so, it's not meant to be visible when asking for stacks.
     pub stacks: Vec<WorkspaceStack>,
 
     /// The name of the reference to integrate with, if present.
-    /// Fetch its metadata for more inforamtion.
+    /// Fetch its metadata for more information.
     ///
     /// If there is no target name, this is a local workspace (and if no global target is set).
     /// Note that even though this is per workspace, the implementation can fill in global information at will.
@@ -59,7 +61,7 @@ impl Workspace {
 }
 
 /// Metadata about branches, associated with any Git branch.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Clone, Eq, PartialEq, Default)]
 pub struct Branch {
     /// Standard data we want to know about any ref.
     pub ref_info: RefInfo,
@@ -69,16 +71,65 @@ pub struct Branch {
     pub review: Review,
 }
 
+impl std::fmt::Debug for Branch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const DEFAULT_IN_TESTSUITE: gix::date::Time = gix::date::Time {
+            seconds: 0,
+            offset: 0,
+        };
+        let mut d = f.debug_struct("Branch");
+        if self
+            .ref_info
+            .created_at
+            .is_some_and(|t| t != DEFAULT_IN_TESTSUITE)
+            || self
+                .ref_info
+                .updated_at
+                .is_some_and(|t| t != DEFAULT_IN_TESTSUITE)
+            || self.description.is_some()
+            || self.review.pull_request.is_some()
+        {
+            d.field("ref_info", &self.ref_info)
+                .field("description", &MaybeDebug(&self.description))
+                .field("review", &self.review);
+        }
+        d.finish()
+    }
+}
+
+struct MaybeDebug<'a, T: std::fmt::Debug>(&'a Option<T>);
+
+impl<T: std::fmt::Debug> std::fmt::Debug for MaybeDebug<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            None => f.write_str("None"),
+            Some(dbg) => dbg.fmt(f),
+        }
+    }
+}
+
 /// Basic information to know about a reference we store with the metadata system.
 ///
-/// It allows to keep track of when it changed, but also if we created it initially, a useful
+/// It allows keeping track of when it changed, but also if we created it initially, a useful
 /// bit of information.
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Clone, Eq, PartialEq)]
 pub struct RefInfo {
     /// The time of creation, *if we created the reference*.
     pub created_at: Option<gix::date::Time>,
-    /// The time at which the reference was last modified, if we modified it.
+    /// The time at which the reference was last modified if we modified it.
     pub updated_at: Option<gix::date::Time>,
+}
+
+impl std::fmt::Debug for RefInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let format = gix::date::time::format::ISO8601;
+        write!(
+            f,
+            "RefInfo {{ created_at: {:?}, updated_at: {:?} }}",
+            MaybeDebug(&self.created_at.map(|date| date.format(format))),
+            MaybeDebug(&self.updated_at.map(|date| date.format(format))),
+        )
+    }
 }
 
 /// Access
@@ -91,9 +142,14 @@ impl RefInfo {
     }
 }
 
+/// The ID of a stack for somewhat stable identification of ever-changing stacks.
+pub type StackId = Id<'S'>;
+
 /// A stack that was applied to the workspace, i.e. a parent of the *workspace commit*.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceStack {
+    /// A unique and stable identifier for the stack itself.
+    pub id: StackId,
     /// All branches that were reachable from the tip of the stack that at the time it was merged into
     /// the *workspace commit*.
     /// `[0]` is the first reachable branch, usually the tip of the stack, and `[N]` is the last
@@ -105,17 +161,15 @@ pub struct WorkspaceStack {
 
 /// A branch within a [`WorkspaceStack`], holding per-branch metadata that is
 /// stored alongside a stack that is available in a workspace.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceStackBranch {
     /// The name of the branch.
     pub ref_name: gix::refs::FullName,
-    /// Archived represents the state when series/branch has been integrated and is below the merge base with the current target branch.
-    /// This would occur when the branch has been merged at the remote and the workspace has been updated with that change.
-    ///
-    /// Note that this is a cache to help speed up certain operations.
-    /// NOTE: This is more like a proof of concept and for backwards compatibility - maybe we will make it go away.
-    // TODO: given that most operations require a graph walk, will this really be necessary if a graph cache is used consistently?
-    //       Staleness can be a problem if targets can be changed after the fact. At least we'd need to recompute it.
+    /// If `true`, the branch is now underneath the lower-base of the workspace after a workspace update.
+    /// This means it's not interesting anymore, by all means, but we'd still have to keep it available and list
+    /// these segments as being part of the workspace when creating PRs. Their descriptions contain references
+    /// to archived segments, which simply shouldn't disappear just yet.
+    /// However, they may disappear once the whole stack has been integrated and the workspace has moved past it.
     pub archived: bool,
 }
 
@@ -124,15 +178,31 @@ impl WorkspaceStack {
     pub fn ref_name(&self) -> Option<&gix::refs::FullName> {
         self.branches.first().map(|b| &b.ref_name)
     }
+
+    /// The same as [`ref_name()`](Self::ref_name()), but returns an actual `Ref`.
+    pub fn name(&self) -> Option<&gix::refs::FullNameRef> {
+        self.ref_name().map(|rn| rn.as_ref())
+    }
 }
 
 /// Metadata about branches, associated with any Git branch.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Clone, Eq, PartialEq, Default)]
 pub struct Review {
     /// The number for the PR that was associated with this branch.
     pub pull_request: Option<usize>,
     /// A handle to the review created with the GitButler review system.
     pub review_id: Option<String>,
+}
+
+impl std::fmt::Debug for Review {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Review {{ pull_request: {:?}, review_id: {:?} }}",
+            MaybeDebug(&self.pull_request),
+            MaybeDebug(&self.review_id)
+        )
+    }
 }
 
 /// Additional information about the RefMetadata value itself.

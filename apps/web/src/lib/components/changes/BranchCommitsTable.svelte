@@ -1,5 +1,5 @@
 <script lang="ts">
-	import BranchCommitsRow from './BranchCommitsRow.svelte';
+	import BranchCommitsRow from '$lib/components/changes/BranchCommitsRow.svelte';
 	import Table from '$lib/components/table/Table.svelte';
 	import { type Branch } from '@gitbutler/shared/branches/types';
 	import { type ProjectReviewParameters } from '@gitbutler/shared/routing/webRoutes.svelte';
@@ -15,6 +15,7 @@
 <table class="commits-table">
 	<Table
 		headColumns={[
+			{ key: 'position', value: '' },
 			{ key: 'status', value: 'Status' },
 			{ key: 'version', value: 'Ver.' },
 			{ key: 'string', value: 'Name' },

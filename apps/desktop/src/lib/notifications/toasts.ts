@@ -1,7 +1,12 @@
-import { parseError } from '$lib/error/parser';
+import { isBundlingError, parseError } from '$lib/error/parser';
 import posthog from 'posthog-js';
 import { writable, type Writable } from 'svelte/store';
 import type { MessageStyle } from '$components/InfoMessage.svelte';
+
+type ExtraAction = {
+	label: string;
+	onClick: (dismiss: () => void) => void;
+};
 
 export interface Toast {
 	id?: string;
@@ -9,6 +14,7 @@ export interface Toast {
 	error?: any;
 	title?: string;
 	style?: MessageStyle;
+	extraAction?: ExtraAction;
 }
 
 export const toastStore: Writable<Toast[]> = writable([]);
@@ -30,15 +36,33 @@ export function showToast(toast: Toast) {
 	]);
 }
 
-export function showError(title: string, error: unknown) {
-	const { message, parsedError } = parseError(error);
-	if (parsedError) {
-		showToast({ title, message, error: parsedError, style: 'error' });
+export function showError(title: string, error: unknown, extraAction?: ExtraAction) {
+	const { name, message, description, ignored } = parseError(error);
+	if (isBundlingError(message)) {
+		console.warn(
+			'You are likely experiencing a dev mode bundling error, ' +
+				'try disabling the chache from the network tab and ' +
+				'reload the page.'
+		);
+		return;
+	}
+	if (!ignored) {
+		showToast({
+			title: name || title,
+			message: description,
+			error: message,
+			style: 'error',
+			extraAction
+		});
 	}
 }
 
-export function showInfo(title: string, message: string) {
-	showToast({ title, message, style: 'neutral' });
+export function showInfo(title: string, message: string, extraAction?: ExtraAction) {
+	showToast({ title, message, style: 'neutral', extraAction });
+}
+
+export function showWarning(title: string, message: string, extraAction?: ExtraAction) {
+	showToast({ title, message, style: 'warning', extraAction });
 }
 
 export function dismissToast(messageId: string | undefined) {

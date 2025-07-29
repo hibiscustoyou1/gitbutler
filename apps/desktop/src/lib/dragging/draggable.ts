@@ -1,15 +1,13 @@
-import { FileDropData, ChangeDropData, type DropData } from './draggables';
-import { dropzoneRegistry } from './dropzone';
-import { type CommitStatus } from '$lib/commits/commit';
-import { getFileIcon } from '@gitbutler/ui/file/getFileIcon';
+import { getColorFromCommitState } from '$components/lib';
+import { type CommitStatusType } from '$lib/commits/commit';
+import { ChangeDropData, type DropData } from '$lib/dragging/draggables';
+import { getFileIcon } from '@gitbutler/ui/components/file/getFileIcon';
 import { pxToRem } from '@gitbutler/ui/utils/pxToRem';
+import type { DragStateService } from '$lib/dragging/dragStateService.svelte';
+import type { DropzoneRegistry } from '$lib/dragging/registry';
 
 // Added to element being dragged (not the clone that follows the cursor).
 const DRAGGING_CLASS = 'dragging';
-
-export type NonDraggableConfig = {
-	disabled: true;
-};
 
 export type DraggableConfig = {
 	readonly selector?: string;
@@ -19,9 +17,12 @@ export type DraggableConfig = {
 	readonly sha?: string;
 	readonly date?: string;
 	readonly authorImgUrl?: string;
-	readonly commitType?: CommitStatus;
+	readonly commitType?: CommitStatusType;
 	readonly data?: DropData;
 	readonly viewportId?: string;
+	readonly chipType?: 'file' | 'hunk';
+	readonly dropzoneRegistry: DropzoneRegistry;
+	readonly dragStateService?: DragStateService;
 };
 
 function createElement<K extends keyof HTMLElementTagNameMap>(
@@ -39,7 +40,7 @@ function createElement<K extends keyof HTMLElementTagNameMap>(
 
 function setupDragHandlers(
 	node: HTMLElement,
-	opts: DraggableConfig | NonDraggableConfig,
+	opts: DraggableConfig | undefined,
 	createClone: (opts: DraggableConfig, selectedElements: Element[]) => HTMLElement | undefined,
 	params: {
 		handlerWidth: boolean;
@@ -47,26 +48,24 @@ function setupDragHandlers(
 	} = {
 		handlerWidth: false
 	}
-):
-	| {
-			update: (opts: DraggableConfig) => void;
-			destroy: () => void;
-	  }
-	| undefined {
-	if (opts.disabled) return;
+): {
+	update: (opts: DraggableConfig) => void;
+	destroy: () => void;
+} {
 	let dragHandle: HTMLElement | null;
 	let clone: HTMLElement | undefined;
 	let selectedElements: Element[] = [];
+	let endDragging: (() => void) | undefined;
 
 	function handleMouseDown(e: MouseEvent) {
 		dragHandle = e.target as HTMLElement;
 	}
 
 	function handleDragStart(e: DragEvent) {
-		if (opts.disabled) return;
+		if (!opts || opts.disabled) return;
 		e.stopPropagation();
 
-		if (dragHandle && dragHandle.dataset.noDrag !== undefined) {
+		if (!dragHandle || dragHandle.dataset.noDrag !== undefined) {
 			e.preventDefault();
 			return false;
 		}
@@ -77,30 +76,14 @@ function setupDragHandlers(
 			return;
 		}
 
-		// This should be deleted once V3 design has shipped.
-		if (opts.data instanceof FileDropData) {
-			selectedElements = [];
-			for (const file of opts.data.files) {
-				const element = parentNode.querySelector(`[data-file-id="${file.id}"]`);
-				if (element) {
-					if (file.locked) {
-						element.classList.add('locked-file-animation');
-						element.addEventListener(
-							'animationend',
-							() => {
-								element.classList.remove('locked-file-animation');
-							},
-							{ once: true }
-						);
-					}
-					selectedElements.push(element);
-				}
-			}
+		// Start drag state tracking
+		if (opts.dragStateService) {
+			endDragging = opts.dragStateService.startDragging();
 		}
 
 		if (opts.data instanceof ChangeDropData) {
 			selectedElements = [];
-			for (const path of opts.data.changedPaths()) {
+			for (const path of opts.data.changedPaths(opts.data.selectionId)) {
 				// Path is sufficient as a key since we query the parent container.
 				const element = parentNode.querySelector(`[data-file-id="${path}"]`);
 				if (element) {
@@ -117,17 +100,18 @@ function setupDragHandlers(
 			element.classList.add(DRAGGING_CLASS);
 		}
 
-		for (const dropzone of Array.from(dropzoneRegistry.values())) {
+		for (const dropzone of Array.from(opts.dropzoneRegistry.values())) {
 			dropzone.activate(opts.data);
 		}
 
 		clone = createClone(opts, selectedElements);
 		if (clone) {
+			// TODO: remove params (clientWidth, maxHeight) V3 design has shipped.
 			if (params.handlerWidth) {
 				clone.style.width = node.clientWidth + 'px';
 			}
 			if (params.maxHeight) {
-				clone.style.maxHeight = pxToRem(params.maxHeight) as string;
+				clone.style.maxHeight = `${pxToRem(params.maxHeight)}rem`;
 			}
 			document.body.appendChild(clone);
 
@@ -146,7 +130,7 @@ function setupDragHandlers(
 		}
 	}
 
-	const viewport = opts.viewportId ? document.getElementById(opts.viewportId) : null;
+	const viewport = opts?.viewportId ? document.getElementById(opts.viewportId) : null;
 	const triggerRange = 150;
 	const timerShutter = 700;
 	let timeoutId: undefined | ReturnType<typeof setTimeout> = undefined;
@@ -189,17 +173,12 @@ function setupDragHandlers(
 	}
 
 	function handleDragEnd(e: DragEvent) {
+		dragHandle = null;
 		e.stopPropagation();
-		if (clone) clone.remove();
-		selectedElements.forEach((el) => el.classList.remove(DRAGGING_CLASS));
-		Array.from(dropzoneRegistry.values()).forEach((dropzone) => {
-			dropzone.deactivate();
-		});
+		deactivateDropzones();
 
-		if (timeoutId) {
-			clearTimeout(timeoutId);
-			timeoutId = undefined;
-		}
+		// End drag state tracking
+		endDragging?.();
 	}
 
 	function setup(newOpts: DraggableConfig) {
@@ -214,14 +193,38 @@ function setupDragHandlers(
 	}
 
 	function clean() {
+		if (dragHandle) {
+			// If drop handler is updated/destroyed before drag end.
+			deactivateDropzones();
+		}
+
 		node.draggable = false;
 		node.removeEventListener('dragstart', handleDragStart);
 		node.removeEventListener('drag', handleDrag);
 		node.removeEventListener('dragend', handleDragEnd);
 		node.removeEventListener('mousedown', handleMouseDown, { capture: false });
+
+		// Clean up drag state if not already done
+		endDragging?.();
 	}
 
-	setup(opts);
+	function deactivateDropzones() {
+		selectedElements.forEach((el) => el.classList.remove(DRAGGING_CLASS));
+		if (clone) clone.remove();
+		if (!opts) return;
+		Array.from(opts.dropzoneRegistry.values()).forEach((dropzone) => {
+			dropzone.deactivate();
+		});
+
+		if (timeoutId) {
+			clearTimeout(timeoutId);
+			timeoutId = undefined;
+		}
+	}
+
+	if (opts) {
+		setup(opts);
+	}
 
 	return {
 		update(newOpts: DraggableConfig) {
@@ -234,89 +237,126 @@ function setupDragHandlers(
 	};
 }
 
-//////////////////////////
-//// COMMIT DRAGGABLE ////
-//////////////////////////
+/////////////////////////////
+//// COMMIT DRAGGABLE V3 ////
+/////////////////////////////
 
-export function createCommitElement(
-	commitType: CommitStatus | undefined,
-	label: string | undefined,
-	sha: string | undefined,
-	date: string | undefined,
-	authorImgUrl: string | undefined
+function createCommitElementV3(
+	commitType: CommitStatusType | undefined,
+	label: string | undefined
 ): HTMLDivElement {
-	const cardEl = createElement('div', ['draggable-commit']);
-	const labelEl = createElement('span', ['text-13', 'text-bold'], label || 'Empty commit');
-	const infoEl = createElement('div', ['draggable-commit-info', 'text-11']);
-	const authorImgEl = createElement(
-		'img',
-		['draggable-commit-author-img'],
-		undefined,
-		authorImgUrl
+	const commitColor = getColorFromCommitState(commitType || 'LocalOnly', false);
+
+	const cardEl = createElement('div', [
+		'draggable-commit-v3',
+		commitType === 'LocalOnly' || commitType === 'Integrated' || commitType === 'Base'
+			? 'draggable-commit-v3-local'
+			: 'draggable-commit-v3-remote'
+	]);
+
+	cardEl.style.setProperty('--commit-color', commitColor);
+
+	const commitIndicationEl = createElement('div', ['draggable-commit-v3-indicator']);
+	cardEl.appendChild(commitIndicationEl);
+
+	const labelEl = createElement(
+		'div',
+		['truncate', 'text-13', 'text-semibold', 'draggable-commit-v3-label'],
+		label || 'Empty commit'
 	);
-	const shaEl = createElement('span', ['draggable-commit-info-text'], sha);
-	const dateAndAuthorEl = createElement('span', ['draggable-commit-info-text'], date);
-
-	if (commitType) {
-		const indicatorClass = `draggable-commit-${commitType}`;
-		labelEl.classList.add('draggable-commit-indicator', indicatorClass);
-	}
-
 	cardEl.appendChild(labelEl);
-	infoEl.appendChild(authorImgEl);
-	infoEl.appendChild(shaEl);
-	infoEl.appendChild(dateAndAuthorEl);
-	cardEl.appendChild(infoEl);
+
 	return cardEl;
 }
 
-export function draggableCommit(
-	node: HTMLElement,
-	initialOpts: DraggableConfig | NonDraggableConfig
-) {
+export function draggableCommitV3(node: HTMLElement, initialOpts: DraggableConfig) {
 	function createClone(opts: DraggableConfig) {
 		if (opts.disabled) return;
-		return createCommitElement(opts.commitType, opts.label, opts.sha, opts.date, opts.authorImgUrl);
+		return createCommitElementV3(opts.commitType, opts.label);
 	}
 	return setupDragHandlers(node, initialOpts, createClone, {
-		handlerWidth: true
+		handlerWidth: false
 	});
 }
 
-////////////////////////
-//// FILE DRAGGABLE ////
-////////////////////////
+//////////////////
+/// DRAG CHIPS ///
+//////////////////
 
-export function createChipsElement(
-	childrenAmount: number,
+function createFileChipContainer(
 	label: string | undefined,
 	filePath: string | undefined
 ): HTMLDivElement {
-	const containerEl = createElement('div', ['draggable-chip-container']);
-	const chipEl = createElement('div', ['draggable-chip']);
-	containerEl.appendChild(chipEl);
+	const containerEl = createElement('div', ['dragchip-file-container']);
 
 	if (filePath) {
-		const iconEl = createElement('img', ['draggable-chip-icon'], undefined, getFileIcon(filePath));
-		chipEl.appendChild(iconEl);
+		const fileIcon = getFileIcon(filePath);
+		const iconEl = createElement('img', ['dragchip-file-icon'], undefined, fileIcon);
+		containerEl.appendChild(iconEl);
 	}
 
-	const labelEl = createElement('span', ['text-12'], label);
-	chipEl.appendChild(labelEl);
+	const fileNameEl = createElement(
+		'span',
+		['text-12', 'text-semibold', 'dragchip-file-name'],
+		label || 'Empty file'
+	);
+	containerEl.appendChild(fileNameEl);
 
-	if (childrenAmount > 1) {
+	return containerEl;
+}
+
+function createHunkChipContainer(label: string | undefined): HTMLDivElement {
+	const containerEl = createElement('div', ['dragchip-hunk-container']);
+
+	const hunkDecoIndatorEl = createElement('div', ['dragchip-hunk-decorator']);
+	hunkDecoIndatorEl.textContent = '〈/〉';
+	containerEl.appendChild(hunkDecoIndatorEl);
+
+	const hunkLabelEl = createElement('span', ['dragchip-hunk-label'], label || 'Empty hunk');
+	containerEl.appendChild(hunkLabelEl);
+
+	return containerEl;
+}
+
+export function createChipsElement(
+	opt: {
+		childrenAmount: number;
+		label: string | undefined;
+		filePath: string | undefined;
+		chipType: 'file' | 'hunk';
+	} = {
+		childrenAmount: 1,
+		label: undefined,
+		filePath: undefined,
+		chipType: 'file'
+	}
+): HTMLDivElement {
+	const containerEl = createElement('div', ['dragchip-container']);
+	const chipEl = createElement('div', ['dragchip']);
+	containerEl.appendChild(chipEl);
+
+	if (opt.chipType === 'file') {
+		const fileChipContainer = createFileChipContainer(opt.label, opt.filePath);
+		chipEl.appendChild(fileChipContainer);
+	} else if (opt.chipType === 'hunk') {
+		const hunkChipContainer = createHunkChipContainer(opt.label);
+
+		chipEl.appendChild(hunkChipContainer);
+	}
+
+	if (opt.childrenAmount > 1) {
 		const amountTag = createElement(
 			'div',
-			['text-11', 'text-bold', 'draggable-chip-amount'],
-			childrenAmount.toString()
+			['text-11', 'text-bold', 'dragchip-amount'],
+			opt.childrenAmount.toString()
 		);
 		chipEl.appendChild(amountTag);
 	}
 
-	if (childrenAmount === 2) {
-		containerEl.classList.add('draggable-chip-two');
-	} else if (childrenAmount > 2) {
-		containerEl.classList.add('draggable-chip-multiple');
+	if (opt.childrenAmount === 2) {
+		containerEl.classList.add('dragchip-two');
+	} else if (opt.childrenAmount > 2) {
+		containerEl.classList.add('dragchip-multiple');
 	}
 
 	return containerEl;
@@ -324,15 +364,19 @@ export function createChipsElement(
 
 export function draggableChips(node: HTMLElement, initialOpts: DraggableConfig) {
 	function createClone(opts: DraggableConfig, selectedElements: Element[]) {
-		if (opts.disabled) return;
-		return createChipsElement(selectedElements.length, opts.label, opts.filePath);
+		return createChipsElement({
+			childrenAmount: selectedElements.length,
+			label: opts.label,
+			filePath: opts.filePath,
+			chipType: opts.chipType || 'file'
+		});
 	}
 	return setupDragHandlers(node, initialOpts, createClone);
 }
 
-////////////////////////
-//// HUNK DRAGGABLE ////
-////////////////////////
+////////////////////////////
+//// GENERAL DRAG CLONE ////
+////////////////////////////
 
 export function cloneElement(node: HTMLElement) {
 	const cloneEl = node.cloneNode(true) as HTMLElement;
@@ -342,13 +386,4 @@ export function cloneElement(node: HTMLElement) {
 	ignoredElements.forEach((el) => el.remove());
 
 	return cloneEl;
-}
-
-export function draggableElement(node: HTMLElement, initialOpts: DraggableConfig) {
-	function createClone() {
-		return cloneElement(node);
-	}
-	return setupDragHandlers(node, initialOpts, createClone, {
-		handlerWidth: true
-	});
 }

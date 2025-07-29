@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Icon from '@gitbutler/ui/Icon.svelte';
+	import { Icon } from '@gitbutler/ui';
 	import type { Snippet } from 'svelte';
 
 	interface Props {
@@ -11,10 +11,20 @@
 		type: 'upstream' | 'integrated';
 		title: Snippet;
 		children: Snippet;
+		testId?: string;
 	}
 
-	const { count, isLast, unfoldable, type, displayHeader, alignTop, title, children }: Props =
-		$props();
+	const {
+		count,
+		isLast,
+		unfoldable,
+		type,
+		displayHeader,
+		alignTop,
+		title,
+		children,
+		testId
+	}: Props = $props();
 
 	let isOpen = $state(count === 1);
 
@@ -24,6 +34,7 @@
 </script>
 
 <div
+	data-testid={testId}
 	class="commits-accordion {type}"
 	class:is-last={isLast}
 	class:is-open={isOpen}
@@ -73,8 +84,8 @@
 
 <style lang="postcss">
 	.commits-accordion {
-		position: relative;
 		display: flex;
+		position: relative;
 		flex-direction: column;
 
 		&:focus {
@@ -100,9 +111,9 @@
 
 	.commits-accordion-row__header {
 		display: flex;
+		align-items: stretch;
 		width: 100%;
 		min-height: 44px;
-		align-items: stretch;
 		text-align: left;
 
 		&:not(:last-child) {
@@ -110,10 +121,10 @@
 		}
 
 		& .title {
-			flex: 1;
 			display: block;
-			color: var(--clr-text-1);
+			flex: 1;
 			width: 100%;
+			color: var(--clr-text-1);
 		}
 	}
 
@@ -136,10 +147,10 @@
 
 		& .dots {
 			display: flex;
-			flex-direction: column;
 			position: absolute;
 			top: calc(50% - var(--dots-y-shift) / var(--dots-count));
 			left: 50%;
+			flex-direction: column;
 			transform: translate(-50%, -50%);
 		}
 	}
@@ -147,17 +158,17 @@
 	.commits-accordion-row__right {
 		display: flex;
 		flex: 1;
-		padding: 12px 14px 12px 0;
 		align-items: center;
+		padding: 12px 14px 12px 0;
 		color: var(--clr-text-2);
 	}
 
 	.commits-accordion-children {
 		display: flex;
 		flex-direction: column;
+		align-items: stretch;
 		width: 100%;
 		min-height: 44px;
-		align-items: stretch;
 		text-align: left;
 	}
 

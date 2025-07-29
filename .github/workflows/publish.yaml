@@ -202,6 +202,7 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPIMAGE_KEY_ID: ${{ secrets.APPIMAGE_KEY_ID }}
           APPIMAGE_KEY_PASSPHRASE: ${{ secrets.APPIMAGE_KEY_PASSPHRASE }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -217,6 +218,8 @@ jobs:
           rm -rf tauri-aux-artifacts
           mkdir -p tauri-aux-artifacts
           cp target/release/gitbutler-git-askpass.exe tauri-aux-artifacts/
+          cp target/release/but-testing.exe tauri-aux-artifacts/
+          cp target/release/but.exe tauri-aux-artifacts/
 
       - name: Upload Windows Aux Binary Artifacts
         uses: actions/upload-artifact@v4

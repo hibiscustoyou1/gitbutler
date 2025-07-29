@@ -1,15 +1,7 @@
+import { InjectionToken } from '@gitbutler/shared/context';
 import type { Tauri } from '$lib/backend/tauri';
 
-export type GitCredentialCheck = {
-	error?: string;
-	name?: string;
-	ok: boolean;
-};
-
-export type CredentialCheckError = {
-	check: string;
-	message: string;
-};
+export const GIT_CONFIG_SERVICE = new InjectionToken<GitConfigService>('GitConfigService');
 
 export class GitConfigService {
 	constructor(private tauri: Tauri) {}

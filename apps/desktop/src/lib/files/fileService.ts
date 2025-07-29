@@ -1,7 +1,8 @@
-import { RemoteFile } from './file';
-import { plainToInstance } from 'class-transformer';
+import { InjectionToken } from '@gitbutler/shared/context';
 import type { Tauri } from '$lib/backend/tauri';
-import type { FileInfo } from './file';
+import type { FileInfo } from '$lib/files/file';
+
+export const FILE_SERVICE = new InjectionToken<FileService>('FileService');
 
 export class FileService {
 	constructor(private tauri: Tauri) {}
@@ -15,25 +16,6 @@ export class FileService {
 			data,
 			isLarge: isLarge(data.size)
 		};
-	}
-
-	async readFromCommit(filePath: string, projectId: string, commitId: string | undefined) {
-		const data: FileInfo = await this.tauri.invoke('get_commit_file', {
-			relativePath: filePath,
-			projectId: projectId,
-			commitId
-		});
-		return {
-			data,
-			isLarge: isLarge(data.size)
-		};
-	}
-
-	async listCommitFiles(projectId: string, commitOid: string) {
-		return plainToInstance(
-			RemoteFile,
-			await this.tauri.invoke<any[]>('list_commit_files', { projectId, commitOid })
-		).sort((a, b) => a.path?.localeCompare(b.path));
 	}
 }
 

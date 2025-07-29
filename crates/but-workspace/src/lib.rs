@@ -14,77 +14,219 @@
 //!   - GitButler implements the concept of a branch stack. This is essentially a collection of "heads"
 //!     (pseudo branches) that contain each other.
 //!   - Always contains at least one branch.
-//!   - High level documentation here: <https://docs.gitbutler.com/features/stacked-branches>
+//!   - High level documentation here: <https://docs.gitbutler.com/features/virtual-branches/stacked-branches>
 //! * **Target Branch**
 //!   - The branch every stack in the workspace wants to get merged into.
 //!   - It's usually a local tracking branch, but doesn't have to if no Git *remote* is associated with it.
 //!   - Git doesn't have a notion of such a branch.
 //! * **DiffSpec**
 //!   - A type that identifies changes, either as whole file, or as hunks in the file.
-//!   - It doesn't specify if the change is in a commit, or in the worktree, so that information must provided separately.
+//!   - It doesn't specify if the change is in a commit, or in the worktree, so that information must be provided separately.
+use std::{collections::HashMap, path::Path};
 
-use anyhow::{Context, Result};
-use author::Author;
-use bstr::{BStr, BString};
+use anyhow::Result;
+use bstr::BString;
+use but_core::TreeChange;
 use gitbutler_command_context::CommandContext;
-use gitbutler_commit::commit_ext::CommitExt;
-use gitbutler_id::id::Id;
-use gitbutler_oxidize::{OidExt, git2_signature_to_gix_signature};
-use gitbutler_stack::stack_context::CommandContextExt;
-use gitbutler_stack::{Stack, VirtualBranchesHandle};
-use integrated::IsCommitIntegrated;
-use itertools::Itertools;
-use serde::Serialize;
-use std::collections::HashMap;
-use std::path::Path;
-use std::str::FromStr;
+use gitbutler_oxidize::OidExt;
+use gitbutler_stack::VirtualBranchesHandle;
+use serde::{Deserialize, Serialize};
 
-mod author;
 mod integrated;
 
+/// Types specifically for the user-interface.
+pub mod ui;
+
 pub mod commit_engine;
+/// Tools for manipulating trees
+pub mod tree_manipulation;
+pub use tree_manipulation::{
+    MoveChangesResult,
+    discard_worktree_changes::discard_workspace_changes,
+    move_between_commits::move_changes_between_commits,
+    remove_changes_from_commit_in_stack::remove_changes_from_commit_in_stack,
+    split_branch::{split_branch, split_into_dependent_branch},
+    split_commit::{CommitFiles, CommmitSplitOutcome, split_commit},
+};
+pub mod head;
+pub use head::{head, merge_worktree_with_workspace};
 
 /// 🚧utilities for applying and unapplying branches 🚧.
+/// Ignore the name of this module; it's just a place to put code by now.
 pub mod branch;
 
-/// 🚧Deal with worktree changes 🚧.
-mod stash {
-    /// Information about a stash which is associated with the tip of a stack.
-    #[derive(Debug, Copy, Clone)]
-    pub enum StashStatus {
-        /// The parent reference is still present, but it doesn't point to the first parent of the *stash commit* anymore.
-        Desynced,
-        /// The parent reference could not be found. Maybe it was removed, maybe it was renamed.
-        Orphaned,
-    }
-}
-pub use stash::StashStatus;
+mod changeset;
 
 mod commit;
 
 /// Types used only when obtaining head-information.
 ///
 /// Note that many of these types should eventually end up in the crate root.
-pub mod head_info;
-pub use head_info::function::head_info;
+pub mod ref_info;
+pub use ref_info::function::{head_info, ref_info};
 
-/// Information about where the user is currently looking at.
+/// High level Stack funtions that use primitives from this crate (`but-workspace`)
+pub mod stack_ext;
+
+/// Functions related to retrieving stack information.
+mod stacks;
+// TODO: _v3 versions are specifically for the UI, so import them into `ui` instead.
+pub use stacks::{
+    local_and_remote_commits, stack_branches, stack_details, stack_details_v3, stack_heads_info,
+    stacks, stacks_v3,
+};
+
+mod branch_details;
+pub use branch_details::{branch_details, branch_details_v3};
+use but_graph::SegmentIndex;
+
+/// A change that should be used to create a new commit or alter an existing one, along with enough information to know where to find it.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffSpec {
+    /// The previous location of the entry, the source of a rename if there was one.
+    #[serde(rename = "previousPathBytes")]
+    pub previous_path: Option<BString>,
+    /// The worktree-relative path to the worktree file with the content to commit.
+    ///
+    /// If `hunks` is empty, this means the current content of the file should be committed.
+    #[serde(rename = "pathBytes")]
+    pub path: BString,
+    /// If one or more hunks are specified, match them with actual changes currently in the worktree.
+    /// Failure to match them will lead to the change being dropped.
+    /// If empty, the whole file is taken as is if this seems to be an addition.
+    /// Otherwise, the whole file is being deleted.
+    pub hunk_headers: Vec<HunkHeader>,
+}
+
+impl From<&TreeChange> for DiffSpec {
+    fn from(change: &but_core::TreeChange) -> Self {
+        Self {
+            previous_path: change.previous_path().map(ToOwned::to_owned),
+            path: change.path.to_owned(),
+            hunk_headers: vec![],
+        }
+    }
+}
+
+impl From<TreeChange> for DiffSpec {
+    fn from(change: but_core::TreeChange) -> Self {
+        Self {
+            previous_path: change.previous_path().map(ToOwned::to_owned),
+            path: change.path.to_owned(),
+            hunk_headers: vec![],
+        }
+    }
+}
+
+/// The header of a hunk that represents a change to a file.
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HunkHeader {
+    /// The 1-based line number at which the previous version of the file started.
+    pub old_start: u32,
+    /// The non-zero number of lines included in the previous version of the file.
+    pub old_lines: u32,
+    /// The 1-based line number at which the new version of the file started.
+    pub new_start: u32,
+    /// The non-zero number of lines included in the new version of the file.
+    pub new_lines: u32,
+}
+
+impl From<&but_core::unified_diff::DiffHunk> for HunkHeader {
+    fn from(hunk: &but_core::unified_diff::DiffHunk) -> Self {
+        Self {
+            old_start: hunk.old_start,
+            old_lines: hunk.old_lines,
+            new_start: hunk.new_start,
+            new_lines: hunk.new_lines,
+        }
+    }
+}
+
+impl HunkHeader {
+    /// Returns the hunk header with the old and new ranges swapped.
+    ///
+    /// This is useful for applying the hunk in reverse.
+    pub fn reverse(&self) -> Self {
+        Self {
+            old_start: self.new_start,
+            old_lines: self.new_lines,
+            new_start: self.old_start,
+            new_lines: self.old_lines,
+        }
+    }
+}
+
+/// Information about refs, as seen from within or outsie of a workspace.
+///
+/// We always try to deduce a set of stacks that are currently applied to a workspace,
+/// even though it's possible to look at refs that are outside a workspace as well.
+/// TODO: There should be a UI version of [`but_graph::projection::Workspace`].
+///       This should also include base-branch data, see `get_base_branch_data()`.
 #[derive(Debug, Clone)]
-pub struct HeadInfo {
+pub struct RefInfo {
+    /// The name of the ref that points to a workspace commit,
+    /// *or* the name of the first stack segment.
+    pub workspace_ref_name: Option<gix::refs::FullName>,
     /// The stacks visible in the current workspace.
     ///
     /// This is an empty array if the `HEAD` is detached.
     /// Otherwise, there is one or more stacks.
     pub stacks: Vec<branch::Stack>,
-    /// The full name to the target reference that we should integrate with, if present.
-    pub target_ref: Option<gix::refs::FullName>,
+    /// The target to integrate workspace stacks into.
+    ///
+    /// If `None`, this is a local workspace that doesn't know when possibly pushed branches are considered integrated.
+    /// This happens when there is a local branch checked out without a remote tracking branch.
+    pub target: Option<but_graph::projection::Target>,
+    /// The segment index of the extra target as provided for traversal,
+    /// useful for AdHoc workspaces, but generally applicable to all workspaces to keep the lower bound lower than it
+    /// otherwise would be.
+    pub extra_target: Option<SegmentIndex>,
+    /// The bound can be imagined as the segment from which all other commits in the workspace originate.
+    /// It can also be imagined to be the delimiter at the bottom beyond which nothing belongs to the workspace,
+    /// as antagonist to the first commit in tip of the segment with `id`, serving as first commit that is
+    /// inside the workspace.
+    ///
+    /// As such, it's always the longest path to the first shared commit with the target among
+    /// all of our stacks, or it is the first commit that is shared among all of our stacks in absence of a target.
+    /// One can also think of it as the starting point from which all workspace commits can be reached when
+    /// following all incoming connections and stopping at the tip of the workspace.
+    ///
+    /// It is `None` there is only a single stack and no target, so nothing was integrated.
+    pub lower_bound: Option<SegmentIndex>,
+    /// The `workspace_ref_name` is `Some(_)` and belongs to GitButler, because it had metadata attached.
+    pub is_managed_ref: bool,
+    /// The `workspace_ref_name` points to a commit that was specifically created by us.
+    /// If the user advanced the workspace head by hand, this would be `false`.
+    /// See if `ancestor_workspace_commit` is `Some()` to understand if anything could be fixed here.
+    /// If there is no managed commits, we have to be extra careful as to what we allow, but setting
+    /// up stacks and dependent branches is usually fine, and limited commit creation. Play it safe though,
+    /// this is mainly for graceful handling of special cases.
+    pub is_managed_commit: bool,
+    /// The workspace commit as it exists in the past of `workspace_ref_name`.
+    ///
+    /// **Warning**: If `Some()`, only fixing this issue should be allowed.
+    pub ancestor_workspace_commit: Option<AncestorWorkspaceCommit>,
+    /// The workspace represents what `HEAD` is pointing to.
+    pub is_entrypoint: bool,
 }
 
-mod virtual_branches_metadata;
-pub use virtual_branches_metadata::VirtualBranchesTomlMetadata;
+/// Describes a workspace commit that is in the ancestry of a managed workspace reference,
+/// probably because it was advanced by user commits.
+#[derive(Debug, Clone)]
+pub struct AncestorWorkspaceCommit {
+    /// The commits along the first parent that are between the managed workspace reference and the managed workspace commit.
+    /// The vec is never empty.
+    pub commits_outside: Vec<ref_info::ui::Commit>,
+    /// The index of the segment that actually holds the managed workspace commit.
+    pub segment_with_managed_commit: SegmentIndex,
+    /// The index of the workspace commit within the `commits` array in its parent segment.
+    pub commit_index_of_managed_commit: but_graph::CommitIndex,
+}
 
-/// A representation of the commit that is the tip of the workspace, i.e. usually what `HEAD` points to,
-/// possibly in its managed form in which it merges two or more stacks together and we can rewrite it at will.
+/// A representation of the commit that is the tip of the workspace i.e., usually what `HEAD` points to,
+/// possibly in its managed form in which it merges two or more stacks together, and we can rewrite it at will.
 pub struct WorkspaceCommit<'repo> {
     /// The id of the commit itself.
     pub id: gix::Id<'repo>,
@@ -95,45 +237,17 @@ pub struct WorkspaceCommit<'repo> {
 /// An ID uniquely identifying stacks.
 pub use gitbutler_stack::StackId;
 
-/// Represents a lightweight version of a [`gitbutler_stack::Stack`] for listing.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StackEntry {
-    /// The ID of the stack.
-    pub id: StackId,
-    /// The list of the branch names that are part of the stack.
-    /// The list is never empty.
-    /// The first entry in the list is always the most recent branch on top the stack.
-    #[serde(with = "gitbutler_serde::bstring_vec_lossy")]
-    pub branch_names: Vec<BString>,
-    /// The tip of the top-most branch, i.e. the most recent commit that would become the parent of new commits of the topmost stack branch.
-    pub tip: gix::ObjectId,
-}
-
-impl StackEntry {
-    /// The name of the stack, which is the name of the top-most branch.
-    pub fn name(&self) -> Option<&BStr> {
-        self.branch_names.last().map(AsRef::<BStr>::as_ref)
-    }
-}
-
-/// Returns the list of stacks that are currently part of the workspace.
-/// If there are no applied stacks, the returned Vec is empty.
-/// If the GitButler state file in the provided path is missing or invalid, an error is returned.
-///
-/// - `gb_dir`: The path to the GitButler state for the project. Normally this is `.git/gitbutler` in the project's repository.
-pub fn stacks(gb_dir: &Path) -> Result<Vec<StackEntry>> {
-    let state = state_handle(gb_dir);
-    Ok(state
-        .list_stacks_in_workspace()?
-        .into_iter()
-        .sorted_by_key(|s| s.order)
-        .map(|stack| StackEntry {
-            id: stack.id,
-            branch_names: stack.heads().into_iter().map(Into::into).collect(),
-            tip: stack.head().to_gix(),
-        })
-        .collect())
+/// A filter for the list of stacks.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub enum StacksFilter {
+    /// Show all stacks
+    All,
+    /// Show only applied stacks
+    #[default]
+    InWorkspace,
+    /// Show only unapplied stacks
+    // TODO: figure out where this is used. V2 maybe? If so, it can be removed eventually.
+    Unapplied,
 }
 
 /// Returns the last-seen fork-point that the workspace has with the target branch with which it wants to integrate.
@@ -145,320 +259,89 @@ pub fn common_merge_base_with_target_branch(gb_dir: &Path) -> Result<gix::Object
         .to_gix())
 }
 
-/// Represents the state a commit could be in.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", content = "subject")]
-pub enum CommitState {
-    /// The commit is only local
-    LocalOnly,
-    /// The commit is also present at the remote tracking branch.
-    /// This is the commit state if:
-    ///  - The commit has been pushed to the remote
-    ///  - The commit has been copied from a remote commit (when applying a remote branch)
-    ///
-    /// This variant carries the remote commit id.
-    /// The `remote_commit_id` may be the same as the `id` or it may be different if the local commit has been rebased or updated in another way.
-    #[serde(with = "gitbutler_serde::object_id")]
-    LocalAndRemote(gix::ObjectId),
-    /// The commit is considered integrated.
-    /// This should happen when this commit or the contents of this commit is already part of the base.
-    Integrated,
-}
-
-/// Commit that is a part of a [`StackBranch`](gitbutler_stack::StackBranch) and, as such, containing state derived in relation to the specific branch.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Commit {
-    /// The OID of the commit.
-    #[serde(with = "gitbutler_serde::object_id")]
-    pub id: gix::ObjectId,
-    /// The parent OIDs of the commit.
-    #[serde(with = "gitbutler_serde::object_id_vec")]
-    pub parent_ids: Vec<gix::ObjectId>,
-    /// The message of the commit.
-    #[serde(with = "gitbutler_serde::bstring_lossy")]
-    pub message: BString,
-    /// Whether the commit is in a conflicted state.
-    /// Conflicted state of a commit is a GitButler concept.
-    /// GitButler will perform rebasing/reordering etc without interruptions and flag commits as conflicted if needed.
-    /// Conflicts are resolved via the Edit Mode mechanism.
-    pub has_conflicts: bool,
-    /// Represents wether the the commit is considered integrated, local only,
-    /// or local and remote with respect to the branch it belongs to.
-    /// Note that remote only commits in the context of a branch are expressed with the [`UpstreamCommit`] struct instead of this.
-    pub state: CommitState,
-    /// Commit creation time in Epoch milliseconds.
-    pub created_at: u128,
-    /// The author of the commit.
-    pub author: Author,
-}
-
-/// Commit that is only at the remote.
-/// Unlike the `Commit` struct, there is no knowledge of GitButler concepts like conflicted state etc.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpstreamCommit {
-    /// The OID of the commit.
-    #[serde(with = "gitbutler_serde::object_id")]
-    pub id: gix::ObjectId,
-    /// The message of the commit.
-    #[serde(with = "gitbutler_serde::bstring_lossy")]
-    pub message: BString,
-    /// Commit creation time in Epoch milliseconds.
-    pub created_at: u128,
-    /// The author of the commit.
-    pub author: Author,
-}
-
-/// Represents a branch in a [`Stack`]. It contains commits derived from the local pseudo branch and it's respective remote
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Branch {
-    /// The name of the branch.
-    #[serde(with = "gitbutler_serde::bstring_lossy")]
-    pub name: BString,
-    /// Upstream reference, e.g. `refs/remotes/origin/base-branch-improvements`
-    #[serde(with = "gitbutler_serde::bstring_opt_lossy")]
-    pub remote_tracking_branch: Option<BString>,
-    /// Description of the branch.
-    /// Can include arbitrary utf8 data, eg. markdown etc.
-    pub description: Option<String>,
-    /// The pull(merge) request associated with the branch, or None if no such entity has not been created.
-    pub pr_number: Option<usize>,
-    /// A unique identifier for the GitButler review associated with the branch, if any.
-    pub review_id: Option<String>,
-    /// Indicates that the branch was previously part of a stack but it has since been integrated.
-    /// In other words, the merge base of the stack is now above this branch.
-    /// This would occur when the branch has been merged at the remote and the workspace has been updated with that change.
-    /// An archived branch will not have any commits associated with it.
-    pub archived: bool,
-    /// This is the base commit from the perspective of this branch.
-    /// If the branch is part of a stack and is on top of another branch, this is the head of the branch below it.
-    /// If this branch is at the bottom of the stack, this is the merge base of the stack.
-    #[serde(with = "gitbutler_serde::object_id")]
-    pub base_commit: gix::ObjectId,
-}
-
-/// Returns the branches that belong to a particular [`gitbutler_stack::Stack`]
-/// The entries are ordered from newest to oldest.
-pub fn stack_branches(stack_id: String, ctx: &CommandContext) -> Result<Vec<Branch>> {
-    let state = state_handle(&ctx.project().gb_dir());
-    let remote = state
-        .get_default_target()
-        .context("failed to get default target")?
-        .push_remote_name();
-
-    let mut stack_branches = vec![];
-    let stack = state.get_stack(Id::from_str(&stack_id)?)?;
-    let stack_ctx = ctx.to_stack_context()?;
-    let mut current_base = stack.merge_base(&stack_ctx)?.to_gix();
-    for internal in stack.branches() {
-        let upstream_reference = ctx
-            .repo()
-            .find_reference(&internal.remote_reference(remote.as_str()))
-            .ok()
-            .map(|_| internal.remote_reference(remote.as_str()));
-        let result = Branch {
-            name: internal.name().to_owned().into(),
-            remote_tracking_branch: upstream_reference.map(Into::into),
-            description: internal.description.clone(),
-            pr_number: internal.pr_number,
-            review_id: internal.review_id.clone(),
-            archived: internal.archived,
-            base_commit: current_base,
-        };
-        current_base = internal.head_oid(&stack_ctx, &stack)?.to_gix();
-        stack_branches.push(result);
-    }
-    stack_branches.reverse();
-    Ok(stack_branches)
-}
-
-/// Returns a list of commits beloning to this branch. Ordered from newest to oldest (child-most to parent-most).
+/// Return a list of commits on the target branch
+/// Starts either from the target branch or from the provided commit id, up to the limit provided.
 ///
-/// These are the commits that are currently part of the workspace (applied).
-/// Created from the local pseudo branch (head currently stored in the TOML file)
-///
-/// When there is only one branch in the stack, this includes the commits
-/// from the tip of the stack to the merge base with the trunk / target branch (not including the merge base).
-///
-/// When there are multiple branches in the stack, this includes the commits from the branch head to the next branch in the stack.
-///
-/// In either case this is effectively a list of commits that in the working copy which may or may not have been pushed to the remote.
-pub fn stack_branch_local_and_remote_commits(
-    stack_id: String,
-    branch_name: String,
+/// Returns the commits in reverse order, i.e., from the most recent to the oldest.
+/// The `Commit` type is the same as that of the other workspace endpoints - for that reason,
+/// the fields `has_conflicts` and `state` are somewhat meaningless.
+pub fn log_target_first_parent(
     ctx: &CommandContext,
-    repo: &gix::Repository,
-) -> Result<Vec<Commit>> {
-    let state = state_handle(&ctx.project().gb_dir());
-    let stack = state.get_stack(Id::from_str(&stack_id)?)?;
-
-    let branches = stack.branches();
-    let branch = branches.iter().find(|b| b.name() == &branch_name).unwrap(); //todo
-    if branch.archived {
-        return Ok(vec![]);
-    }
-    local_and_remote_commits(ctx, repo, branch.clone(), &stack)
-}
-
-/// Returns a fift of commits beloning to this branch. Ordered from newest to oldest (child-most to parent-most).
-///
-/// These are the commits that exist **only** on the upstream branch. Ordered from newest to oldest.
-/// Created from the tip of the local tracking branch eg. refs/remotes/origin/my-branch -> refs/heads/my-branch
-///
-/// This does **not** include the commits that are in the commits list (local)
-/// This is effectively the list of commits that are on the remote branch but are not in the working copy.
-pub fn stack_branch_upstream_only_commits(
-    stack_id: String,
-    branch_name: String,
-    ctx: &CommandContext,
-    repo: &gix::Repository,
-) -> Result<Vec<UpstreamCommit>> {
-    let state = state_handle(&ctx.project().gb_dir());
-    let stack = state.get_stack(Id::from_str(&stack_id)?)?;
-
-    let branches = stack.branches();
-    let branch = branches.iter().find(|b| b.name() == &branch_name).unwrap(); //todo
-    if branch.archived {
-        return Ok(vec![]);
-    }
-    upstream_only_commits(ctx, repo, branch.clone(), &stack)
-}
-
-fn upstream_only_commits(
-    ctx: &CommandContext,
-    repo: &gix::Repository,
-    stack_branch: gitbutler_stack::StackBranch,
-    stack: &Stack,
-) -> Result<Vec<UpstreamCommit>> {
-    let stack_ctx = ctx.to_stack_context()?;
-    let branch_commits = stack_branch.commits(&stack_ctx, stack)?;
-    let local_and_remote = local_and_remote_commits(ctx, repo, stack_branch, stack)?;
-
-    // Upstream only
-    let mut upstream_only = vec![];
-    for commit in branch_commits.upstream_only.iter() {
-        let matches_known_commit = local_and_remote.iter().any(|c| {
-            if let CommitState::LocalAndRemote(remote_id) = &c.state {
-                remote_id == &commit.id().to_gix()
-            } else {
-                false
-            }
-        });
-        // Ignore commits that strictly speaking are remote only but they match a known local commit (rebase etc)
-        if !matches_known_commit {
-            let created_at = u128::try_from(commit.time().seconds())? * 1000;
-            let upstream_commit = UpstreamCommit {
-                id: commit.id().to_gix(),
-                message: commit.message_bstr().into(),
-                created_at,
-                author: commit.author().into(),
-            };
-            upstream_only.push(upstream_commit);
+    last_commit_id: Option<gix::ObjectId>,
+    limit: usize,
+) -> Result<Vec<ui::Commit>> {
+    let repo = ctx.gix_repo()?;
+    let traversal_root_id = match last_commit_id {
+        Some(id) => {
+            let commit = repo.find_commit(id)?;
+            commit.parent_ids().next()
         }
-    }
-    upstream_only.reverse();
-
-    Ok(upstream_only)
-}
-
-fn local_and_remote_commits(
-    ctx: &CommandContext,
-    repo: &gix::Repository,
-    stack_branch: gitbutler_stack::StackBranch,
-    stack: &Stack,
-) -> Result<Vec<Commit>> {
-    let state = state_handle(&ctx.project().gb_dir());
-    let default_target = state
-        .get_default_target()
-        .context("failed to get default target")?;
-    let cache = repo.commit_graph_if_enabled()?;
-    let mut graph = repo.revision_graph(cache.as_ref());
-    let mut check_commit = IsCommitIntegrated::new(ctx, &default_target, repo, &mut graph)?;
-
-    let stack_ctx = ctx.to_stack_context()?;
-    let branch_commits = stack_branch.commits(&stack_ctx, stack)?;
-    let mut local_and_remote: Vec<Commit> = vec![];
-    let mut is_integrated = false;
-
-    let remote_commit_data = branch_commits
-        .remote_commits
-        .iter()
-        .filter_map(|commit| {
-            let data = CommitData::try_from(commit).ok()?;
-            Some((data, commit.id()))
-        })
-        .collect::<HashMap<_, _>>();
-
-    // Local and remote
-    // Reverse first instead of later, so that we catch the first integrated commit
-    for commit in branch_commits.clone().local_commits.iter().rev() {
-        if !is_integrated {
-            is_integrated = check_commit.is_integrated(commit)?;
+        None => {
+            let state = state_handle(&ctx.project().gb_dir());
+            let default_target = state.get_default_target()?;
+            Some(
+                repo.find_reference(&default_target.branch.to_string())?
+                    .peel_to_commit()?
+                    .id(),
+            )
         }
-        let copied_from_remote_id = CommitData::try_from(commit)
-            .ok()
-            .and_then(|data| remote_commit_data.get(&data).copied());
+    };
+    let traversal_root_id = match traversal_root_id {
+        Some(id) => id,
+        None => return Ok(vec![]),
+    };
 
-        let state = if is_integrated {
-            CommitState::Integrated
-        } else {
-            // Can we find this as a remote commit by any of these options:
-            // - the commit is copied from a remote commit
-            // - the commit has an identical sha as the remote commit (the no brainer case)
-            // - the commit has a change id that matches a remote commit
-            if let Some(remote_id) = copied_from_remote_id {
-                CommitState::LocalAndRemote(remote_id.to_gix())
-            } else if let Some(remote_id) = branch_commits
-                .remote_commits
-                .iter()
-                .find(|c| c.id() == commit.id() || c.change_id() == commit.change_id())
-                .map(|c| c.id())
-            {
-                CommitState::LocalAndRemote(remote_id.to_gix())
-            } else {
-                CommitState::LocalOnly
-            }
-        };
+    let mut commits: Vec<ui::Commit> = vec![];
+    for commit_info in traversal_root_id.ancestors().first_parent_only().all()? {
+        if commits.len() == limit {
+            break;
+        }
+        let commit = commit_info?.id().object()?.into_commit();
 
-        let created_at = u128::try_from(commit.time().seconds())? * 1000;
-
-        let api_commit = Commit {
-            id: commit.id().to_gix(),
-            parent_ids: commit.parents().map(|p| p.id().to_gix()).collect(),
-            message: commit.message_bstr().into(),
-            has_conflicts: commit.is_conflicted(),
-            state,
-            created_at,
-            author: commit.author().into(),
-        };
-        local_and_remote.push(api_commit);
+        commits.push(commit.try_into()?);
     }
-
-    Ok(local_and_remote)
+    Ok(commits)
 }
 
 fn state_handle(gb_state_path: &Path) -> VirtualBranchesHandle {
     VirtualBranchesHandle::new(gb_state_path)
 }
 
-/// The commit-data we can use for comparison to see which remote-commit was used to craete
-/// a local commit from.
-/// Note that trees can't be used for comparison as these are typically rebased.
-#[derive(Debug, Hash, Eq, PartialEq)]
-pub(crate) struct CommitData {
-    message: BString,
-    author: gix::actor::Signature,
+/// If there are multiple diffs spces where path and previous_path are the same, collapse them into one.
+pub fn flatten_diff_specs(input: Vec<DiffSpec>) -> Vec<DiffSpec> {
+    let mut output: HashMap<String, DiffSpec> = HashMap::new();
+    for spec in input {
+        let key = format!(
+            "{}:{}",
+            spec.path,
+            spec.previous_path
+                .clone()
+                .map(|p| p.to_string())
+                .unwrap_or_default()
+        );
+        output
+            .entry(key)
+            .and_modify(|e| e.hunk_headers.extend(spec.hunk_headers.clone()))
+            .or_insert(spec);
+    }
+    output.into_values().collect()
 }
 
-impl TryFrom<&git2::Commit<'_>> for CommitData {
-    type Error = anyhow::Error;
+#[cfg(test)]
+pub(crate) mod utils {
+    use crate::{HunkHeader, commit_engine::HunkRange};
 
-    fn try_from(commit: &git2::Commit<'_>) -> std::result::Result<Self, Self::Error> {
-        Ok(CommitData {
-            message: commit.message_raw_bytes().into(),
-            author: git2_signature_to_gix_signature(commit.author()),
-        })
+    pub fn range(start: u32, lines: u32) -> HunkRange {
+        HunkRange { start, lines }
+    }
+    pub fn hunk_header(old: &str, new: &str) -> HunkHeader {
+        let ((old_start, old_lines), (new_start, new_lines)) =
+            but_testsupport::hunk_header(old, new);
+        HunkHeader {
+            old_start,
+            old_lines,
+            new_start,
+            new_lines,
+        }
     }
 }

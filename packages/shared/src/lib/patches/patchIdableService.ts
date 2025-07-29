@@ -1,3 +1,4 @@
+import { InjectionToken } from '$lib/context';
 import { InterestStore } from '$lib/interest/interestStore';
 import { errorToLoadable } from '$lib/network/loadable';
 import { patchIdableTable } from '$lib/patches/patchIdablesSlice';
@@ -12,6 +13,8 @@ type PatchIdableParams = {
 	oldVersion?: number;
 	newVersion: number;
 };
+
+export const PATCH_IDABLE_SERVICE = new InjectionToken<PatchIdableService>('PatchIdableService');
 
 export class PatchIdableService {
 	// We don't want to specify a polling frequency, because diffs are constat data.
@@ -56,7 +59,7 @@ export class PatchIdableService {
 						patchIdableTable.upsertOne({ status: 'found', id: key, value: patch })
 					);
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(patchIdableTable.upsertOne(errorToLoadable(error, key)));
+					this.appDispatch.dispatch(patchIdableTable.addOne(errorToLoadable(error, key)));
 				}
 			})
 			.createInterest();

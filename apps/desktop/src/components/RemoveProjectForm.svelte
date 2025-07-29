@@ -1,23 +1,25 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import ReduxResult from '$components/ReduxResult.svelte';
 	import RemoveProjectButton from '$components/RemoveProjectButton.svelte';
 	import { showError } from '$lib/notifications/toasts';
-	import { Project } from '$lib/project/project';
-	import { ProjectsService } from '$lib/project/projectsService';
-	import { getContext } from '@gitbutler/shared/context';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
-	import * as toasts from '@gitbutler/ui/toasts';
-	import { goto } from '$app/navigation';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { inject } from '@gitbutler/shared/context';
 
-	const projectsService = getContext(ProjectsService);
-	const project = getContext(Project);
+	import { SectionCard } from '@gitbutler/ui';
+	import * as toasts from '@gitbutler/ui/toasts';
+
+	const { projectId }: { projectId: string } = $props();
+
+	const projectsService = inject(PROJECTS_SERVICE);
+	const projectResult = $derived(projectsService.getProject(projectId));
 
 	let isDeleting = $state(false);
 
 	async function onDeleteClicked() {
 		isDeleting = true;
 		try {
-			await projectsService.deleteProject(project.id);
-			await projectsService.reload();
+			await projectsService.deleteProject(projectId);
 			goto('/');
 			toasts.success('Project deleted');
 		} catch (err: any) {
@@ -29,15 +31,18 @@
 	}
 </script>
 
-<SectionCard>
-	{#snippet title()}
-		Remove project
+<ReduxResult {projectId} result={projectResult.current}>
+	{#snippet children(project)}
+		<SectionCard>
+			{#snippet title()}
+				Remove project
+			{/snippet}
+			{#snippet caption()}
+				Removing projects from GitButler only clears configuration — your code stays safe.
+			{/snippet}
+			<div>
+				<RemoveProjectButton projectTitle={project.title} {isDeleting} {onDeleteClicked} />
+			</div>
+		</SectionCard>
 	{/snippet}
-	{#snippet caption()}
-		You can remove projects from GitButler, your code remains safe as this only clears
-		configuration.
-	{/snippet}
-	<div>
-		<RemoveProjectButton projectTitle={project.title} {isDeleting} {onDeleteClicked} />
-	</div>
-</SectionCard>
+</ReduxResult>

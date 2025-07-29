@@ -1,22 +1,20 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import AiPromptSelect from '$components/AIPromptSelect.svelte';
 	import Section from '$components/Section.svelte';
 	import WelcomeSigninAction from '$components/WelcomeSigninAction.svelte';
-	import { projectAiGenEnabled } from '$lib/config/config';
-	import { Project } from '$lib/project/project';
-	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
-	import Spacer from '@gitbutler/ui/Spacer.svelte';
-	import Toggle from '@gitbutler/ui/Toggle.svelte';
-	import { goto } from '$app/navigation';
+	import { projectAiExperimentalFeaturesEnabled, projectAiGenEnabled } from '$lib/config/config';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/shared/context';
+	import { Button, SectionCard, Spacer, Toggle } from '@gitbutler/ui';
 
-	const userService = getContext(UserService);
-	const project = getContext(Project);
+	const { projectId }: { projectId: string } = $props();
+
+	const userService = inject(USER_SERVICE);
 	const user = userService.user;
 
-	const aiGenEnabled = projectAiGenEnabled(project.id);
+	const aiGenEnabled = $derived(projectAiGenEnabled(projectId));
+	const experimentalAiGenEnabled = $derived(projectAiExperimentalFeaturesEnabled(projectId));
 </script>
 
 <Section>
@@ -54,13 +52,40 @@
 		</SectionCard>
 	</div>
 
+	{#if $aiGenEnabled}
+		<div class="options">
+			<SectionCard labelFor="aiExperimental" orientation="row">
+				{#snippet title()}
+					Enable experimental AI features
+				{/snippet}
+				{#snippet caption()}
+					If enabled, you will be able to access the AI features currently in development.
+
+					<b
+						>This also requires you to use OpenAI through GitButler in order for the features to
+						work.</b
+					>
+				{/snippet}
+				{#snippet actions()}
+					<Toggle
+						id="aiExperimental"
+						checked={$experimentalAiGenEnabled}
+						onclick={() => {
+							$experimentalAiGenEnabled = !$experimentalAiGenEnabled;
+						}}
+					/>
+				{/snippet}
+			</SectionCard>
+		</div>
+	{/if}
+
 	<SectionCard>
 		{#snippet title()}
 			Custom prompts
 		{/snippet}
 
-		<AiPromptSelect promptUse="commits" />
-		<AiPromptSelect promptUse="branches" />
+		<AiPromptSelect {projectId} promptUse="commits" />
+		<AiPromptSelect {projectId} promptUse="branches" />
 
 		<Spacer margin={8} />
 

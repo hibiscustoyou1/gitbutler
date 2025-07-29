@@ -1,9 +1,7 @@
 import { getCurrentWindow, type Theme } from '@tauri-apps/api/window';
-import { writable, type Writable } from 'svelte/store';
+import { type Writable } from 'svelte/store';
 import type { Settings } from '$lib/settings/userSettings';
 const appWindow = getCurrentWindow();
-
-export const theme = writable('dark');
 
 let systemTheme: string | null;
 let selectedTheme: string | undefined;
@@ -23,7 +21,7 @@ export function initTheme(userSettings: Writable<Settings>) {
 	});
 }
 
-export function updateDom() {
+function updateDom() {
 	const docEl = document.documentElement;
 	if (
 		selectedTheme === 'dark' ||

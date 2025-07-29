@@ -1,4 +1,6 @@
+import { InjectionToken } from '@gitbutler/shared/context';
 import type { Tauri } from '$lib/backend/tauri';
+import type { DiffSpec } from '$lib/hunks/hunk';
 
 export type HookStatus =
 	| {
@@ -28,13 +30,15 @@ export type MessageHookStatus =
 			error: string;
 	  };
 
+export const HOOKS_SERVICE = new InjectionToken<HooksService>('HooksService');
+
 export class HooksService {
 	constructor(private tauri: Tauri) {}
 
-	async preCommit(projectId: string, ownership: string | undefined = undefined) {
-		return await this.tauri.invoke<HookStatus>('pre_commit_hook', {
+	async preCommitDiffspecs(projectId: string, changes: DiffSpec[]) {
+		return await this.tauri.invoke<HookStatus>('pre_commit_hook_diffspecs', {
 			projectId,
-			ownership
+			changes
 		});
 	}
 

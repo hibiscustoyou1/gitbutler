@@ -1,16 +1,11 @@
 <script lang="ts">
-	import {
-		getGitHubUserServiceStore,
-		GitHubAuthenticationService
-	} from '$lib/forge/github/githubUserService';
-	import { UserService } from '$lib/user/userService';
+	import { writeClipboard } from '$lib/backend/clipboard';
+	import { GITHUB_USER_SERVICE } from '$lib/forge/github/githubUserService.svelte';
+	import { USER_SERVICE } from '$lib/user/userService';
 	import { openExternalUrl } from '$lib/utils/url';
-	import { copyToClipboard } from '@gitbutler/shared/clipboard';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
+	import { inject } from '@gitbutler/shared/context';
+
+	import { Button, Icon, Modal, SectionCard } from '@gitbutler/ui';
 	import * as toasts from '@gitbutler/ui/toasts';
 	import { fade } from 'svelte/transition';
 
@@ -21,9 +16,8 @@
 
 	const { minimal = false, disabled = false }: Props = $props();
 
-	const githubUserService = getGitHubUserServiceStore();
-	const githubAuthenticationService = getContext(GitHubAuthenticationService);
-	const userService = getContext(UserService);
+	const githubUserService = inject(GITHUB_USER_SERVICE);
+	const userService = inject(USER_SERVICE);
 	const user = userService.user;
 
 	// step flags
@@ -37,7 +31,7 @@
 	let gitHubOauthModal: ReturnType<typeof Modal> | undefined = $state();
 
 	function gitHubStartOauth() {
-		githubAuthenticationService.initDeviceOauth().then((verification) => {
+		githubUserService.initDeviceOauth().then((verification) => {
 			userCode = verification.user_code;
 			deviceCode = verification.device_code;
 			gitHubOauthModal?.show();
@@ -48,7 +42,7 @@
 		loading = true;
 		if (!$user) return;
 		try {
-			const accessToken = await githubAuthenticationService.checkAuthStatus({ deviceCode });
+			const accessToken = await githubUserService.checkAuthStatus({ deviceCode });
 			// We don't want to directly modify $user because who knows what state that puts you in
 			let mutableUser = structuredClone($user);
 			mutableUser.github_access_token = accessToken;
@@ -57,7 +51,8 @@
 			// After we call setUser, we want to re-clone the user store, as the userService itself sets the user store
 			mutableUser = structuredClone($user);
 			// TODO: Remove setting of gh username since it isn't used anywhere.
-			mutableUser.github_username = await $githubUserService?.fetchGitHubLogin();
+			const githbLogin = await githubUserService.fetchGitHubLogin();
+			mutableUser.github_username = githbLogin.name || undefined;
 			userService.setUser(mutableUser);
 			toasts.success('GitHub authenticated');
 		} catch (err: any) {
@@ -144,7 +139,7 @@
 						icon="copy"
 						disabled={codeCopied}
 						onclick={() => {
-							copyToClipboard(userCode);
+							writeClipboard(userCode);
 							codeCopied = true;
 						}}
 					>
@@ -210,13 +205,13 @@
 
 	.step-section {
 		display: flex;
-		gap: 16px;
 		margin-left: 8px;
+		gap: 16px;
 
 		&:last-child {
 			& .step-section__content {
-				border-bottom: none;
 				margin-bottom: 0;
+				border-bottom: none;
 			}
 		}
 
@@ -234,18 +229,18 @@
 		flex-direction: column;
 		align-items: flex-start;
 		width: 100%;
-		gap: 12px;
-		margin-left: 8px;
 		margin-bottom: 12px;
+		margin-left: 8px;
+		gap: 12px;
 
 		&:before {
-			content: '';
 			display: block;
 			width: 100%;
 			height: 1px;
-			background-color: var(--clr-scale-ntrl-60);
 			margin-top: 8px;
 			margin-bottom: 6px;
+			background-color: var(--clr-scale-ntrl-60);
+			content: '';
 			opacity: 0.4;
 		}
 	}
@@ -259,14 +254,14 @@
 		border-right: 1px dashed var(--clr-scale-ntrl-60);
 
 		&::before {
-			content: '';
 			position: absolute;
 			left: 50%;
-			transform: translateX(-50%);
 			width: 10px;
 			height: 10px;
-			background-color: var(--clr-scale-ntrl-60);
+			transform: translateX(-50%);
 			border-radius: 100%;
+			background-color: var(--clr-scale-ntrl-60);
+			content: '';
 		}
 	}
 
@@ -287,31 +282,31 @@
 	}
 
 	.icon-wrapper {
-		align-self: flex-start;
 		position: relative;
+		align-self: flex-start;
 		height: fit-content;
 	}
 
 	.icon-wrapper__tick {
-		position: absolute;
 		display: flex;
+		position: absolute;
+		right: -4px;
+		bottom: -4px;
 		align-items: center;
 		justify-content: center;
-		bottom: -4px;
-		right: -4px;
-		background-color: var(--clr-scale-ntrl-100);
 		border-radius: 50px;
+		background-color: var(--clr-scale-ntrl-100);
 	}
 
 	.code-wrapper {
 		display: flex;
-		gap: 10px;
 		align-items: center;
 		align-self: flex-start;
 		padding: 6px 6px 6px 8px;
+		gap: 10px;
+		border: 1px solid var(--clr-border-2);
 		border-radius: var(--radius-m);
 		background-color: var(--clr-bg-1);
-		border: 1px solid var(--clr-border-2);
 		user-select: text;
 	}
 </style>

@@ -1,5 +1,6 @@
 import { setSentryUser } from '$lib/analytics/sentry';
 import { apiToBranch } from '@gitbutler/shared/branches/types';
+import { InjectionToken } from '@gitbutler/shared/context';
 import { get, writable, type Writable } from 'svelte/store';
 import type { ApiBranch, Branch } from '@gitbutler/shared/branches/types';
 import type { HttpClient } from '@gitbutler/shared/network/httpClient';
@@ -20,10 +21,13 @@ export interface User {
 	timezone: string;
 	location: string;
 	emailShare: boolean;
+	ssh_key_token?: string;
 }
 
 // Define the LoadablePatchStacks type using the shared Loadable type
 export type LoadablePatchStacks = Loadable<Branch[]> & { ownerSlug: string };
+
+export const USER_SERVICE = new InjectionToken<UserService>('UserService');
 
 export class UserService {
 	user: Writable<User | undefined> = writable<User | undefined>(undefined, (set) => {
@@ -64,7 +68,6 @@ export class UserService {
 
 	private async fetchUser() {
 		const user = await this.httpClient.get<User>('/api/user');
-		console.log('[UserService] Fetched user:', user);
 		setSentryUser(user);
 
 		return user;
@@ -84,6 +87,7 @@ export class UserService {
 		location?: string;
 		emailShare?: boolean;
 		readme?: string;
+		generate_ssh_token?: boolean;
 	}): Promise<any> {
 		const formData = new FormData();
 		if (params.name) formData.append('name', params.name);
@@ -96,6 +100,8 @@ export class UserService {
 		if (params.emailShare !== undefined)
 			formData.append('email_share', params.emailShare.toString());
 		if (params.readme !== undefined) formData.append('readme', params.readme);
+		if (params.generate_ssh_token !== undefined)
+			formData.append('generate_ssh_token', params.generate_ssh_token.toString());
 
 		// Content Type must be unset for the right form-data border to be set automatically
 		return await this.httpClient.put('user.json', {
@@ -154,12 +160,8 @@ export class UserService {
 
 		const endpoint = `user/${ownerSlug}/patch_stacks`;
 
-		console.log(`[UserService] Fetching patch stacks for user: ${ownerSlug}`);
-
 		try {
-			console.log(`[UserService] Trying API URL: ${endpoint}`);
 			const response = await this.httpClient.get<ApiBranch[]>(endpoint);
-			console.log(`[UserService] API response successful for ${endpoint}:`, response);
 
 			// Convert ApiBranch objects to Branch objects
 			return response.map(apiToBranch);
@@ -172,7 +174,6 @@ export class UserService {
 			}
 
 			// If it's a 404, return empty array
-			console.log(`[UserService] Endpoint ${endpoint} returned 404, returning empty array`);
 			return [];
 		}
 	}

@@ -1,11 +1,9 @@
 <script lang="ts">
 	import InfoMessage from '$components/InfoMessage.svelte';
 	import SectionCardDisclaimer from '$components/SectionCardDisclaimer.svelte';
-	import { GitConfigService } from '$lib/config/gitConfigService';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import Link from '@gitbutler/ui/link/Link.svelte';
+	import { GIT_CONFIG_SERVICE } from '$lib/config/gitConfigService';
+	import { inject } from '@gitbutler/shared/context';
+	import { Button, Icon, Link } from '@gitbutler/ui';
 	import { slide } from 'svelte/transition';
 
 	interface Props {
@@ -16,7 +14,7 @@
 
 	const { projectId, remoteName, branchName }: Props = $props();
 
-	const gitConfig = getContext(GitConfigService);
+	const gitConfig = inject(GIT_CONFIG_SERVICE);
 
 	type Check = { name: string; promise: Promise<any> };
 	let checks = $state<Check[]>();
@@ -132,8 +130,8 @@
 	.checks-list {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
 		margin-top: 4px;
+		gap: 4px;
 	}
 
 	.check-icon {

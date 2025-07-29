@@ -22,7 +22,9 @@ pub mod window;
 pub use window::state::event::ChangeForFrontend;
 pub use window::state::WindowState;
 
+pub mod action;
 pub mod askpass;
+pub mod cli;
 pub mod config;
 pub mod error;
 pub mod forge;
@@ -32,6 +34,7 @@ pub mod open;
 pub mod projects;
 pub mod remotes;
 pub mod repo;
+pub mod rules;
 pub mod secret;
 pub mod undo;
 pub mod users;
@@ -45,20 +48,30 @@ pub mod diff;
 pub mod env;
 pub mod workspace;
 
+pub mod csp;
+
 /// Utility types that make it easier to transform data from the frontend to the backend.
 ///
 /// Note that these types *should not* be used to transfer anything to the frontend.
 mod from_json {
     use serde::{Deserialize, Deserializer};
-    use std::str::FromStr;
+    use std::{ops::Deref, str::FromStr};
 
     /// A type that deserializes a hexadecimal hash into an object id automatically.
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Copy)]
     pub struct HexHash(gix::ObjectId);
 
     impl From<HexHash> for gix::ObjectId {
         fn from(value: HexHash) -> Self {
             value.0
+        }
+    }
+
+    impl Deref for HexHash {
+        type Target = gix::ObjectId;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
         }
     }
 

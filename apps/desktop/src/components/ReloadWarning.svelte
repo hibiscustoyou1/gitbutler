@@ -1,5 +1,5 @@
 <script lang="ts">
-	import InfoMessage from './InfoMessage.svelte';
+	import InfoMessage from '$components/InfoMessage.svelte';
 
 	// Number of events received.
 	let count = $state(0);
@@ -28,10 +28,10 @@
 
 <style lang="postcss">
 	.reload-warning {
+		z-index: var(--z-lifted);
 		position: absolute;
 		bottom: 24px;
 		left: 50%;
 		transform: translateX(-50%);
-		z-index: var(--z-lifted);
 	}
 </style>

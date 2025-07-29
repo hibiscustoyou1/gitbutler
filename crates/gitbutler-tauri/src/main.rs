@@ -12,11 +12,12 @@
 )]
 
 use but_settings::AppSettingsWithDiskSync;
+use gitbutler_tauri::csp::csp_with_extras;
 use gitbutler_tauri::settings::SettingsStore;
 use gitbutler_tauri::{
-    askpass, commands, config, diff, env, forge, github, logs, menu, modes, open, projects,
-    remotes, repo, secret, settings, stack, undo, users, virtual_branches, workspace, zip, App,
-    WindowState,
+    action, askpass, cli, commands, config, diff, env, forge, github, logs, menu, modes, open,
+    projects, remotes, repo, rules, secret, settings, stack, undo, users, virtual_branches,
+    workspace, zip, App, WindowState,
 };
 use tauri::Emitter;
 use tauri::{generate_context, Manager};
@@ -26,8 +27,22 @@ use tauri_plugin_store::StoreExt;
 fn main() {
     let performance_logging = std::env::var_os("GITBUTLER_PERFORMANCE_LOG").is_some();
     gitbutler_project::configure_git2();
-    let tauri_context = generate_context!();
+    let mut tauri_context = generate_context!();
     gitbutler_secret::secret::set_application_namespace(&tauri_context.config().identifier);
+
+    let config_dir = dirs::config_dir()
+        .expect("missing config dir")
+        .join("gitbutler");
+    std::fs::create_dir_all(&config_dir).expect("failed to create config dir");
+    let mut app_settings =
+        AppSettingsWithDiskSync::new(config_dir.clone()).expect("failed to create app settings");
+
+    if let Ok(updated_csp) = csp_with_extras(
+        tauri_context.config().app.security.csp.as_ref().cloned(),
+        &app_settings,
+    ) {
+        tauri_context.config_mut().app.security.csp = updated_csp;
+    };
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -61,6 +76,8 @@ fn main() {
 
                     logs::init(app_handle, performance_logging);
 
+                    inherit_interactive_login_shell_environment_if_not_launched_from_terminal();
+
                     tracing::info!(
                         "system git executable for fetch/push: {git:?}",
                         git = gix::path::env::exe_invocation(),
@@ -87,13 +104,12 @@ fn main() {
                         });
                     }
 
-                    let (app_data_dir, app_cache_dir, app_log_dir, config_dir) = {
+                    let (app_data_dir, app_cache_dir, app_log_dir) = {
                         let paths = app_handle.path();
                         (
                             paths.app_data_dir().expect("missing app data dir"),
                             paths.app_cache_dir().expect("missing app cache dir"),
                             paths.app_log_dir().expect("missing app log dir"),
-                            paths.config_dir().expect("missing config dir"),
                         )
                     };
                     std::fs::create_dir_all(&app_data_dir).expect("failed to create app data dir");
@@ -106,7 +122,6 @@ fn main() {
 
                     app_handle.manage(WindowState::new(app_handle.clone()));
 
-                    let mut app_settings = AppSettingsWithDiskSync::new(config_dir.clone())?;
                     app_settings.watch_in_background({
                         let app_handle = app_handle.clone();
                         move |app_settings| {
@@ -132,21 +147,18 @@ fn main() {
                         menu::handle_event(&window.clone(), &event)
                     });
 
-                    if app_settings.get()?.clone().feature_flags.v3 {
-                        #[cfg(target_os = "macos")]
-                        use tauri::LogicalPosition;
-                        #[cfg(target_os = "macos")]
-                        use tauri_plugin_trafficlights_positioner::WindowExt;
-                        #[cfg(target_os = "macos")]
-                        // NOTE: Make sure you only call this ONCE per window.
-                        {
-                            if let Some(window) = tauri_app.get_window("main") {
-                                #[cfg(target_os = "macos")]
-                                // NOTE: Make sure you only call this ONCE per window.
-                                window
-                                    .setup_traffic_lights_inset(LogicalPosition::new(16.0, 25.0))?;
-                            };
-                        }
+                    #[cfg(target_os = "macos")]
+                    use tauri::LogicalPosition;
+                    #[cfg(target_os = "macos")]
+                    use tauri_plugin_trafficlights_positioner::WindowExt;
+                    #[cfg(target_os = "macos")]
+                    // NOTE: Make sure you only call this ONCE per window.
+                    {
+                        if let Some(window) = tauri_app.get_window("main") {
+                            #[cfg(target_os = "macos")]
+                            // NOTE: Make sure you only call this ONCE per window.
+                            window.setup_traffic_lights_inset(LogicalPosition::new(16.0, 25.0))?;
+                        };
                     }
                     app_handle.manage(app_settings);
 
@@ -168,7 +180,6 @@ fn main() {
                     commands::git_remote_branches,
                     commands::git_head,
                     commands::delete_all_data,
-                    commands::mark_resolved,
                     commands::git_set_global_config,
                     commands::git_remove_global_config,
                     commands::git_get_global_config,
@@ -187,6 +198,7 @@ fn main() {
                     projects::commands::list_projects,
                     projects::commands::set_project_active,
                     projects::commands::open_project_in_window,
+                    projects::commands::get_active_project,
                     repo::commands::git_get_local_config,
                     repo::commands::git_set_local_config,
                     repo::commands::check_signing_settings,
@@ -195,27 +207,20 @@ fn main() {
                     repo::commands::get_commit_file,
                     repo::commands::get_workspace_file,
                     repo::commands::pre_commit_hook,
+                    repo::commands::pre_commit_hook_diffspecs,
                     repo::commands::post_commit_hook,
                     repo::commands::message_hook,
-                    virtual_branches::commands::list_virtual_branches,
                     virtual_branches::commands::create_virtual_branch,
                     virtual_branches::commands::delete_local_branch,
-                    virtual_branches::commands::commit_virtual_branch,
                     virtual_branches::commands::get_base_branch_data,
                     virtual_branches::commands::set_base_branch,
                     virtual_branches::commands::push_base_branch,
                     virtual_branches::commands::integrate_upstream_commits,
-                    virtual_branches::commands::update_virtual_branch,
-                    virtual_branches::commands::update_branch_order,
-                    virtual_branches::commands::unapply_without_saving_virtual_branch,
-                    virtual_branches::commands::save_and_unapply_virtual_branch,
-                    virtual_branches::commands::unapply_lines,
-                    virtual_branches::commands::unapply_ownership,
-                    virtual_branches::commands::reset_files,
+                    virtual_branches::commands::update_stack_order,
+                    virtual_branches::commands::unapply_stack,
                     virtual_branches::commands::create_virtual_branch_from_branch,
                     virtual_branches::commands::can_apply_remote_branch,
                     virtual_branches::commands::list_commit_files,
-                    virtual_branches::commands::reset_virtual_branch,
                     virtual_branches::commands::amend_virtual_branch,
                     virtual_branches::commands::move_commit_file,
                     virtual_branches::commands::undo_commit,
@@ -233,11 +238,11 @@ fn main() {
                     virtual_branches::commands::integrate_upstream,
                     virtual_branches::commands::resolve_upstream_integration,
                     virtual_branches::commands::find_commit,
-                    stack::create_series,
-                    stack::remove_series,
-                    stack::update_series_name,
-                    stack::update_series_description,
-                    stack::update_series_pr_number,
+                    stack::create_branch,
+                    stack::remove_branch,
+                    stack::update_branch_name,
+                    stack::update_branch_description,
+                    stack::update_branch_pr_number,
                     stack::push_stack,
                     stack::push_stack_to_review,
                     secret::secret_get_global,
@@ -245,7 +250,6 @@ fn main() {
                     undo::list_snapshots,
                     undo::restore_snapshot,
                     undo::snapshot_diff,
-                    undo::take_synced_snapshot,
                     config::get_gb_config,
                     config::set_gb_config,
                     menu::menu_item_set_enabled,
@@ -260,27 +264,52 @@ fn main() {
                     modes::save_edit_and_return_to_workspace,
                     modes::abort_edit_and_return_to_workspace,
                     modes::edit_initial_index_state,
+                    modes::edit_changes_from_initial,
                     open::open_url,
-                    forge::commands::get_available_review_templates,
-                    forge::commands::get_review_template_contents,
+                    open::show_in_finder,
+                    forge::commands::pr_templates,
+                    forge::commands::pr_template,
                     settings::get_app_settings,
                     settings::update_onboarding_complete,
                     settings::update_telemetry,
                     settings::update_feature_flags,
+                    settings::update_telemetry_distinct_id,
+                    action::list_actions,
+                    action::handle_changes,
+                    action::list_workflows,
+                    action::auto_commit,
+                    action::auto_branch_changes,
+                    action::absorb,
+                    action::freestyle,
+                    cli::install_cli,
+                    cli::cli_path,
+                    rules::create_workspace_rule,
+                    rules::delete_workspace_rule,
+                    rules::update_workspace_rule,
+                    rules::list_workspace_rules,
                     workspace::stacks,
-                    workspace::stack_branches,
-                    workspace::stack_branch_local_and_remote_commits,
-                    workspace::stack_branch_upstream_only_commits,
-                    workspace::hunk_dependencies_for_workspace_changes,
+                    workspace::stack_details,
+                    workspace::branch_details,
                     workspace::create_commit_from_worktree_changes,
                     workspace::amend_commit_from_worktree_changes,
+                    workspace::discard_worktree_changes,
+                    workspace::stash_into_branch,
+                    workspace::canned_branch_name,
+                    workspace::target_commits,
+                    workspace::move_changes_between_commits,
+                    workspace::uncommit_changes,
+                    workspace::split_branch,
+                    workspace::split_branch_into_dependent_branch,
                     diff::changes_in_worktree,
-                    diff::changes_in_commit,
+                    diff::commit_details,
                     diff::changes_in_branch,
                     diff::tree_change_diffs,
-                    // `env_vars` is only supposed to be avaialble in debug mode, not in production.
+                    diff::assign_hunk,
+                    // Debug-only - not for production!
                     #[cfg(debug_assertions)]
                     env::env_vars,
+                    #[cfg(all(debug_assertions, unix))]
+                    workspace::show_graph_svg,
                 ])
                 .menu(menu::build)
                 .on_window_event(|window, event| match event {
@@ -318,4 +347,27 @@ fn main() {
                     let _ = (app_handle, event);
                 });
         });
+}
+
+/// Launch a shell as interactive login shell, similar to what a login terminal would do if we are not already in a terminal.
+///
+/// That way, each process launched by the backend will act similar to what users would get in their terminal,
+/// something vital to act more similar to Git, which is also launched from an interactive shell most of the time.
+fn inherit_interactive_login_shell_environment_if_not_launched_from_terminal() {
+    if std::env::var_os("TERM").is_some() {
+        tracing::info!(
+            "TERM is set - assuming the app is run from a terminal with suitable environment variables"
+        );
+        return;
+    }
+    if let Some(terminal_vars) = but_core::cmd::extract_interactive_login_shell_environment() {
+        tracing::info!("Inheriting static interactive shell environment, valid for the entire runtime of the application");
+        for (key, value) in terminal_vars {
+            std::env::set_var(key, value);
+        }
+    } else {
+        tracing::info!(
+            "SHELL variable isn't set - launching with default GUI application environment "
+        );
+    }
 }

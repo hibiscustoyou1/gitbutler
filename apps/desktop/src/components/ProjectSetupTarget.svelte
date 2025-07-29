@@ -1,36 +1,33 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import GithubIntegration from '$components/GithubIntegration.svelte';
 	import Login from '$components/Login.svelte';
 	import ProjectNameLabel from '$components/ProjectNameLabel.svelte';
 	import SetupFeature from '$components/SetupFeature.svelte';
 	import { projectAiGenEnabled } from '$lib/config/config';
 	import { platformName } from '$lib/platform/platform';
-	import { Project } from '$lib/project/project';
-	import { ProjectsService } from '$lib/project/projectsService';
-	import { UserService } from '$lib/user/userService';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { TestId } from '$lib/testing/testIds';
+	import { USER_SERVICE } from '$lib/user/userService';
 	import { unique } from '$lib/utils/array';
 	import { getBestBranch, getBestRemote, getBranchRemoteFromRef } from '$lib/utils/branch';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Toggle from '@gitbutler/ui/Toggle.svelte';
-	import Select from '@gitbutler/ui/select/Select.svelte';
-	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
-	import type { RemoteBranchInfo } from '$lib/baseBranch/baseBranchService';
-	import { goto } from '$app/navigation';
+	import { inject } from '@gitbutler/shared/context';
+	import { Button, Toggle, Select, SelectItem } from '@gitbutler/ui';
+	import type { RemoteBranchInfo } from '$lib/baseBranch/baseBranch';
 
 	interface Props {
+		projectId: string;
 		projectName: string;
 		remoteBranches: RemoteBranchInfo[];
 		onBranchSelected?: (branch: string[]) => void;
 	}
 
-	const { projectName, remoteBranches, onBranchSelected }: Props = $props();
+	const { projectId, projectName, remoteBranches, onBranchSelected }: Props = $props();
 
-	const project = getContext(Project);
-	const userService = getContext(UserService);
+	const userService = inject(USER_SERVICE);
 	const user = userService.user;
 
-	const aiGenEnabled = projectAiGenEnabled(project.id);
+	const aiGenEnabled = projectAiGenEnabled(projectId);
 
 	let aiGenCheckbox = $state<Toggle>();
 	let loading = $state<boolean>(false);
@@ -44,7 +41,7 @@
 	);
 
 	let selectedBranch = $state<RemoteBranchInfo | undefined>(undefined);
-	const defaultBranch = $derived(getBestBranch(remoteBranches));
+	const defaultBranch = $derived(getBestBranch(remoteBranches.slice()));
 	const branch = $derived(selectedBranch ?? defaultBranch);
 
 	let selectedRemote = $state<string | undefined>(undefined);
@@ -58,10 +55,9 @@
 		onBranchSelected?.([branch.name, remote]);
 	}
 
-	const projectsService = getContext(ProjectsService);
+	const projectsService = inject(PROJECTS_SERVICE);
 	async function deleteProjectAndGoBack() {
-		await projectsService.deleteProject(project.id);
-		await projectsService.reload();
+		await projectsService.deleteProject(projectId);
 
 		if (history.length > 0) {
 			history.back();
@@ -78,10 +74,11 @@
 	</div>
 
 	<div class="project-setup__fields">
-		<div class="project-setup__field-wrap">
+		<div class="project-setup__field-wrap" data-testid={TestId.ProjectSetupPageTargetBranchSelect}>
 			<Select
 				value={branch?.name}
 				options={remoteBranches.map((b) => ({ label: b.name, value: b.name }))}
+				wide
 				onselect={(value) => {
 					selectedBranch = { name: value };
 				}}
@@ -249,7 +246,7 @@
 			{loading}
 			onclick={onSetTargetClick}
 			icon="chevron-right-small"
-			testId="set-base-branch"
+			testId={TestId.ProjectSetupPageTargetContinueButton}
 			id="set-base-branch"
 		>
 			{#if platformName === 'windows'}
@@ -281,8 +278,8 @@
 	.project-setup__fields {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
 		padding-bottom: 10px;
+		gap: 16px;
 	}
 
 	.project-setup__description-text {

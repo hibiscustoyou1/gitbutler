@@ -1,3 +1,4 @@
+import { SilentError } from '$lib/error/error';
 import { showError } from '$lib/notifications/toasts';
 import { captureException } from '@sentry/sveltekit';
 import { error as logErrorToFile } from '@tauri-apps/plugin-log';
@@ -21,7 +22,8 @@ export function handleError({
 
 // Handler for unhandled errors inside promises.
 window.onunhandledrejection = (e: PromiseRejectionEvent) => {
-	logError(e.reason);
+	e.preventDefault(); // Suppresses default console logger.
+	logError(e);
 };
 
 function logError(error: unknown) {
@@ -32,7 +34,17 @@ function logError(error: unknown) {
 				handled: false
 			}
 		});
-		showError('Unhandled exception', error);
+
+		// Unwrap error if it's an unhandled promise rejection.
+		if (error instanceof PromiseRejectionEvent) {
+			error = error.reason;
+		}
+
+		if (!(error instanceof SilentError)) {
+			showError('Unhandled exception', error);
+		}
+
+		console.error(error);
 		logErrorToFile(String(error));
 	} catch (err: unknown) {
 		console.error('Error while trying to log error.', err);

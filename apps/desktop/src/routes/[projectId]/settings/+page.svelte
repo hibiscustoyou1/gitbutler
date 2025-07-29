@@ -1,8 +1,9 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import BaseBranchSwitch from '$components/BaseBranchSwitch.svelte';
 	import CloudForm from '$components/CloudForm.svelte';
-	import CloudProjectSettings from '$components/CloudProjectSettings.svelte';
 	import DetailsForm from '$components/DetailsForm.svelte';
+	import ForgeForm from '$components/ForgeForm.svelte';
 	import GitForm from '$components/GitForm.svelte';
 	import PreferencesForm from '$components/PreferencesForm.svelte';
 	import RemoveProjectForm from '$components/RemoveProjectForm.svelte';
@@ -11,7 +12,11 @@
 	import TabContent from '$components/TabContent.svelte';
 	import TabList from '$components/TabList.svelte';
 	import TabTrigger from '$components/TabTrigger.svelte';
+
 	import Tabs from '$components/Tabs.svelte';
+
+	// TODO: Refactor so we don't need non-null assertion.
+	const projectId = $derived(page.params.projectId!);
 </script>
 
 <SettingsPage title="Project settings">
@@ -25,23 +30,21 @@
 		</TabList>
 
 		<TabContent value="git">
-			<GitForm />
+			<GitForm {projectId} />
 		</TabContent>
 		<TabContent value="ai">
-			<CloudForm />
+			<CloudForm {projectId} />
 		</TabContent>
 		<TabContent value="project">
 			<Section>
-				<DetailsForm />
-				<BaseBranchSwitch />
-				<RemoveProjectForm />
+				<DetailsForm {projectId} />
+				<BaseBranchSwitch {projectId} />
+				<ForgeForm {projectId} />
+				<RemoveProjectForm {projectId} />
 			</Section>
 		</TabContent>
-		<TabContent value="cloud">
-			<CloudProjectSettings />
-		</TabContent>
 		<TabContent value="feature-flags">
-			<PreferencesForm />
+			<PreferencesForm {projectId} />
 		</TabContent>
 	</Tabs>
 </SettingsPage>

@@ -4,6 +4,7 @@ import type { LoadableData } from '$lib/network/types';
 export type ApiProject = {
 	slug: string;
 	owner: string;
+	owner_type: string;
 	parent_project?: ApiProject;
 	name: string;
 	description: string;
@@ -20,6 +21,7 @@ export type ApiProject = {
 
 	created_at: string;
 	updated_at: string;
+	last_pushed_at?: string;
 };
 
 export type Project = {
@@ -28,6 +30,7 @@ export type Project = {
 
 	slug: string;
 	owner: string;
+	ownerType: string;
 
 	parentProject?: Project;
 	parentProjectRepositoryId?: string;
@@ -45,6 +48,7 @@ export type Project = {
 
 	createdAt: string;
 	updatedAt: string;
+	lastPushedAt?: string;
 };
 
 export type LoadableProject = LoadableData<Project, Project['repositoryId']>;
@@ -54,6 +58,7 @@ export function apiToProject(apiProject: ApiProject): Project {
 		repositoryId: apiProject.repository_id,
 		slug: apiProject.slug,
 		owner: apiProject.owner,
+		ownerType: apiProject.owner_type,
 		parentProject: apiProject.parent_project ? apiToProject(apiProject.parent_project) : undefined,
 		parentProjectRepositoryId: apiProject.parent_project?.repository_id,
 		activeReviewsCount: apiProject.active_reviews_count,
@@ -65,7 +70,8 @@ export function apiToProject(apiProject: ApiProject): Project {
 		permissions: apiToPermissions(apiProject.permissions),
 		createdAt: apiProject.created_at,
 		updatedAt: apiProject.updated_at,
-		readme: apiProject.readme
+		readme: apiProject.readme,
+		lastPushedAt: apiProject.last_pushed_at
 	};
 }
 

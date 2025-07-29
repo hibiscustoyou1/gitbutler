@@ -1,6 +1,9 @@
-import { UPDATE_INTERVAL_MS, UpdaterService } from './updater';
+import { EventContext } from '$lib/analytics/eventContext';
 import { PostHogWrapper } from '$lib/analytics/posthog';
 import { Tauri } from '$lib/backend/tauri';
+import { ShortcutService } from '$lib/shortcuts/shortcutService';
+import { getSettingsdServiceMock } from '$lib/testing/mockSettingsdService';
+import { UPDATE_INTERVAL_MS, UpdaterService } from '$lib/updater/updater';
 import { get } from 'svelte/store';
 import { expect, test, describe, vi, beforeEach, afterEach } from 'vitest';
 import type { Update } from '@tauri-apps/plugin-updater';
@@ -10,14 +13,17 @@ import type { Update } from '@tauri-apps/plugin-updater';
  * under the hood.
  */
 describe('Updater', () => {
-	let tauri: Tauri;
 	let updater: UpdaterService;
-	const posthog = new PostHogWrapper();
+	const tauri = new Tauri();
+	const MockSettingsService = getSettingsdServiceMock();
+	const shortcuts = new ShortcutService(tauri);
+	const settingsService = new MockSettingsService();
+	const eventContext = new EventContext();
+	const posthog = new PostHogWrapper(settingsService, eventContext);
 
 	beforeEach(() => {
 		vi.useFakeTimers();
-		tauri = new Tauri();
-		updater = new UpdaterService(tauri, posthog);
+		updater = new UpdaterService(tauri, posthog, shortcuts);
 		vi.spyOn(tauri, 'listen').mockReturnValue(async () => {});
 	});
 

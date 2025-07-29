@@ -4,23 +4,26 @@
 	 * time. This is because it is working directly with the query paramaters
 	 * and has no idea if it will conflict or not.
 	 */
-	import SectionComponent from './Section.svelte';
+	import SectionComponent from '$lib/components/review/Section.svelte';
 	import {
 		setBeforeVersion,
 		setAfterVersion,
 		getBeforeVersion,
 		getAfterVersion
 	} from '$lib/interdiffRangeQuery.svelte';
-	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/shared/context';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
 	import { getPatchIdableSections } from '@gitbutler/shared/patches/patchCommitsPreview.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Select, { type SelectItem as SelectItemT } from '@gitbutler/ui/select/Select.svelte';
-	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
+	import {
+		Button,
+		Select,
+		SelectItem,
+		type LineClickParams,
+		type SelectItemType
+	} from '@gitbutler/ui';
 	import { isDefined } from '@gitbutler/ui/utils/typeguards';
 	import type { PatchCommit } from '@gitbutler/shared/patches/types';
-	import type { LineClickParams } from '@gitbutler/ui/HunkDiff.svelte';
 	import type { ContentSection, LineSelector } from '@gitbutler/ui/utils/diffParsing';
 
 	interface Props {
@@ -49,14 +52,14 @@
 		onQuoteSelection
 	}: Props = $props();
 
-	const userService = getContext(UserService);
+	const userService = inject(USER_SERVICE);
 	const user = $derived(userService.user);
 
 	const isLoggedIn = $derived(!!$user);
 
 	let isInterdiffBarVisible = $state(false);
 
-	const allOptions: readonly SelectItemT<string>[] = $derived.by(() => {
+	const allOptions: readonly SelectItemType<string>[] = $derived.by(() => {
 		const out = [{ value: '-1', label: 'Base' }];
 
 		if (!isDefined(patchCommit.version)) return out;
@@ -76,8 +79,11 @@
 	const beforeOptions = $derived(allOptions.slice(0, -1));
 	const afterOptions = $derived(allOptions.slice(1));
 
-	const selectedBefore = $derived(getBeforeVersion().current);
-	const selectedAfter = $derived(getAfterVersion(patchCommit.version).current);
+	const beforeVersionResult = getBeforeVersion();
+	const selectedVersionResult = $derived(getAfterVersion(patchCommit.version));
+
+	const selectedBefore = $derived(beforeVersionResult.current);
+	const selectedAfter = $derived(selectedVersionResult.current);
 
 	const patchSections = $derived(
 		isDefined(selectedAfter)
@@ -230,9 +236,9 @@
 
 <style>
 	.review-sections-card {
+		contain: paint;
 		display: flex;
 		flex-direction: column;
-		contain: paint;
 	}
 
 	.review-sections-statistics-wrap {
@@ -241,15 +247,15 @@
 	}
 
 	.review-sections-statistics {
-		width: 100%;
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
+		justify-content: space-between;
+		width: 100%;
 		padding: 10px 10px 10px 14px;
-		background-color: var(--clr-bg-1);
 		border: 1px solid var(--clr-border-2);
-		border-top-left-radius: var(--radius-ml);
 		border-top-right-radius: var(--radius-ml);
+		border-top-left-radius: var(--radius-ml);
+		background-color: var(--clr-bg-1);
 	}
 
 	.review-sections-statistics__metadata {
@@ -275,8 +281,8 @@
 	}
 
 	.review-sections-diffs {
-		position: relative;
 		display: flex;
+		position: relative;
 		flex-direction: column;
 		width: 100%;
 	}
@@ -285,16 +291,16 @@
 
 	.interdiff-bar {
 		display: flex;
-		gap: 12px;
 		align-items: center;
-
-		background-color: var(--clr-bg-1-muted);
 		width: 100%;
+
+		padding: 14px;
+		gap: 12px;
 
 		border: 1px solid var(--clr-border-2);
 		border-top: none;
 
-		padding: 14px;
+		background-color: var(--clr-bg-1-muted);
 
 		@container (max-width: 500px) {
 			flex-direction: column;
@@ -318,8 +324,8 @@
 	}
 
 	.review-sections-statistics__actions__interdiff {
-		position: relative;
 		display: flex;
+		position: relative;
 	}
 
 	.review-sections-statistics__actions__interdiff-changed {
@@ -328,7 +334,7 @@
 		right: 2px;
 		width: 7px;
 		height: 7px;
-		background-color: var(--clr-theme-pop-element);
 		border-radius: 50%;
+		background-color: var(--clr-theme-pop-element);
 	}
 </style>

@@ -1,29 +1,25 @@
 use super::BranchManager;
 use crate::r#virtual as vbranch;
-use crate::{
-    conflicts::RepoConflictsExt, hunk::VirtualBranchHunk, integration::update_workspace_commit,
-    VirtualBranchesExt,
-};
+use crate::{hunk::VirtualBranchHunk, integration::update_workspace_commit, VirtualBranchesExt};
 use anyhow::{anyhow, bail, Context, Result};
+use but_workspace::stack_ext::StackExt;
 use gitbutler_branch::BranchCreateRequest;
 use gitbutler_branch::{self, dedup};
 use gitbutler_cherry_pick::RepositoryExt as _;
 use gitbutler_commit::{commit_ext::CommitExt, commit_headers::HasCommitHeaders};
 use gitbutler_error::error::Marker;
 use gitbutler_oplog::SnapshotExt;
-use gitbutler_oxidize::GixRepositoryExt;
+use gitbutler_oxidize::{GixRepositoryExt, ObjectIdExt, OidExt, RepoExt};
 use gitbutler_project::access::WorktreeWritePermission;
 use gitbutler_project::AUTO_TRACK_LIMIT_BYTES;
 use gitbutler_reference::{Refname, RemoteRefname};
-use gitbutler_repo::logging::{LogUntil, RepositoryExt as _};
-use gitbutler_repo::{
-    rebase::{cherry_rebase_group, gitbutler_merge_commits},
-    RepositoryExt,
-};
+use gitbutler_repo::rebase::gitbutler_merge_commits;
+use gitbutler_repo::RepositoryExt as _;
 use gitbutler_repo_actions::RepoActionsExt;
 use gitbutler_stack::{BranchOwnershipClaims, Stack, StackId};
 use gitbutler_time::time::now_since_unix_epoch_ms;
-use gitbutler_workspace::checkout_branch_trees;
+use gitbutler_workspace::branch_trees::{update_uncommited_changes_with_tree, WorkspaceState};
+#[allow(deprecated)]
 use tracing::instrument;
 
 impl BranchManager<'_> {
@@ -58,10 +54,7 @@ impl BranchManager<'_> {
             create.name.as_ref().unwrap_or(&"Lane".to_string()),
         );
 
-        _ = self
-            .ctx
-            .project()
-            .snapshot_branch_creation(name.clone(), perm);
+        _ = self.ctx.snapshot_branch_creation(name.clone(), perm);
 
         all_stacks.sort_by_key(|branch| branch.order);
 
@@ -107,15 +100,18 @@ impl BranchManager<'_> {
             selected_for_changes,
             self.ctx.project().ok_with_force_push.into(),
             false, // disallow duplicate branch names on creation
-        );
+        )?;
 
-        if let Some(ownership) = &create.ownership {
-            vbranch::set_ownership(&vb_state, &mut branch, ownership)
+        if let Some(ownership) = create.ownership.clone() {
+            let claim = ownership.into();
+            vbranch::set_ownership(&vb_state, &mut branch, &claim)
                 .context("failed to set ownership")?;
         }
 
         vb_state.set_stack(branch.clone())?;
         self.ctx.add_branch_reference(&branch)?;
+
+        update_workspace_commit(&vb_state, self.ctx)?;
 
         Ok(branch)
     }
@@ -127,6 +123,8 @@ impl BranchManager<'_> {
         pr_number: Option<usize>,
         perm: &mut WorktreeWritePermission,
     ) -> Result<StackId> {
+        let old_cwd = self.ctx.repo().create_wd_tree(0)?.id();
+        let old_workspace = WorkspaceState::create(self.ctx, perm.read_permission())?;
         // only set upstream if it's not the default target
         let upstream_branch = match upstream_branch {
             Some(upstream_branch) => Some(upstream_branch),
@@ -147,10 +145,7 @@ impl BranchManager<'_> {
             .expect("always a branch reference")
             .to_string();
 
-        let _ = self
-            .ctx
-            .project()
-            .snapshot_branch_creation(branch_name.clone(), perm);
+        let _ = self.ctx.snapshot_branch_creation(branch_name.clone(), perm);
 
         let vb_state = self.ctx.project().virtual_branches();
 
@@ -215,8 +210,9 @@ impl BranchManager<'_> {
             },
         );
 
-        let mut branch = if let Ok(Some(mut branch)) =
-            vb_state.find_by_source_refname_where_not_in_workspace(target)
+        let mut branch = if let Some(mut branch) = vb_state
+            .find_by_top_reference_name_where_not_in_workspace(&target.to_string())?
+            .or(vb_state.find_by_source_refname_where_not_in_workspace(target)?)
         {
             branch.upstream_head = upstream_branch.is_some().then_some(head_commit.id());
             branch.upstream = upstream_branch; // Used as remote when listing commits.
@@ -226,8 +222,9 @@ impl BranchManager<'_> {
             branch.allow_rebasing = self.ctx.project().ok_with_force_push.into();
             branch.in_workspace = true;
 
-            // allow duplicate branch name if created from an existing branch
+            // This seems to ensure that there is at least one head.
             branch.initialize(self.ctx, true)?;
+            vb_state.set_stack(branch.clone())?;
             branch
         } else {
             let upstream_head = upstream_branch.is_some().then_some(head_commit.id());
@@ -243,16 +240,21 @@ impl BranchManager<'_> {
                 selected_for_changes,
                 self.ctx.project().ok_with_force_push.into(),
                 true, // allow duplicate branch name if created from an existing branch
-            )
+            )?
         };
 
-        if let (Some(pr_number), Some(head)) = (pr_number, branch.heads().last()) {
+        if let (Some(pr_number), Some(head)) = (pr_number, branch.heads(false).last()) {
             branch.set_pr_number(self.ctx, head, Some(pr_number))?;
         }
-        branch.set_stack_head(self.ctx, head_commit.id(), Some(head_commit_tree.id()))?;
+        branch.set_stack_head(
+            &vb_state,
+            &repo.to_gix()?,
+            head_commit.id(),
+            Some(head_commit_tree.id()),
+        )?;
         self.ctx.add_branch_reference(&branch)?;
 
-        match self.apply_branch(branch.id, perm) {
+        match self.apply_branch(branch.id, perm, old_workspace, old_cwd) {
             Ok(_) => Ok(branch.id),
             Err(err)
                 if err
@@ -274,9 +276,9 @@ impl BranchManager<'_> {
         &self,
         stack_id: StackId,
         perm: &mut WorktreeWritePermission,
+        workspace_state: WorkspaceState,
+        old_cwd: git2::Oid,
     ) -> Result<String> {
-        self.ctx.assure_resolved()?;
-        self.ctx.assure_unconflicted()?;
         let repo = self.ctx.repo();
 
         let vb_state = self.ctx.project().virtual_branches();
@@ -287,12 +289,13 @@ impl BranchManager<'_> {
         // calculate the merge base and make sure it's the same as the target commit
         // if not, we need to merge or rebase the branch to get it up to date
 
+        let gix_repo = repo.to_gix()?;
         let merge_base = repo
-            .merge_base(default_target.sha, stack.head())
+            .merge_base(default_target.sha, stack.head_oid(&gix_repo)?.to_git2())
             .context(format!(
                 "failed to find merge base between {} and {}",
                 default_target.sha,
-                stack.head()
+                stack.head_oid(&gix_repo)?
             ))?;
 
         // Branch is out of date, merge or rebase it
@@ -302,12 +305,12 @@ impl BranchManager<'_> {
             .tree()
             .context("failed to find merge base tree")?
             .id();
-        let branch_tree_id = stack.tree;
+        let branch_tree_id = stack.tree(self.ctx)?;
 
         // We don't support having two branches applied that conflict with each other
         {
             let uncommited_changes_tree_id = repo.create_wd_tree(AUTO_TRACK_LIMIT_BYTES)?.id();
-            let gix_repo = self.ctx.gix_repository_for_merging_non_persisting()?;
+            let gix_repo = self.ctx.gix_repo_for_merging_non_persisting()?;
             let merges_cleanly = gix_repo
                 .merges_cleanly_compat(
                     merge_base_tree_id,
@@ -322,29 +325,35 @@ impl BranchManager<'_> {
                     .iter()
                     .filter(|branch| branch.id != stack_id)
                 {
-                    self.save_and_unapply(stack.id, perm)?;
+                    self.unapply(stack.id, perm, false, Vec::new())?;
                 }
             }
         }
 
         // Do we need to rebase the branch on top of the default target?
 
-        let has_change_id = repo.find_commit(stack.head())?.change_id().is_some();
+        let has_change_id = repo
+            .find_commit(stack.head_oid(&gix_repo)?.to_git2())?
+            .change_id()
+            .is_some();
         // If the branch has no change ID for the head commit, we want to rebase it even if the base is the same
         // This way stacking functionality which relies on change IDs will work as expected
         if merge_base != default_target.sha || !has_change_id {
+            let mut rebase_output = None;
             let new_head = if stack.allow_rebasing {
-                let commits_to_rebase =
-                    repo.l(stack.head(), LogUntil::Commit(merge_base), false)?;
-
-                let head_oid =
-                    cherry_rebase_group(repo, default_target.sha, &commits_to_rebase, true, false)?;
-
-                repo.find_commit(head_oid)?
+                let gix_repo = self.ctx.gix_repo()?;
+                let steps = stack.as_rebase_steps(self.ctx, &gix_repo)?;
+                let mut rebase =
+                    but_rebase::Rebase::new(&gix_repo, default_target.sha.to_gix(), None)?;
+                rebase.steps(steps)?;
+                rebase.rebase_noops(true);
+                let output = rebase.rebase()?;
+                rebase_output = Some(output.clone());
+                repo.find_commit(output.top_commit.to_git2())?
             } else {
                 gitbutler_merge_commits(
                     repo,
-                    repo.find_commit(stack.head())?,
+                    repo.find_commit(stack.head_oid(&gix_repo)?.to_git2())?,
                     repo.find_commit(default_target.sha)?,
                     &stack.name,
                     default_target.branch.branch(),
@@ -352,10 +361,15 @@ impl BranchManager<'_> {
             };
 
             stack.set_stack_head(
-                self.ctx,
+                &vb_state,
+                &gix_repo,
                 new_head.id(),
                 Some(repo.find_real_tree(&new_head, Default::default())?.id()),
             )?;
+
+            if let Some(output) = rebase_output {
+                stack.set_heads_from_rebase_output(self.ctx, output.references)?;
+            }
         }
 
         // apply the branch
@@ -366,7 +380,8 @@ impl BranchManager<'_> {
 
         {
             if let Some(wip_commit_to_unapply) = &stack.not_in_workspace_wip_change_id {
-                let potential_wip_commit = repo.find_commit(stack.head())?;
+                let potential_wip_commit =
+                    repo.find_commit(stack.head_oid(&gix_repo)?.to_git2())?;
 
                 // Don't try to undo commit if its conflicted
                 if !potential_wip_commit.is_conflicted() {
@@ -375,7 +390,7 @@ impl BranchManager<'_> {
                             stack = crate::undo_commit::undo_commit(
                                 self.ctx,
                                 stack.id,
-                                stack.head(),
+                                stack.head_oid(&gix_repo)?.to_git2(),
                                 perm,
                             )?;
                         }
@@ -388,8 +403,16 @@ impl BranchManager<'_> {
             }
         }
 
-        // Now that we've added a branch to the workspace, lets merge together all the trees
-        checkout_branch_trees(self.ctx, perm)?;
+        let new_workspace = WorkspaceState::create(self.ctx, perm.read_permission())?;
+
+        update_uncommited_changes_with_tree(
+            self.ctx,
+            workspace_state,
+            new_workspace,
+            old_cwd,
+            Some(true),
+            perm,
+        )?;
 
         update_workspace_commit(&vb_state, self.ctx)?;
 

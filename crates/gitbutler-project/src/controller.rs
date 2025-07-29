@@ -13,6 +13,45 @@ pub struct Controller {
 }
 
 impl Controller {
+    /// Assure we can list projects, and if not possibly existing projects files will be renamed, and an error is produced early.
+    pub fn assure_app_can_startup_or_fix_it(
+        &self,
+        projects: Result<Vec<Project>>,
+    ) -> Result<Vec<Project>> {
+        match projects {
+            Ok(works) => Ok(works),
+            Err(probably_file_load_err) => {
+                let projects_path = self.local_data_dir.join("projects.json");
+                let max_attempts = 255;
+                for round in 1..max_attempts {
+                    let backup_path = self
+                        .local_data_dir
+                        .join(format!("projects.json.maybe-broken-{round:02}"));
+                    if backup_path.is_file() {
+                        continue;
+                    }
+
+                    if let Err(err) = std::fs::rename(&projects_path, &backup_path) {
+                        tracing::error!(
+                            "Failed to rename {} to {} - application may fail to startup: {err}",
+                            projects_path.display(),
+                            backup_path.display()
+                        );
+                    }
+
+                    bail!(
+                        "Could not open projects file at '{}'.\nIt was moved to {}.\nReopen or refresh the app to start fresh.\nError was: {probably_file_load_err}",
+                        projects_path.display(),
+                        backup_path.display()
+                    );
+                }
+                bail!("There were already {max_attempts} backup project files - giving up")
+            }
+        }
+    }
+}
+
+impl Controller {
     pub fn from_path(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         Self {
@@ -21,7 +60,12 @@ impl Controller {
         }
     }
 
-    pub fn add<P: AsRef<Path>>(&self, path: P) -> Result<Project> {
+    pub fn add<P: AsRef<Path>>(
+        &self,
+        path: P,
+        name: Option<String>,
+        email: Option<String>,
+    ) -> Result<Project> {
         let path = path.as_ref();
         let all_projects = self
             .projects_storage
@@ -46,7 +90,7 @@ impl Controller {
                 };
             }
             Ok(repo) => {
-                match repo.work_dir() {
+                match repo.workdir() {
                     None => bail!("Cannot add non-bare repositories without a workdir"),
                     Some(wd) => {
                         if !wd.join(".git").is_dir() {
@@ -84,6 +128,22 @@ impl Controller {
         // Create a .git/gitbutler directory for app data
         if let Err(error) = std::fs::create_dir_all(project.gb_dir()) {
             tracing::error!(project_id = %project.id, ?error, "failed to create {:?} on project add", project.gb_dir());
+        }
+
+        let repo = gix::open(&project.path)?;
+        if repo.author().transpose()?.is_none() {
+            let git2_repo = git2::Repository::open(repo.path())?;
+            let config = git2_repo.config()?;
+
+            let mut local = config.open_level(git2::ConfigLevel::Local)?;
+            local.set_str(
+                "user.name",
+                &name.unwrap_or("Firstname Lastname".to_string()),
+            )?;
+            local.set_str(
+                "user.email",
+                &email.unwrap_or("name@example.com".to_string()),
+            )?;
         }
 
         Ok(project)
@@ -136,7 +196,7 @@ impl Controller {
     /// This is intended to be used only when updating the path of a missing project.
     pub fn get_raw(&self, id: ProjectId) -> Result<Project> {
         #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut project = self.projects_storage.get(id)?;
+        let project = self.projects_storage.get(id)?;
         Ok(project)
     }
 

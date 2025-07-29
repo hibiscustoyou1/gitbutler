@@ -1,4 +1,3 @@
-import { RemoteHunk } from '$lib/hunks/hunk';
 import { Transform, Type } from 'class-transformer';
 
 export type Operation =
@@ -31,22 +30,20 @@ export type Operation =
 	| 'InsertBlankCommit'
 	| 'MoveCommitFile'
 	| 'FileChanges'
-	| 'EnterEditMode';
+	| 'EnterEditMode'
+	| 'SyncWorkspace'
+	| 'CreateDependentBranch'
+	| 'RemoveDependentBranch'
+	| 'UpdateDependentBranchName'
+	| 'UpdateDependentBranchDescription'
+	| 'UpdateDependentBranchPrNumber'
+	| 'AutoHandleChangesBefore'
+	| 'AutoHandleChangesAfter'
+	| 'SplitBranch';
 
 export class Trailer {
 	key!: string;
 	value!: string;
-}
-
-export class SnapshotDiff {
-	binary!: boolean;
-	@Type(() => RemoteHunk)
-	hunks!: RemoteHunk[];
-	newPath!: string;
-	newSizeBytes!: number;
-	oldPath!: string;
-	oldSizeBytes!: number;
-	skipped!: boolean;
 }
 
 export class SnapshotDetails {

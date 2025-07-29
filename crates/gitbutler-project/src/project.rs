@@ -98,6 +98,8 @@ pub struct Project {
     pub omit_certificate_check: Option<bool>,
     // The number of changed lines that will trigger a snapshot
     pub snapshot_lines_threshold: Option<usize>,
+    #[serde(default)]
+    pub forge_override: Option<String>,
 }
 
 /// Instantiation
@@ -105,7 +107,7 @@ impl Project {
     /// Search upwards from `path` to discover a Git worktree.
     pub fn from_path(path: &Path) -> anyhow::Result<Project> {
         let worktree_dir = gix::discover(path)?
-            .work_dir()
+            .workdir()
             .context("Bare repositories aren't supported")?
             .to_owned();
         Ok(Project {

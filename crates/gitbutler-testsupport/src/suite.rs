@@ -22,7 +22,7 @@ pub struct Suite {
 impl Drop for Suite {
     fn drop(&mut self) {
         if std::env::var_os(VAR_NO_CLEANUP).is_some() {
-            let _ = self.local_app_data.take().unwrap().into_path();
+            let _ = self.local_app_data.take().unwrap().keep();
         }
     }
 }
@@ -72,7 +72,7 @@ impl Suite {
 
         (
             self.projects
-                .add(repository.path().parent().unwrap())
+                .add(repository.path().parent().unwrap(), None, None)
                 .expect("failed to add project"),
             tmp,
         )
@@ -102,7 +102,7 @@ impl Drop for Case {
             .take()
             .filter(|_| std::env::var_os(VAR_NO_CLEANUP).is_some())
         {
-            let _ = tmp.into_path();
+            let _ = tmp.keep();
         }
     }
 }

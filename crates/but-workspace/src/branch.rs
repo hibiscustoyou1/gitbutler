@@ -385,7 +385,7 @@
 //!
 //!
 //!
-//!  ┌───┐     ██████████████████ Lis Commits in ordinary Merge ██████████████
+//!  ┌───┐     ██████████████████ List Commits in ordinary Merge ██████████████
 //!  │   │                   ┌─┐
 //!  │ L │       H:S:main──▶ └3┘
 //!  │ a │                    │
@@ -411,10 +411,11 @@
 //!                                      junctions', decide which parent to
 //!                                      walk along.
 //! ```
-use crate::StashStatus;
+
+use crate::ref_info;
 use anyhow::{Context, bail};
-use bstr::BString;
 use but_core::RefMetadata;
+use but_core::ref_metadata::StackId;
 use gix::prelude::ObjectIdExt;
 
 /// The result of [`add_branch_to_workspace`].
@@ -491,102 +492,45 @@ pub fn remove_branch_from_workspace(
 ///
 /// Mote that a stack is also used to represent detached heads, which is far-fetched but necessary
 // TODO: move this to the crate root once the 'old' implementation isn't used anymore.
-#[derive(Debug, Clone)]
+// TODO: this is going to be the UI version, ideally consumed directly.
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Stack {
-    /// The index into the parents-array of its [`WorkspaceCommit`](crate::WorkspaceCommit), but for our
-    /// purposes just a way to refer to the stack.
-    ///
-    /// The actual index is dependent on the order in which they are merged into the workspace commit,
-    /// if the stack is merged at all.
-    pub index: usize,
-    /// The commit that the tip of the stack is pointing to.
-    /// It is `None` if there is no commit as this repository is newly initialized.
-    pub tip: Option<gix::ObjectId>,
+    /// If the stack belongs to a managed workspace, the `id` will be set and persist.
+    /// Otherwise, it is `None`.
+    pub id: Option<StackId>,
+    /// If there is an integration branch, we know a base commit shared with the integration branch from
+    /// which we branched off.
+    /// Otherwise, it's the merge-base of all stacks in the current workspace.
+    /// It is `None` if this is a stack derived from a branch without relation to any other branch.
+    pub base: Option<gix::ObjectId>,
     /// The branch-name denoted segments of the stack from its tip to the point of reference, typically a merge-base.
     /// This array is never empty.
-    pub segments: Vec<StackSegment>,
-    /// Additional information about possibly still available stashes, sitting on top of this stack.
-    ///
-    /// This means the stash is still there to be applied, something that can happen if the user switches branches
-    /// using Git commands.
-    ///
-    /// The backend auto-applies floating stashes, but if that didn't happen, the frontend may guide the user.
-    pub stash_status: Option<StashStatus>,
+    pub segments: Vec<ref_info::ui::Segment>,
 }
 
-/// A list of all commits
-#[derive(Debug, Clone)]
-pub struct BranchCommit {
-    /// The hash of the commit.
-    pub id: gix::ObjectId,
-    /// The first line of the commit message.
-    pub title: BString,
-    /// The timestamp at which the commit was created.
-    pub committed_date: gix::date::Time,
-}
-
-impl TryFrom<gix::Id<'_>> for BranchCommit {
-    type Error = anyhow::Error;
-
-    fn try_from(value: gix::Id<'_>) -> Result<Self, Self::Error> {
-        let commit = value.object()?.into_commit();
-        // Decode efficiently, no need to own this.
-        let commit = commit.decode()?;
-        Ok(BranchCommit {
-            id: value.detach(),
-            title: commit.message().title.to_owned(),
-            committed_date: commit.committer.time,
-        })
+impl Stack {
+    /// Return the tip of the stack, which is either the first commit of the first segment or `None` if this is an unborn branch.
+    pub fn tip(&self) -> Option<gix::ObjectId> {
+        self.segments.first().and_then(|name| name.tip())
     }
-}
-
-/// A more detailed specification of a reference associated with a workspace, and it's location in comparison to a named reference point.
-#[derive(Debug, Clone, Copy)]
-pub enum RefLocation {
-    /// The workspace commit can reach the given reference using a graph-walk.
-    ///
-    /// This is the common case.
-    ReachableFromWorkspaceCommit,
-    /// The given reference can reach into this workspace segment, but isn't inside of it.
-    ///
-    /// This happens if someone checked out the reference directly and commited into it.
-    OutsideOfWorkspace,
-    /// `HEAD` points directly to the
-    AtHead,
-}
-
-/// A list of all commits in a stack segment of a [`Stack`].
-#[derive(Default, Debug, Clone)]
-pub struct StackSegment {
-    /// The name of the branch at the tip of it, and the starting point of the walk.
+    /// Return the name of the top-most [`Segment`].
     ///
     /// It is `None` if this branch is the top-most stack segment and the `ref_name` wasn't pointing to
     /// a commit anymore that was reached by our rev-walk.
     /// This can happen if the ref is deleted, or if it was advanced by other means.
-    pub ref_name: Option<gix::refs::FullName>,
-    /// Specify where the `ref_name` is specifically, or `None` if there is no ref-name.
-    pub ref_location: Option<RefLocation>,
-    /// The portion of commits that can be reached from the tip of the *branch* downwards, so that they are unique
-    /// for that stack segment and not included in any other stack or the *target branch*.
-    ///
-    /// The list could be empty.
-    pub commits_unique_from_tip: Vec<BranchCommit>,
-    /// The commits that are reachable from this branch, but not from the tip of the *Stack*.
-    /// This happens if the branch is advanced/moved by other means.
-    pub commits_unintegratd_local: Vec<BranchCommit>,
-    /// Commits that are reachable from the remote-tracking branch associated with this branch,
-    /// but are not reachable from this branch.
-    pub commits_unintegrated_upstream: Vec<BranchCommit>,
-    /// The name of the remote tracking branch of this segment, if present, i.e. `refs/remotes/origin/main`.
-    /// Its presence means that a remote is configured and that the stack content
-    pub remote_tracking_ref_name: Option<gix::refs::FullName>,
-    /// Metadata with additional information, or `None` if nothing was present.
-    ///
-    /// Primary use for this is the consumer, as edits are forced to be made on 'connected' data, so refetching is necessary.
-    pub metadata: Option<but_core::ref_metadata::Branch>,
+    pub fn name(&self) -> Option<&gix::refs::FullNameRef> {
+        self.ref_name().map(|rn| rn.as_ref())
+    }
+
+    /// The same as [`name()`](Self::ref_name()), but returns the owned name.
+    pub fn ref_name(&self) -> Option<&gix::refs::FullName> {
+        self.segments
+            .first()
+            .and_then(|name| name.ref_name.as_ref())
+    }
 }
 
 /// Return all stack segments within the given `stack`.
-pub fn stack_segments(stack: Stack) -> anyhow::Result<Vec<StackSegment>> {
+pub fn stack_segments(stack: Stack) -> anyhow::Result<Vec<ref_info::ui::Segment>> {
     todo!()
 }

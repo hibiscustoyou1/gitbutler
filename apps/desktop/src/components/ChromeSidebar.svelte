@@ -1,44 +1,41 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import KeyboardShortcutsModal from '$components/KeyboardShortcutsModal.svelte';
 	import ShareIssueModal from '$components/ShareIssueModal.svelte';
-	import { Project } from '$lib/project/project';
+	import { ircEnabled } from '$lib/config/uiFeatureFlags';
 	import {
 		branchesPath,
-		historyPath,
+		ircPath,
 		isBranchesPath,
-		isHistoryPath,
-		isProjectSettingsPath,
-		isTargetPath,
+		isIrcPath,
+		isNewProjectSettingsPath,
 		isWorkspacePath,
-		projectSettingsPath,
-		targetPath,
+		historyPath,
+		isHistoryPath,
+		newProjectSettingsPath,
+		newSettingsPath,
 		workspacePath
 	} from '$lib/routes/routes.svelte';
-	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
-	import { User } from '$lib/user/user';
-	import { UserService } from '$lib/user/userService';
-	import { getContextStore } from '@gitbutler/shared/context';
-	import { getContext } from '@gitbutler/shared/context';
-	import { getContextStoreBySymbol } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import ContextMenu from '@gitbutler/ui/ContextMenu.svelte';
-	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
-	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import { slide } from 'svelte/transition';
-	import type { Writable } from 'svelte/store';
-	import { goto } from '$app/navigation';
+	import { SETTINGS } from '$lib/settings/userSettings';
+	import { TestId } from '$lib/testing/testIds';
+	import { USER } from '$lib/user/user';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/shared/context';
+	import { Button, ContextMenu, ContextMenuItem, ContextMenuSection, Icon } from '@gitbutler/ui';
 
-	const project = getContext(Project);
-	const user = getContextStore(User);
+	import { slide } from 'svelte/transition';
+
+	const { projectId, disabled = false }: { projectId: string; disabled?: boolean } = $props();
+
+	const user = inject(USER);
 
 	let contextTriggerButton = $state<HTMLButtonElement | undefined>();
 	let contextMenuEl = $state<ContextMenu>();
 	let shareIssueModal = $state<ShareIssueModal>();
 	let keyboardShortcutsModal = $state<KeyboardShortcutsModal>();
 
-	const userService = getContext(UserService);
-	const userSettings = getContextStoreBySymbol<Settings, Writable<Settings>>(SETTINGS);
+	const userService = inject(USER_SERVICE);
+	const userSettings = inject(SETTINGS);
 </script>
 
 <div class="sidebar">
@@ -48,25 +45,29 @@
 				<div class="active-page-indicator" in:slide={{ axis: 'x', duration: 150 }}></div>
 			{/if}
 			<Button
+				testId={TestId.NavigationWorkspaceButton}
 				kind="outline"
-				onclick={() => goto(workspacePath(project.id))}
+				onclick={() => goto(workspacePath(projectId))}
 				width={34}
 				class={['btn-square', isWorkspacePath() && 'btn-active']}
 				tooltip="Workspace"
+				{disabled}
 			>
-				<svg viewBox="0 0 16 13" fill="none" xmlns="http://www.w3.org/2000/svg">
-					<path
-						d="M2 12L3.5 7.5M14 12L12.5 7.5M12.5 7.5L11 3H5L3.5 7.5M12.5 7.5H3.5"
-						stroke-width="1.5"
-						stroke="var(--clr-workspace-legs)"
-					/>
-					<path
-						d="M1.24142 3H14.7586C14.8477 3 14.8923 2.89229 14.8293 2.82929L13.0293 1.02929C13.0105 1.01054 12.9851 1 12.9586 1H3.04142C3.0149 1 2.98946 1.01054 2.97071 1.02929L1.17071 2.82929C1.10771 2.89229 1.15233 3 1.24142 3Z"
-						stroke-width="1.5"
-						stroke="var(--clr-workspace-top)"
-						fill="var(--clr-workspace-top)"
-					/>
-				</svg>
+				{#snippet custom()}
+					<svg viewBox="0 0 16 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+						<path
+							d="M2 12L3.5 7.5M14 12L12.5 7.5M12.5 7.5L11 3H5L3.5 7.5M12.5 7.5H3.5"
+							stroke-width="1.5"
+							stroke="var(--clr-workspace-legs)"
+						/>
+						<path
+							d="M1.24142 3H14.7586C14.8477 3 14.8923 2.89229 14.8293 2.82929L13.0293 1.02929C13.0105 1.01054 12.9851 1 12.9586 1H3.04142C3.0149 1 2.98946 1.01054 2.97071 1.02929L1.17071 2.82929C1.10771 2.89229 1.15233 3 1.24142 3Z"
+							stroke-width="1.5"
+							stroke="var(--clr-workspace-top)"
+							fill="var(--clr-workspace-top)"
+						/>
+					</svg>
+				{/snippet}
 			</Button>
 		</div>
 		<div>
@@ -74,78 +75,54 @@
 				<div class="active-page-indicator" in:slide={{ axis: 'x', duration: 150 }}></div>
 			{/if}
 			<Button
+				testId={TestId.NavigationBranchesButton}
 				kind="outline"
-				onclick={() => goto(branchesPath(project.id))}
+				onclick={() => goto(branchesPath(projectId))}
 				width={34}
 				class={['btn-square', isBranchesPath() && 'btn-active']}
 				tooltip="Branches"
+				{disabled}
 			>
-				<svg viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-					<path d="M5 3L11 3" stroke-width="1.5" stroke="var(--clr-branches)" />
-					<path
-						d="M3 5L3 7.17157C3 7.70201 3.21071 8.21071 3.58579 8.58579L5.41421 10.4142C5.78929 10.7893 6.29799 11 6.82843 11L11.5 11"
-						stroke-width="1.5"
-						stroke="var(--clr-branches)"
-					/>
-					<rect
-						x="15"
-						y="1"
-						width="4"
-						height="4"
-						transform="rotate(90 15 1)"
-						stroke-width="1.5"
-						fill="var(--clr-branches)"
-						stroke="var(--clr-branches)"
-					/>
-					<rect
-						x="15"
-						y="9"
-						width="4"
-						height="4"
-						transform="rotate(90 15 9)"
-						stroke-width="1.5"
-						fill="var(--clr-branches)"
-						stroke="var(--clr-branches)"
-					/>
-					<rect
-						x="5"
-						y="1"
-						width="4"
-						height="4"
-						transform="rotate(90 5 1)"
-						stroke-width="1.5"
-						fill="var(--clr-branches)"
-						stroke="var(--clr-branches)"
-					/>
-				</svg>
-			</Button>
-		</div>
-		<div>
-			{#if isTargetPath()}
-				<div class="active-page-indicator" in:slide={{ axis: 'x', duration: 150 }}></div>
-			{/if}
-			<Button
-				kind="outline"
-				onclick={() => goto(targetPath(project.id))}
-				width={34}
-				class={['btn-square', isTargetPath() && 'btn-active']}
-				tooltip="Target"
-			>
-				<svg viewBox="0 0 18 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-					<path
-						d="M10.6906 1C12.1197 1 13.4402 1.7624 14.1547 3L15.8453 5.9282C16.5598 7.16581 16.5598 8.6906 15.8453 9.9282L14.1547 12.8564C13.4402 14.094 12.1197 14.8564 10.6906 14.8564H7.3094C5.88034 14.8564 4.55983 14.094 3.8453 12.8564L2.1547 9.9282C1.44017 8.6906 1.44017 7.16581 2.1547 5.9282L3.8453 3C4.55983 1.7624 5.88034 1 7.3094 1H10.6906Z"
-						stroke-width="1.5"
-						stroke="var(--clr-target-bg)"
-						fill="var(--clr-target-bg)"
-					/>
-					<path d="M9 14.5V10.5M9 5V1" stroke-width="1.5" stroke="var(--clr-target-lines)" />
-					<path
-						d="M2.25 7.75L6.25 7.75M11.75 7.75L15.75 7.75"
-						stroke-width="1.5"
-						stroke="var(--clr-target-lines)"
-					/>
-					<circle cx="9" cy="8" r="1" stroke="var(--clr-target-lines)" />
-				</svg>
+				{#snippet custom()}
+					<svg viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+						<path d="M5 3L11 3" stroke-width="1.5" stroke="var(--clr-branches)" />
+						<path
+							d="M3 5L3 7.17157C3 7.70201 3.21071 8.21071 3.58579 8.58579L5.41421 10.4142C5.78929 10.7893 6.29799 11 6.82843 11L11.5 11"
+							stroke-width="1.5"
+							stroke="var(--clr-branches)"
+						/>
+						<rect
+							x="15"
+							y="1"
+							width="4"
+							height="4"
+							transform="rotate(90 15 1)"
+							stroke-width="1.5"
+							fill="var(--clr-branches)"
+							stroke="var(--clr-branches)"
+						/>
+						<rect
+							x="15"
+							y="9"
+							width="4"
+							height="4"
+							transform="rotate(90 15 9)"
+							stroke-width="1.5"
+							fill="var(--clr-branches)"
+							stroke="var(--clr-branches)"
+						/>
+						<rect
+							x="5"
+							y="1"
+							width="4"
+							height="4"
+							transform="rotate(90 5 1)"
+							stroke-width="1.5"
+							fill="var(--clr-branches)"
+							stroke="var(--clr-branches)"
+						/>
+					</svg>
+				{/snippet}
 			</Button>
 		</div>
 		<div>
@@ -154,46 +131,100 @@
 			{/if}
 			<Button
 				kind="outline"
-				onclick={() => goto(historyPath(project.id))}
+				onclick={() => goto(historyPath(projectId))}
 				width={34}
 				class={['btn-square', isHistoryPath() && 'btn-active']}
-				tooltip="History"
+				tooltip="Operations history"
+				tooltipHotkey="⇧⌘H"
+				{disabled}
 			>
-				<svg
-					viewBox="0 0 18 18"
-					fill="none"
-					xmlns="http://www.w3.org/2000/svg"
-					stroke-width="1.5"
-					style="padding: 1px;"
-				>
-					<rect
+				{#snippet custom()}
+					<svg
 						width="18"
 						height="18"
-						rx="6"
-						stroke="var(--clr-history-bg)"
-						fill="var(--clr-history-bg)"
-					/>
-					<path d="M8 3V10H13" stroke-width="1.5" stroke="var(--clr-history-arrows)" />
-				</svg>
+						viewBox="0 0 18 18"
+						fill="none"
+						xmlns="http://www.w3.org/2000/svg"
+					>
+						{#if !isHistoryPath()}
+							<path
+								d="M7 1H5C2.79086 1 1 2.79086 1 5V13C1 15.2091 2.79086 17 5 17H13C15.2091 17 17 15.2091 17 13V11"
+								stroke-width="1.5"
+							/>
+							<path
+								d="M17 11V5C17 2.79086 15.2091 1 13 1H7"
+								stroke-width="1.5"
+								stroke-dasharray="1.5 1.5"
+							/>
+						{:else}
+							<rect
+								x="1"
+								y="1"
+								width="16"
+								height="16"
+								rx="4"
+								fill="var(--clr-history-bg)"
+								stroke="var(--clr-history-bg)"
+								stroke-width="1.5"
+							/>
+						{/if}
+						<path d="M8 4V10H14" stroke="var(--clr-history-arrows)" stroke-width="1.5" />
+					</svg>
+				{/snippet}
 			</Button>
 		</div>
+		{#if $ircEnabled}
+			<div>
+				{#if isIrcPath()}
+					<div class="active-page-indicator" in:slide={{ axis: 'x', duration: 150 }}></div>
+				{/if}
+				<Button
+					kind="outline"
+					onclick={() => goto(ircPath(projectId))}
+					icon="chat"
+					width={34}
+					class={['btn-square', isIrcPath() && 'btn-active']}
+					tooltip="History"
+					{disabled}
+				/>
+			</div>
+		{/if}
 	</div>
 	<div class="bottom">
 		<div class="bottom__primary-actions">
 			<div>
-				{#if isProjectSettingsPath()}
+				{#if isNewProjectSettingsPath()}
 					<div class="active-page-indicator" in:slide={{ axis: 'x', duration: 150 }}></div>
 				{/if}
 				<Button
-					icon="settings"
 					kind="outline"
-					onclick={() => goto(projectSettingsPath(project.id))}
+					onclick={() => goto(newProjectSettingsPath(projectId))}
 					width={34}
-					class={['btn-square', isProjectSettingsPath() && 'btn-active']}
+					class={['btn-square', isNewProjectSettingsPath() && 'btn-active']}
 					tooltipPosition="top"
 					tooltipAlign="start"
 					tooltip="Project settings"
-				/>
+					{disabled}
+				>
+					{#snippet custom()}
+						<svg
+							width="14"
+							height="16"
+							viewBox="0 0 14 16"
+							fill="none"
+							xmlns="http://www.w3.org/2000/svg"
+						>
+							<path
+								fill-rule="evenodd"
+								clip-rule="evenodd"
+								d="M8.06218 1.26795C7.44338 0.910684 6.68098 0.910684 6.06218 1.26795L2 3.61325C1.3812 3.97051 1 4.63077 1 5.3453V10.0359C1 10.7504 1.3812 11.4107 2 11.7679L6.06218 14.1132C6.68098 14.4705 7.44338 14.4705 8.06218 14.1132L12.1244 11.7679C12.7432 11.4107 13.1244 10.7504 13.1244 10.0359V5.3453C13.1244 4.63077 12.7432 3.97051 12.1244 3.61325L8.06218 1.26795ZM8.06218 5.26795C7.44338 4.91068 6.68098 4.91068 6.06218 5.26795L5.4641 5.61325C4.8453 5.97051 4.4641 6.63077 4.4641 7.3453V8.0359C4.4641 8.75043 4.8453 9.41068 5.4641 9.76795L6.06218 10.1132C6.68098 10.4705 7.44338 10.4705 8.06218 10.1132L8.66025 9.76795C9.27906 9.41068 9.66025 8.75043 9.66025 8.0359V7.3453C9.66025 6.63077 9.27906 5.97051 8.66025 5.61325L8.06218 5.26795Z"
+								stroke="var(--clr-settings-bg)"
+								fill="var(--clr-settings-bg)"
+								stroke-width="1.5"
+							/>
+						</svg>
+					{/snippet}
+				</Button>
 			</div>
 
 			<Button
@@ -205,31 +236,33 @@
 				}}
 				bind:el={contextTriggerButton}
 			>
-				<div class="user-button">
-					<div class="user-icon">
-						{#if $user?.picture}
-							<img
-								class="user-icon__image"
-								src={$user.picture}
-								alt=""
-								referrerpolicy="no-referrer"
-							/>
-						{:else}
-							<Icon name="profile" />
-						{/if}
+				{#snippet custom()}
+					<div class="user-button">
+						<div class="user-icon">
+							{#if $user?.picture}
+								<img
+									class="user-icon__image"
+									src={$user.picture}
+									alt=""
+									referrerpolicy="no-referrer"
+								/>
+							{:else}
+								<Icon name="profile" />
+							{/if}
+						</div>
+						<div class="user-button__select-icon">
+							<Icon name="select-chevron" />
+						</div>
 					</div>
-					<div class="user-button__select-icon">
-						<Icon name="select-chevron" />
-					</div>
-				</div></Button
-			>
+				{/snippet}
+			</Button>
 		</div>
 		<div class="bottom__ghost-actions">
 			<Button
 				icon="keyboard"
 				kind="ghost"
 				style="neutral"
-				tooltip="Keyboard Shortcuts"
+				tooltip="Keyboard Shortcuts (Coming soon...)"
 				tooltipPosition="top"
 				tooltipAlign="start"
 				width={34}
@@ -237,6 +270,7 @@
 				onclick={() => {
 					keyboardShortcutsModal?.show();
 				}}
+				disabled={true}
 			/>
 			<Button
 				icon="mail"
@@ -249,6 +283,7 @@
 				onclick={() => {
 					shareIssueModal?.show();
 				}}
+				{disabled}
 			/>
 		</div>
 	</div>
@@ -262,13 +297,15 @@
 >
 	<ContextMenuSection>
 		<ContextMenuItem
-			label="Preferences"
+			label="Global settings"
 			onclick={() => {
-				goto('/settings/profile');
+				goto(newSettingsPath());
+				contextMenuEl?.close();
 			}}
+			keyboardShortcut="⌘,"
 		/>
 	</ContextMenuSection>
-	<ContextMenuSection title="Theme (⌘K)">
+	<ContextMenuSection title="Theme (⌘T)">
 		<ContextMenuItem
 			label="Dark"
 			onclick={async () => {
@@ -300,14 +337,16 @@
 			}}
 		/>
 	</ContextMenuSection>
-	<ContextMenuSection>
-		<ContextMenuItem
-			label="Log out"
-			onclick={async () => {
-				await userService.logout();
-			}}
-		/>
-	</ContextMenuSection>
+	{#if $user}
+		<ContextMenuSection>
+			<ContextMenuItem
+				label="Log out"
+				onclick={async () => {
+					await userService.logout();
+				}}
+			/>
+		</ContextMenuSection>
+	{/if}
 </ContextMenu>
 
 <KeyboardShortcutsModal bind:this={keyboardShortcutsModal} />
@@ -349,8 +388,8 @@
 	.user-button {
 		display: flex;
 		flex-direction: column;
-		justify-content: center;
 		align-items: center;
+		justify-content: center;
 		width: 34px;
 		padding: 4px;
 		gap: 4px;
@@ -362,10 +401,10 @@
 		justify-content: center;
 		width: 26px;
 		height: 26px;
+		overflow: hidden;
+		border-radius: var(--radius-m);
 		background-color: var(--clr-core-pop-50);
 		color: var(--clr-core-ntrl-100);
-		border-radius: var(--radius-m);
-		overflow: hidden;
 	}
 
 	.user-icon__image {
@@ -383,14 +422,14 @@
 	}
 
 	.active-page-indicator {
-		content: '';
 		position: absolute;
 		left: 0;
 		width: 12px;
 		height: 18px;
+		transform: translateX(-50%) translateY(50%);
 		border-radius: var(--radius-m);
 		background-color: var(--clr-theme-pop-element);
-		transform: translateX(-50%) translateY(50%);
+		content: '';
 	}
 
 	/* OVERRIDE BUTTON STYLES */
@@ -412,8 +451,8 @@
 	}
 	:global(.sidebar .btn-height-auto) {
 		height: auto;
-		border-radius: var(--radius-ml);
 		padding: 0;
+		border-radius: var(--radius-ml);
 	}
 	:global(.sidebar .btn-square) {
 		aspect-ratio: 1 / 1;
@@ -439,6 +478,9 @@
 		/* history icon */
 		--clr-history-bg: #fbdb79;
 		--clr-history-arrows: #0a0a0a;
+
+		/* settings icon */
+		--clr-settings-bg: var(--label-clr);
 	}
 
 	:global(.sidebar .faded-btn) {

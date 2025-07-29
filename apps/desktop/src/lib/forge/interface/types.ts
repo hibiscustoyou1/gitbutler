@@ -18,26 +18,33 @@ export interface PullRequest {
 	sourceBranch: string;
 	targetBranch: string;
 	sha: string;
-	createdAt: Date;
-	modifiedAt: Date;
-	mergedAt?: Date;
-	closedAt?: Date;
+	createdAt: string;
+	modifiedAt: string;
+	mergedAt?: string;
+	closedAt?: string;
 	repositorySshUrl?: string;
 	repositoryHttpsUrl?: string;
 	repoOwner?: string;
+	reviewers: { srcUrl: string; name: string }[];
+}
+
+export interface PullRequestPermissions {
+	canMerge?: boolean;
 }
 
 export interface DetailedPullRequest {
 	id: number;
 	title: string;
+	author: Author | null;
 	body: string | undefined;
 	number: number;
 	sourceBranch: string;
 	draft?: boolean;
-	fork?: boolean;
-	createdAt: Date;
-	mergedAt?: Date;
-	closedAt?: Date;
+	fork: boolean;
+	createdAt: string;
+	mergedAt?: string;
+	closedAt?: string;
+	updatedAt: string;
 	htmlUrl: string;
 	merged: boolean;
 	mergeable: boolean;
@@ -45,14 +52,23 @@ export interface DetailedPullRequest {
 	rebaseable: boolean;
 	squashable: boolean;
 	state: 'open' | 'closed';
-	baseRepo: RepoInfo | undefined;
+	baseRepo?: RepoInfo | undefined;
 	baseBranch: string;
+	reviewers: { srcUrl: string; name: string }[];
+	commentsCount: number;
+	permissions?: PullRequestPermissions;
+	repositorySshUrl?: string;
+	repositoryHttpsUrl?: string;
 }
 
 export type ChecksStatus = {
-	startedAt: Date;
+	startedAt: string;
+	/**
+	 * Checks are considered completed if all checks have completed  or if there is at least one failure.
+	 */
 	completed: boolean;
 	success: boolean;
+	failedChecks: string[];
 };
 
 export enum MergeMethod {
@@ -60,10 +76,6 @@ export enum MergeMethod {
 	Rebase = 'rebase',
 	Squash = 'squash'
 }
-export type CheckSuites = {
-	count: number;
-	items?: CheckSuite[];
-};
 
 export type CheckSuite = {
 	name?: string;
@@ -75,6 +87,7 @@ export type ForgeArguments = {
 	repo: RepoInfo;
 	baseBranch: string;
 	forkStr?: string;
+	authenticated: boolean;
 };
 
 export type CreatePullRequestArgs = {

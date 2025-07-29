@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { AppSettings } from '$lib/config/appSettings';
-	import { getContext } from '@gitbutler/shared/context';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
-	import Toggle from '@gitbutler/ui/Toggle.svelte';
-	import Link from '@gitbutler/ui/link/Link.svelte';
+	import { APP_SETTINGS } from '$lib/config/appSettings';
+	import { TestId } from '$lib/testing/testIds';
+	import { inject } from '@gitbutler/shared/context';
+	import { SectionCard, Toggle, Link } from '@gitbutler/ui';
 
-	const appSettings = getContext(AppSettings);
+	const appSettings = inject(APP_SETTINGS);
 	const errorReportingEnabled = appSettings.appErrorReportingEnabled;
 	const metricsEnabled = appSettings.appMetricsEnabled;
 	const nonAnonMetricsEnabled = appSettings.appNonAnonMetricsEnabled;
@@ -34,7 +33,7 @@
 	</p>
 </div>
 
-<div class="analytics-settings__actions">
+<div class="analytics-settings__actions" data-testid={TestId.OnboardingPageAnalyticsSettings}>
 	<SectionCard labelFor="errorReportingToggle" orientation="row">
 		{#snippet title()}
 			Error reporting
@@ -45,6 +44,7 @@
 		{#snippet actions()}
 			<Toggle
 				id="errorReportingToggle"
+				testId={TestId.OnboardingPageAnalyticsSettingsErrorReportingToggle}
 				checked={$errorReportingEnabled}
 				onclick={() => ($errorReportingEnabled = !$errorReportingEnabled)}
 			/>
@@ -61,6 +61,7 @@
 		{#snippet actions()}
 			<Toggle
 				id="metricsEnabledToggle"
+				testId={TestId.OnboardingPageAnalyticsSettingsTelemetryToggle}
 				checked={$metricsEnabled}
 				onclick={() => ($metricsEnabled = !$metricsEnabled)}
 			/>
@@ -77,6 +78,7 @@
 		{#snippet actions()}
 			<Toggle
 				id="nonAnonMetricsEnabledToggle"
+				testId={TestId.OnboardingPageAnalyticsSettingsNonAnonymousToggle}
 				checked={$nonAnonMetricsEnabled}
 				onclick={() => ($nonAnonMetricsEnabled = !$nonAnonMetricsEnabled)}
 			/>
@@ -92,8 +94,8 @@
 	}
 
 	.analytics-settings__text {
-		color: var(--clr-text-2);
 		margin-bottom: 10px;
+		color: var(--clr-text-2);
 	}
 
 	.analytics-settings__actions {

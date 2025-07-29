@@ -27,3 +27,28 @@ export function createSelectByIds<T>() {
 		}
 	);
 }
+
+export function createSelectByPrefix<T>() {
+	return createSelector(
+		[
+			(state: EntityState<T, string>) => state,
+			(state_: EntityState<T, string>, prefix: string) => prefix
+		],
+		(state, prefix) =>
+			state.ids
+				.filter((id) => id.startsWith(prefix))
+				.map((id) => state.entities[id])
+				.filter(isDefined)
+	);
+}
+
+export function createSelectNotIn<T>() {
+	return createSelector(
+		[(state: EntityState<T, string>) => state, (state_, exclude: string[]) => exclude],
+		(state, exclude) =>
+			state.ids
+				.filter((id) => !exclude.includes(id))
+				.map((id) => state.entities[id])
+				.filter(isDefined)
+	);
+}

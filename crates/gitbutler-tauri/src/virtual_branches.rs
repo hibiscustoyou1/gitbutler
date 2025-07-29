@@ -1,29 +1,28 @@
 pub mod commands {
+    use crate::error::Error;
     use anyhow::{anyhow, Context};
+    use but_graph::virtual_branches_legacy_types::BranchOwnershipClaims;
     use but_settings::AppSettingsWithDiskSync;
-    use but_workspace::commit_engine::ui::DiffSpec;
-    use but_workspace::StackEntry;
+    use but_workspace::ui::StackEntryNoOpt;
+    use but_workspace::DiffSpec;
     use gitbutler_branch::{BranchCreateRequest, BranchUpdateRequest};
     use gitbutler_branch_actions::branch_upstream_integration::IntegrationStrategy;
-    use gitbutler_branch_actions::internal::StackListResult;
     use gitbutler_branch_actions::upstream_integration::{
         BaseBranchResolution, BaseBranchResolutionApproach, IntegrationOutcome, Resolution,
         StackStatuses,
     };
     use gitbutler_branch_actions::{
         BaseBranch, BranchListing, BranchListingDetails, BranchListingFilter, RemoteBranchData,
-        RemoteBranchFile, RemoteCommit, StackOrder, VirtualBranchHunkRangeMap, VirtualBranches,
+        RemoteBranchFile, RemoteCommit, StackOrder,
     };
     use gitbutler_command_context::CommandContext;
+    use gitbutler_oxidize::ObjectIdExt;
     use gitbutler_project as projects;
     use gitbutler_project::{FetchResult, ProjectId};
     use gitbutler_reference::{normalize_branch_name as normalize_name, Refname, RemoteRefname};
-    use gitbutler_stack::{BranchOwnershipClaims, StackId};
-    use std::path::PathBuf;
+    use gitbutler_stack::{StackId, VirtualBranchesHandle};
     use tauri::State;
     use tracing::instrument;
-
-    use crate::{error::Error, WindowState};
 
     #[tauri::command(async)]
     #[instrument(err(Debug))]
@@ -32,68 +31,26 @@ pub mod commands {
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
-    pub fn commit_virtual_branch(
-        windows: State<'_, WindowState>,
-        projects: State<'_, projects::Controller>,
-        settings: State<'_, AppSettingsWithDiskSync>,
-        project_id: ProjectId,
-        branch: StackId,
-        message: &str,
-        ownership: Option<BranchOwnershipClaims>,
-    ) -> Result<String, Error> {
-        let project = projects.get(project_id)?;
-        let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let oid =
-            gitbutler_branch_actions::create_commit(&ctx, branch, message, ownership.as_ref())?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
-        Ok(oid.to_string())
-    }
-
-    #[tauri::command(async)]
     #[instrument(skip(projects, settings), err(Debug))]
-    pub fn list_virtual_branches(
-        projects: State<'_, projects::Controller>,
-        settings: State<'_, AppSettingsWithDiskSync>,
-        project_id: ProjectId,
-    ) -> Result<VirtualBranches, Error> {
-        let project = projects.get(project_id)?;
-        let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        gitbutler_branch_actions::list_virtual_branches(&ctx)
-            .map_err(Into::into)
-            .map(
-                |StackListResult {
-                     branches,
-                     skipped_files,
-                     dependency_errors,
-                 }| VirtualBranches {
-                    branches,
-                    skipped_files,
-                    dependency_errors,
-                },
-            )
-    }
-
-    #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
     pub fn create_virtual_branch(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
         branch: BranchCreateRequest,
-    ) -> Result<StackEntry, Error> {
+    ) -> Result<StackEntryNoOpt, Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let stack_entry = gitbutler_branch_actions::create_virtual_branch(&ctx, &branch)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
+        let stack_entry = gitbutler_branch_actions::create_virtual_branch(
+            &ctx,
+            &branch,
+            ctx.project().exclusive_worktree_access().write_permission(),
+        )?;
         Ok(stack_entry)
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn delete_local_branch(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
@@ -103,14 +60,12 @@ pub mod commands {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
         gitbutler_branch_actions::delete_local_branch(&ctx, &refname, given_name)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
         Ok(())
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn create_virtual_branch_from_branch(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
@@ -123,18 +78,16 @@ pub mod commands {
         let branch_id = gitbutler_branch_actions::create_virtual_branch_from_branch(
             &ctx, &branch, remote, pr_number,
         )?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
         Ok(branch_id)
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn integrate_upstream_commits(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        branch: StackId,
+        stack_id: StackId,
         series_name: String,
         integration_strategy: Option<IntegrationStrategy>,
     ) -> Result<(), Error> {
@@ -142,11 +95,10 @@ pub mod commands {
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
         gitbutler_branch_actions::integrate_upstream_commits(
             &ctx,
-            branch,
+            stack_id,
             series_name,
             integration_strategy,
         )?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
         Ok(())
     }
 
@@ -167,34 +119,37 @@ pub mod commands {
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn set_base_branch(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
         branch: &str,
         push_remote: Option<&str>, // optional different name of a remote to push to (defaults to same as the branch)
+        stash_uncommitted: Option<bool>,
     ) -> Result<BaseBranch, Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
         let branch_name = format!("refs/remotes/{}", branch)
             .parse()
             .context("Invalid branch name")?;
-        let base_branch = gitbutler_branch_actions::set_base_branch(&ctx, &branch_name)?;
+        let base_branch = gitbutler_branch_actions::set_base_branch(
+            &ctx,
+            &branch_name,
+            stash_uncommitted.unwrap_or_default(),
+            ctx.project().exclusive_worktree_access().write_permission(),
+        )?;
 
         // if they also sent a different push remote, set that too
         if let Some(push_remote) = push_remote {
             gitbutler_branch_actions::set_target_push_remote(&ctx, push_remote)?;
         }
-        emit_vbranches(&windows, project_id, ctx.app_settings());
         Ok(base_branch)
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn push_base_branch(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
@@ -203,122 +158,47 @@ pub mod commands {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
         gitbutler_branch_actions::push_base_branch(&ctx, with_force)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
         Ok(())
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
-    pub fn update_virtual_branch(
-        windows: State<'_, WindowState>,
+    #[instrument(skip(projects, settings), err(Debug))]
+    pub fn update_stack_order(
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        branch: BranchUpdateRequest,
+        stacks: Vec<BranchUpdateRequest>,
     ) -> Result<(), Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        gitbutler_branch_actions::update_virtual_branch(&ctx, branch)?;
-
-        emit_vbranches(&windows, project_id, ctx.app_settings());
+        gitbutler_branch_actions::update_stack_order(&ctx, stacks)?;
         Ok(())
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
-    pub fn update_branch_order(
-        windows: State<'_, WindowState>,
+    #[instrument(skip(projects, settings), err(Debug))]
+    pub fn unapply_stack(
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        branches: Vec<BranchUpdateRequest>,
+        stack_id: StackId,
     ) -> Result<(), Error> {
         let project = projects.get(project_id)?;
-        let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        gitbutler_branch_actions::update_branch_order(&ctx, branches)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
-        Ok(())
-    }
-
-    #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
-    pub fn unapply_without_saving_virtual_branch(
-        windows: State<'_, WindowState>,
-        projects: State<'_, projects::Controller>,
-        settings: State<'_, AppSettingsWithDiskSync>,
-        project_id: ProjectId,
-        branch_id: StackId,
-    ) -> Result<(), Error> {
-        let project = projects.get(project_id)?;
-        let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        gitbutler_branch_actions::unapply_without_saving_virtual_branch(&ctx, branch_id)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
-        Ok(())
-    }
-
-    #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
-    pub fn save_and_unapply_virtual_branch(
-        windows: State<'_, WindowState>,
-        projects: State<'_, projects::Controller>,
-        settings: State<'_, AppSettingsWithDiskSync>,
-        project_id: ProjectId,
-        branch: StackId,
-    ) -> Result<(), Error> {
-        let project = projects.get(project_id)?;
-        let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        gitbutler_branch_actions::save_and_unapply_virutal_branch(&ctx, branch)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
-        Ok(())
-    }
-
-    #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
-    pub fn unapply_ownership(
-        windows: State<'_, WindowState>,
-        projects: State<'_, projects::Controller>,
-        settings: State<'_, AppSettingsWithDiskSync>,
-        project_id: ProjectId,
-        ownership: BranchOwnershipClaims,
-    ) -> Result<(), Error> {
-        let project = projects.get(project_id)?;
-        let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        gitbutler_branch_actions::unapply_ownership(&ctx, &ownership)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
-        Ok(())
-    }
-
-    #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
-    pub fn unapply_lines(
-        windows: State<'_, WindowState>,
-        projects: State<'_, projects::Controller>,
-        settings: State<'_, AppSettingsWithDiskSync>,
-        project_id: ProjectId,
-        ownership: BranchOwnershipClaims,
-        lines: VirtualBranchHunkRangeMap,
-    ) -> Result<(), Error> {
-        let project = projects.get(project_id)?;
-        let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        gitbutler_branch_actions::unapply_lines(&ctx, &ownership, lines)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
-        Ok(())
-    }
-
-    #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
-    pub fn reset_files(
-        windows: State<'_, WindowState>,
-        projects: State<'_, projects::Controller>,
-        settings: State<'_, AppSettingsWithDiskSync>,
-        project_id: ProjectId,
-        branch_id: StackId,
-        files: Vec<PathBuf>,
-    ) -> Result<(), Error> {
-        let project = projects.get(project_id)?;
-        let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        gitbutler_branch_actions::reset_files(&ctx, branch_id, &files)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
+        let ctx = &mut CommandContext::open(&project, settings.get()?.clone())?;
+        let (assignments, _) = but_hunk_assignment::assignments_with_fallback(
+            ctx,
+            false,
+            Some(but_core::diff::ui::worktree_changes_by_worktree_dir(project.path)?.changes),
+            None,
+        )?;
+        let assigned_diffspec = but_workspace::flatten_diff_specs(
+            assignments
+                .into_iter()
+                .filter(|a| a.stack_id == Some(stack_id))
+                .map(|a| a.into())
+                .collect::<Vec<DiffSpec>>(),
+        );
+        gitbutler_branch_actions::unapply_stack(ctx, stack_id, assigned_diffspec)?;
         Ok(())
     }
 
@@ -343,135 +223,111 @@ pub mod commands {
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        commit_oid: String,
+        commit_id: String,
     ) -> Result<Vec<RemoteBranchFile>, Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let commit_oid = git2::Oid::from_str(&commit_oid).map_err(|e| anyhow!(e))?;
-        gitbutler_branch_actions::list_commit_files(&ctx, commit_oid).map_err(Into::into)
+        let commit_id = git2::Oid::from_str(&commit_id).map_err(|e| anyhow!(e))?;
+        gitbutler_branch_actions::list_commit_files(&ctx, commit_id).map_err(Into::into)
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
-    pub fn reset_virtual_branch(
-        windows: State<'_, WindowState>,
-        projects: State<'_, projects::Controller>,
-        settings: State<'_, AppSettingsWithDiskSync>,
-        project_id: ProjectId,
-        branch_id: StackId,
-        target_commit_oid: String,
-    ) -> Result<(), Error> {
-        let project = projects.get(project_id)?;
-        let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let target_commit_oid = git2::Oid::from_str(&target_commit_oid).map_err(|e| anyhow!(e))?;
-        gitbutler_branch_actions::reset_virtual_branch(&ctx, branch_id, target_commit_oid)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
-        Ok(())
-    }
-
-    #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn amend_virtual_branch(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        branch_id: StackId,
-        commit_oid: String,
+        stack_id: StackId,
+        commit_id: String,
         worktree_changes: Vec<DiffSpec>,
     ) -> Result<String, Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let commit_oid = git2::Oid::from_str(&commit_oid).map_err(|e| anyhow!(e))?;
-        let oid = gitbutler_branch_actions::amend(
-            &ctx,
-            branch_id,
-            commit_oid,
-            worktree_changes.into_iter().map(Into::into).collect(),
-        )?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
+        let commit_id = git2::Oid::from_str(&commit_id).map_err(|e| anyhow!(e))?;
+        let oid = gitbutler_branch_actions::amend(&ctx, stack_id, commit_id, worktree_changes)?;
         Ok(oid.to_string())
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     #[allow(clippy::too_many_arguments)]
     pub fn move_commit_file(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        branch_id: StackId,
-        from_commit_oid: String,
-        to_commit_oid: String,
+        stack_id: StackId,
+        from_commit_id: String,
+        to_commit_id: String,
         ownership: BranchOwnershipClaims,
     ) -> Result<String, Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let from_commit_oid = git2::Oid::from_str(&from_commit_oid).map_err(|e| anyhow!(e))?;
-        let to_commit_oid = git2::Oid::from_str(&to_commit_oid).map_err(|e| anyhow!(e))?;
+        let from_commit_id = git2::Oid::from_str(&from_commit_id).map_err(|e| anyhow!(e))?;
+        let to_commit_id = git2::Oid::from_str(&to_commit_id).map_err(|e| anyhow!(e))?;
+        let claim = ownership.into();
         let oid = gitbutler_branch_actions::move_commit_file(
             &ctx,
-            branch_id,
-            from_commit_oid,
-            to_commit_oid,
-            &ownership,
+            stack_id,
+            from_commit_id,
+            to_commit_id,
+            &claim,
         )?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
         Ok(oid.to_string())
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn undo_commit(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        branch_id: StackId,
-        commit_oid: String,
+        stack_id: StackId,
+        commit_id: String,
     ) -> Result<(), Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let commit_oid = git2::Oid::from_str(&commit_oid).map_err(|e| anyhow!(e))?;
-        gitbutler_branch_actions::undo_commit(&ctx, branch_id, commit_oid)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
+        let commit_id = git2::Oid::from_str(&commit_id).map_err(|e| anyhow!(e))?;
+        gitbutler_branch_actions::undo_commit(&ctx, stack_id, commit_id)?;
         Ok(())
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn insert_blank_commit(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        branch_id: StackId,
-        commit_oid: String,
+        stack_id: StackId,
+        commit_id: Option<String>,
         offset: i32,
     ) -> Result<(), Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let commit_oid = git2::Oid::from_str(&commit_oid).map_err(|e| anyhow!(e))?;
-        gitbutler_branch_actions::insert_blank_commit(&ctx, branch_id, commit_oid, offset)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
+        let commit_id = match commit_id {
+            Some(oid) => git2::Oid::from_str(&oid).map_err(|e| anyhow!(e))?,
+            None => {
+                let state = VirtualBranchesHandle::new(ctx.project().gb_dir());
+                let stack = state.get_stack(stack_id)?;
+                let gix_repo = ctx.gix_repo()?;
+                stack.head_oid(&gix_repo)?.to_git2()
+            }
+        };
+        gitbutler_branch_actions::insert_blank_commit(&ctx, stack_id, commit_id, offset, None)?;
         Ok(())
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn reorder_stack(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        branch_id: StackId,
+        stack_id: StackId,
         stack_order: StackOrder,
     ) -> Result<(), Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        gitbutler_branch_actions::reorder_stack(&ctx, branch_id, stack_order)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
+        gitbutler_branch_actions::reorder_stack(&ctx, stack_id, stack_order)?;
         Ok(())
     }
 
@@ -518,39 +374,36 @@ pub mod commands {
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn squash_commits(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        branch_id: StackId,
-        source_commit_oids: Vec<String>,
-        target_commit_oid: String,
+        stack_id: StackId,
+        source_commit_ids: Vec<String>,
+        target_commit_id: String,
     ) -> Result<(), Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let source_commit_oids: Vec<git2::Oid> = source_commit_oids
+        let source_commit_ids: Vec<git2::Oid> = source_commit_ids
             .into_iter()
             .map(|oid| git2::Oid::from_str(&oid))
             .collect::<Result<_, _>>()
             .map_err(|e| anyhow!(e))?;
-        let destination_commit_oid =
-            git2::Oid::from_str(&target_commit_oid).map_err(|e| anyhow!(e))?;
+        let destination_commit_id =
+            git2::Oid::from_str(&target_commit_id).map_err(|e| anyhow!(e))?;
         gitbutler_branch_actions::squash_commits(
             &ctx,
-            branch_id,
-            source_commit_oids,
-            destination_commit_oid,
+            stack_id,
+            source_commit_ids,
+            destination_commit_id,
         )?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
         Ok(())
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn fetch_from_remotes(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
@@ -579,52 +432,43 @@ pub mod commands {
             return Err(anyhow!(error).into());
         }
 
-        emit_vbranches(&windows, project_id, ctx.app_settings());
         let base_branch = gitbutler_branch_actions::base::get_base_branch_data(&ctx)?;
         Ok(base_branch)
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn move_commit(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        commit_oid: String,
-        target_branch_id: StackId,
-        source_branch_id: StackId,
+        commit_id: String,
+        target_stack_id: StackId,
+        source_stack_id: StackId,
     ) -> Result<(), Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let commit_oid = git2::Oid::from_str(&commit_oid).map_err(|e| anyhow!(e))?;
-        gitbutler_branch_actions::move_commit(
-            &ctx,
-            target_branch_id,
-            commit_oid,
-            source_branch_id,
-        )?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
+        let commit_id = git2::Oid::from_str(&commit_id).map_err(|e| anyhow!(e))?;
+        gitbutler_branch_actions::move_commit(&ctx, target_stack_id, commit_id, source_stack_id)?;
         Ok(())
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn update_commit_message(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        branch_id: StackId,
-        commit_oid: String,
+        stack_id: StackId,
+        commit_id: String,
         message: &str,
-    ) -> Result<(), Error> {
+    ) -> Result<String, Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let commit_oid = git2::Oid::from_str(&commit_oid).map_err(|e| anyhow!(e))?;
-        gitbutler_branch_actions::update_commit_message(&ctx, branch_id, commit_oid, message)?;
-        emit_vbranches(&windows, project_id, ctx.app_settings());
-        Ok(())
+        let commit_id = git2::Oid::from_str(&commit_id).map_err(|e| anyhow!(e))?;
+        let new_commit_id =
+            gitbutler_branch_actions::update_commit_message(&ctx, stack_id, commit_id, message)?;
+        Ok(new_commit_id.to_string())
     }
 
     #[tauri::command(async)]
@@ -633,12 +477,12 @@ pub mod commands {
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        commit_oid: String,
+        commit_id: String,
     ) -> Result<Option<RemoteCommit>, Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let commit_oid = git2::Oid::from_str(&commit_oid).map_err(|e| anyhow!(e))?;
-        gitbutler_branch_actions::find_commit(&ctx, commit_oid).map_err(Into::into)
+        let commit_id = git2::Oid::from_str(&commit_id).map_err(|e| anyhow!(e))?;
+        gitbutler_branch_actions::find_commit(&ctx, commit_id).map_err(Into::into)
     }
 
     #[tauri::command(async)]
@@ -647,22 +491,21 @@ pub mod commands {
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
-        target_commit_oid: Option<String>,
+        target_commit_id: Option<String>,
     ) -> Result<StackStatuses, Error> {
         let project = projects.get(project_id)?;
         let ctx = CommandContext::open(&project, settings.get()?.clone())?;
-        let commit_oid = target_commit_oid
+        let commit_id = target_commit_id
             .map(|commit_id| git2::Oid::from_str(&commit_id).map_err(|e| anyhow!(e)))
             .transpose()?;
         Ok(gitbutler_branch_actions::upstream_integration_statuses(
-            &ctx, commit_oid,
+            &ctx, commit_id,
         )?)
     }
 
     #[tauri::command(async)]
-    #[instrument(skip(projects, settings, windows), err(Debug))]
+    #[instrument(skip(projects, settings), err(Debug))]
     pub fn integrate_upstream(
-        windows: State<'_, WindowState>,
         projects: State<'_, projects::Controller>,
         settings: State<'_, AppSettingsWithDiskSync>,
         project_id: ProjectId,
@@ -676,8 +519,6 @@ pub mod commands {
             &resolutions,
             base_branch_resolution,
         )?;
-
-        emit_vbranches(&windows, project_id, ctx.app_settings());
 
         Ok(outcome)
     }
@@ -697,19 +538,5 @@ pub mod commands {
             gitbutler_branch_actions::resolve_upstream_integration(&ctx, resolution_approach)?;
         let commit_id = git2::Oid::to_string(&new_target_id);
         Ok(commit_id)
-    }
-
-    pub(crate) fn emit_vbranches(
-        windows: &WindowState,
-        project_id: projects::ProjectId,
-        app_settings: &but_settings::AppSettings,
-    ) {
-        if !app_settings.feature_flags.v3 {
-            if let Err(error) = windows.post(gitbutler_watcher::Action::CalculateVirtualBranches(
-                project_id,
-            )) {
-                tracing::error!(?error);
-            }
-        }
     }
 }

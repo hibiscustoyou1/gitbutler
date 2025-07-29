@@ -1,4 +1,4 @@
-import { type CommitStatusType } from '@gitbutler/ui/CommitStatusBadge.svelte';
+import { type CommitStatusType } from '@gitbutler/ui';
 import type { Branch } from '@gitbutler/shared/branches/types';
 
 export type AvatarsType = {
@@ -20,10 +20,11 @@ export type ColumnTypes = {
 	comments: string;
 	number: number;
 	date: Date;
-	commitGraph: Branch;
-	avatars: Array<AvatarsType>;
+	commitGraph: { branch: Branch; projectSlug: string; ownerSlug: string };
+	avatars: AvatarsType[];
 	reviewers: {
-		approvers: Array<AvatarsType>;
-		rejectors: Array<AvatarsType>;
+		approvers: AvatarsType[];
+		rejectors: AvatarsType[];
 	};
+	position: string;
 };

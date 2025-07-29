@@ -1,6 +1,14 @@
+import { InjectionToken } from '@gitbutler/shared/context';
 import { writable, type Writable } from 'svelte/store';
-import type { OwnerResponse, LoadableOwner, ExtendedUser, ExtendedOrganization } from './types';
+import type {
+	OwnerResponse,
+	LoadableOwner,
+	ExtendedUser,
+	ExtendedOrganization
+} from '$lib/owner/types';
 import type { HttpClient } from '@gitbutler/shared/network/httpClient';
+
+export const OWNER_SERVICE = new InjectionToken<OwnerService>('OwnerService');
 
 /**
  * Service for fetching information about owners (users and organizations)
@@ -46,7 +54,6 @@ export class OwnerService {
 		try {
 			const response = await this.httpClient.get<any>(`/api/owners/${slug}`);
 
-			console.log('[OwnerService] Fetched owner:', response);
 			// Determine type based on the response's owner_type
 			if (response.owner_type === 'organization') {
 				const org: ExtendedOrganization = {
@@ -79,7 +86,6 @@ export class OwnerService {
 					location: response.location,
 					organizations: response.organizations
 				};
-				console.log('[OwnerService] Fetched user:', user);
 
 				return {
 					type: 'user',

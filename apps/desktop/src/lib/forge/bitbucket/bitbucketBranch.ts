@@ -1,4 +1,4 @@
-import type { ForgeBranch } from '../interface/forgeBranch';
+import type { ForgeBranch } from '$lib/forge/interface/forgeBranch';
 
 export class BitBucketBranch implements ForgeBranch {
 	readonly url: string;
@@ -6,6 +6,6 @@ export class BitBucketBranch implements ForgeBranch {
 		if (fork) {
 			name = `${fork}:${name}`;
 		}
-		this.url = `${baseUrl}/branch/${name}?dest=${baseBranch}`;
+		this.url = `${baseUrl}/branch/${name}?dest=${encodeURIComponent(baseBranch)}`;
 	}
 }

@@ -6,11 +6,11 @@
 		"node": ">=20.11"
 	},
 	"type": "module",
-	"packageManager": "pnpm@10.2.0",
+	"packageManager": "pnpm@10.3.0",
 	"scripts": {
 		"dev:ui": "pnpm --filter @gitbutler/ui storybook",
 		"dev:web": "turbo watch --filter @gitbutler/web dev",
-		"dev:desktop": "pnpm tauri dev",
+		"dev:desktop": "cargo build -p but && cargo build -p gitbutler-git && pnpm tauri dev",
 		"dev:internal-tauri": "turbo watch --filter @gitbutler/desktop dev",
 		"package": "turbo run package",
 		"test": "turbo run test --no-daemon",
@@ -29,27 +29,37 @@
 		"format": "prettier --write .",
 		"fix": "eslint --fix .",
 		"prepare": "pnpm --filter @gitbutler/desktop run prepare",
-		"rustfmt": "cargo +nightly fmt -- --config-path rustfmt-nightly.toml"
+		"rustfmt": "cargo +nightly fmt -- --config-path rustfmt-nightly.toml",
+		"isgood": "pnpm check && pnpm lint",
+		"begood": "pnpm format && pnpm fix"
 	},
 	"devDependencies": {
-		"@eslint/js": "9.5.0",
-		"@types/eslint": "9.6.0",
-		"@tauri-apps/cli": "^2.0.1",
-		"@types/eslint__js": "^8.42.3",
+		"@eslint/js": "9.27.0",
+		"@gitbutler/no-relative-imports": "workspace:*",
+		"@tauri-apps/cli": "^2.6.2",
+		"@types/eslint": "9.6.1",
 		"@types/node": "^22.3.0",
-		"@typescript-eslint/parser": "^7.13.1",
-		"eslint": "^9.13.0",
-		"eslint-config-prettier": "^9.1.0",
-		"eslint-import-resolver-typescript": "^3.7.0",
-		"eslint-plugin-import-x": "4.6.1",
-		"eslint-plugin-storybook": "0.9.0--canary.156.ed236ca.0",
-		"eslint-plugin-svelte": "2.46.1",
+		"@typescript-eslint/parser": "^8.33.0",
+		"eslint": "^9.27.0",
+		"eslint-config-prettier": "^10.1.5",
+		"eslint-import-resolver-next": "^0.6.0",
+		"eslint-import-resolver-typescript": "^4.4.1",
+		"eslint-plugin-import-x": "4.13.3",
+		"eslint-plugin-storybook": "9.0.18",
+		"eslint-plugin-svelte": "3.9.0",
 		"globals": "^15.6.0",
-		"prettier": "^3.3.2",
-		"prettier-plugin-svelte": "^3.3.3",
-		"svelte-eslint-parser": "^0.43.0",
-		"turbo": "2.3.3",
-		"typescript": "5.4.5",
-		"typescript-eslint": "^8.10.0"
+		"postcss": "^8.5.3",
+		"prettier": "^3.5.3",
+		"prettier-plugin-css-order": "^2.1.2",
+		"prettier-plugin-svelte": "^3.4.0",
+		"svelte-eslint-parser": "^1.2.0",
+		"turbo": "2.5.3",
+		"typescript": "catalog:",
+		"typescript-eslint": "^8.33.0"
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"@prisma/client"
+		]
 	}
 }

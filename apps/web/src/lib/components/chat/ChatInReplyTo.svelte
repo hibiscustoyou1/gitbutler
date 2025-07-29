@@ -7,7 +7,7 @@
 </script>
 
 <script lang="ts">
-	import Button from '@gitbutler/ui/Button.svelte';
+	import { Button } from '@gitbutler/ui';
 	import type { UserSimple } from '@gitbutler/shared/users/types';
 
 	const UNKNOWN_AUTHOR = 'Unknown author';
@@ -28,9 +28,11 @@
 <div class="reply" class:clickable>
 	<div class="reply__content">
 		<img class="reply__avatar" src={message.user.avatarUrl} alt={authorName} />
-		<p class="text-11 text-body reply_text">
-			{message.comment}
-		</p>
+		<div class="reply__text">
+			<span class="text-11 text-body">
+				{message.comment}
+			</span>
+		</div>
 	</div>
 
 	{#if clearReply}
@@ -41,10 +43,9 @@
 <style lang="postcss">
 	.reply {
 		display: flex;
-		padding: 0 8px 0 0;
+		align-items: center;
 		align-self: stretch;
 		justify-content: space-between;
-		align-items: center;
 		overflow: hidden;
 
 		border-radius: var(--radius-m);
@@ -58,19 +59,26 @@
 	.reply__content {
 		display: flex;
 		align-items: center;
-		gap: 7px;
-
-		padding: 8px 0 8px 12px;
-
+		padding: 8px;
+		overflow: hidden;
+		gap: 8px;
 		border-left: 4px solid var(--clr-scale-ntrl-60);
 	}
 
-	.reply_text {
-		margin: 0;
-		text-overflow: ellipsis;
-		text-wrap: nowrap;
-		overflow-x: hidden;
-		max-width: 320px;
+	.reply__text {
+		display: flex;
+		max-height: 1em;
+		overflow: hidden;
+
+		& > span {
+			display: -webkit-inline-box;
+			-webkit-line-clamp: 1;
+			-webkit-box-orient: vertical;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: break-spaces;
+			word-break: break-all;
+		}
 	}
 
 	.reply__avatar {

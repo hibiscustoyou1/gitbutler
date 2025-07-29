@@ -1,56 +1,58 @@
-import { getContext } from '$lib/context';
+import { inject } from '$lib/context';
 import { registerInterest, type InView } from '$lib/interest/registerInterestFunction.svelte';
-import { isFound } from '$lib/network/loadable';
-import { OrganizationService } from '$lib/organizations/organizationService';
-import {
-	getOrganizationProjects,
-	getOrganizations
-} from '$lib/organizations/organizationsPreview.svelte';
-import { ProjectService } from '$lib/organizations/projectService';
+import { isFound, map } from '$lib/network/loadable';
+import { PROJECT_SERVICE } from '$lib/organizations/projectService';
 import { projectTable } from '$lib/organizations/projectsSlice';
-import { AppState } from '$lib/redux/store.svelte';
+import { lookupProject } from '$lib/organizations/repositoryIdLookupPreview.svelte';
+import { reactive } from '$lib/reactiveUtils.svelte';
+import { APP_STATE } from '$lib/redux/store.svelte';
+import { type Reactive } from '$lib/storeUtils';
 import { isDefined } from '@gitbutler/ui/utils/typeguards';
 import type { Loadable } from '$lib/network/types';
-import type { LoadableOrganization, LoadableProject } from '$lib/organizations/types';
-import type { Reactive } from '$lib/storeUtils';
+import type { LoadableProject } from '$lib/organizations/types';
+
+export function getProject(
+	ownerSlug: string,
+	projectSlug: string,
+	inView?: InView
+): Reactive<LoadableProject | undefined> {
+	const repositoryId = lookupProject(ownerSlug, projectSlug, inView);
+	const current = $derived(
+		map(repositoryId.current, (repositoryId) => getProjectByRepositoryId(repositoryId, inView))
+	);
+
+	return reactive(() => current?.current);
+}
 
 export function getProjectByRepositoryId(
 	projectRepositoryId: string,
 	inView?: InView
 ): Reactive<LoadableProject | undefined> {
-	const appState = getContext(AppState);
-	const projectService = getContext(ProjectService);
+	const appState = inject(APP_STATE);
+	const projectService = inject(PROJECT_SERVICE);
 	registerInterest(projectService.getProjectInterest(projectRepositoryId), inView);
 	const current = $derived(
 		projectTable.selectors.selectById(appState.projects, projectRepositoryId)
 	);
 
-	return {
-		get current() {
-			return current;
-		}
-	};
+	return reactive(() => current);
 }
 
 export function getAllUserProjects(user: string, inView?: InView): Reactive<LoadableProject[]> {
-	const appState = getContext(AppState);
-	const projectService = getContext(ProjectService);
+	const appState = inject(APP_STATE);
+	const projectService = inject(PROJECT_SERVICE);
 	registerInterest(projectService.getAllProjectsInterest(), inView);
 	const current = $derived.by(() => {
 		const allProjects = projectTable.selectors.selectAll(appState.projects);
 		return allProjects.filter((project) => isFound(project) && project.value.owner === user);
 	});
 
-	return {
-		get current() {
-			return current;
-		}
-	};
+	return reactive(() => current);
 }
 
 export function getRecentlyInteractedProjects(inView?: InView): Reactive<LoadableProject[]> {
-	const appState = getContext(AppState);
-	const projectService = getContext(ProjectService);
+	const appState = inject(APP_STATE);
+	const projectService = inject(PROJECT_SERVICE);
 	registerInterest(projectService.getRecentProjectsInterest(), inView);
 	const current = $derived(
 		appState.recentlyInteractedProjectIds.recentlyInteractedProjectIds
@@ -60,16 +62,12 @@ export function getRecentlyInteractedProjects(inView?: InView): Reactive<Loadabl
 			.filter(isDefined)
 	);
 
-	return {
-		get current() {
-			return current;
-		}
-	};
+	return reactive(() => current);
 }
 
 export function getRecentlyPushedProjects(inView?: InView): Reactive<LoadableProject[]> {
-	const appState = getContext(AppState);
-	const projectService = getContext(ProjectService);
+	const appState = inject(APP_STATE);
+	const projectService = inject(PROJECT_SERVICE);
 	registerInterest(projectService.getRecentlyPushedProjectsInterest(), inView);
 	const current = $derived(
 		appState.recentlyPushedProjectIds.recentlyPushedProjectIds
@@ -79,57 +77,7 @@ export function getRecentlyPushedProjects(inView?: InView): Reactive<LoadablePro
 			.filter(isDefined)
 	);
 
-	return {
-		get current() {
-			return current;
-		}
-	};
-}
-
-export function getAllUserRelatedProjects(
-	user: string,
-	inView?: InView
-): Reactive<LoadableProject[]> {
-	const appState = getContext(AppState);
-	const projectService = getContext(ProjectService);
-	const organizationService = getContext(OrganizationService);
-	registerInterest(projectService.getAllProjectsInterest(), inView);
-	const userProjects = $derived.by(() => {
-		const allProjects = projectTable.selectors.selectAll(appState.projects);
-		return allProjects.filter(
-			(project) => isFound(project) && project.value.owner === user
-		) as LoadableProject[];
-	});
-
-	const organizations = $derived(getOrganizations(appState, organizationService));
-	const reactiveOrganizationProjects = $derived.by(() => {
-		if (!organizations.current) return [];
-
-		const foundOrganizations = organizations.current.filter((organization) =>
-			isFound(organization)
-		) as (LoadableOrganization & { status: 'found' })[];
-
-		return foundOrganizations.flatMap((organization) => {
-			return getOrganizationProjects(
-				appState,
-				organizationService,
-				organization.value.slug,
-				inView
-			);
-		});
-	});
-	const organizationProjects = $derived(
-		reactiveOrganizationProjects
-			.map((a) => a.current)
-			.filter((a) => a !== undefined)
-			.flat() as LoadableProject[]
-	);
-
-	return {
-		get current() {
-			return [...userProjects, ...organizationProjects];
-		}
-	};
+	return reactive(() => current);
 }
 
 export function getParentForRepositoryId(
@@ -144,11 +92,7 @@ export function getParentForRepositoryId(
 		return getProjectByRepositoryId(project.current.value.parentProjectRepositoryId, inView);
 	});
 
-	return {
-		get current() {
-			return current?.current;
-		}
-	};
+	return reactive(() => current?.current);
 }
 
 export function getFeedIdentityForRepositoryId(
@@ -166,9 +110,5 @@ export function getFeedIdentityForRepositoryId(
 		};
 	});
 
-	return {
-		get current() {
-			return current;
-		}
-	};
+	return reactive(() => current);
 }

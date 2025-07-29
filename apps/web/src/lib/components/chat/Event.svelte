@@ -1,25 +1,34 @@
 <script lang="ts">
-	import IssueUpdate from './IssueUpdate.svelte';
-	import Message from './Message.svelte';
-	import PatchStatus from './PatchStatus.svelte';
-	import PatchVersion from './PatchVersion.svelte';
+	import IssueUpdate from '$lib/components/chat/IssueUpdate.svelte';
+	import Message from '$lib/components/chat/Message.svelte';
+	import PatchStatus from '$lib/components/chat/PatchStatus.svelte';
+	import PatchVersion from '$lib/components/chat/PatchVersion.svelte';
 	import type { ChatEvent, PatchEvent } from '@gitbutler/shared/patchEvents/types';
 
 	interface Props {
 		highlightedMessageUuid: string | undefined;
 		projectId: string;
+		projectSlug: string;
 		changeId: string;
 		event: PatchEvent;
 		replyTo: (chatEvent: ChatEvent) => void;
 		scrollToMessage: (uuid: string) => void;
 	}
 
-	const { event, projectId, changeId, highlightedMessageUuid, replyTo, scrollToMessage }: Props =
-		$props();
+	const {
+		event,
+		projectId,
+		projectSlug,
+		changeId,
+		highlightedMessageUuid,
+		replyTo,
+		scrollToMessage
+	}: Props = $props();
 </script>
 
 {#if event.eventType === 'chat'}
 	<Message
+		{projectSlug}
 		{projectId}
 		{changeId}
 		{event}

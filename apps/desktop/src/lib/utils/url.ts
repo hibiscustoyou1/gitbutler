@@ -1,6 +1,5 @@
 import { invoke } from '$lib/backend/ipc';
 import { showToast } from '$lib/notifications/toasts';
-import GitUrlParse from 'git-url-parse';
 
 const SEPARATOR = '/';
 
@@ -22,13 +21,8 @@ export async function openExternalUrl(href: string) {
 	}
 }
 
-// turn a git remote url into a web url (github, gitlab, bitbucket, etc)
-export function convertRemoteToWebUrl(url: string): string {
-	const gitRemote = GitUrlParse(url);
-	const ipv4Regex = new RegExp(/^([0-9]+(\.|$)){4}/);
-	const protocol = ipv4Regex.test(gitRemote.resource) ? 'http' : 'https';
-
-	return `${protocol}://${gitRemote.resource}/${gitRemote.owner}/${gitRemote.name}`;
+export async function showFileInFolder(filePath: string) {
+	await invoke<void>('show_in_finder', { path: filePath });
 }
 
 export interface EditorUriParams {

@@ -1,15 +1,12 @@
 <script lang="ts">
 	import TableRow from '$lib/components/table/TableRow.svelte';
-	import { BranchService } from '@gitbutler/shared/branches/branchService';
 	import { getBranchReview } from '@gitbutler/shared/branches/branchesPreview.svelte';
-	import { getBranchStatusBadge } from '@gitbutler/shared/branches/getBranchStatusBadge';
-	import { getContext } from '@gitbutler/shared/context';
+	import { inject } from '@gitbutler/shared/context';
 	import { getContributorsWithAvatars } from '@gitbutler/shared/contributors';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
 	import { isFound } from '@gitbutler/shared/network/loadable';
-	import { AppState } from '@gitbutler/shared/redux/store.svelte';
 	import {
-		WebRoutesService,
+		WEB_ROUTES_SERVICE,
 		type ProjectParameters
 	} from '@gitbutler/shared/routing/webRoutes.svelte';
 	import dayjs from 'dayjs';
@@ -20,17 +17,16 @@
 	type Props = {
 		uuid: string;
 		linkParams: ProjectParameters;
+		isTopEntry: boolean;
 		roundedTop: boolean;
 		roundedBottom: boolean;
 	};
 
-	const { uuid, linkParams, roundedTop, roundedBottom }: Props = $props();
+	const { uuid, linkParams, isTopEntry, roundedTop, roundedBottom }: Props = $props();
 
-	const appState = getContext(AppState);
-	const branchService = getContext(BranchService);
-	const routes = getContext(WebRoutesService);
+	const routes = inject(WEB_ROUTES_SERVICE);
 
-	const branch = $derived(getBranchReview(appState, branchService, uuid));
+	const branch = $derived(getBranchReview(uuid));
 
 	let contributors = $state<Array<{ srcUrl: string; name: string }>>([]);
 
@@ -48,14 +44,15 @@
 		<TableRow
 			href={routes.projectReviewBranchPath({ ...linkParams, branchId: branch.branchId })}
 			columns={[
-				{ key: 'status', value: getBranchStatusBadge(branch) },
+				{ key: 'status', value: branch.reviewStatus },
 				{ key: 'title', value: branch.title || '-', tooltip: branch.title },
 				{ key: 'number', value: branch.branchId.slice(0, 7), tooltip: branch.branchId },
-				{ key: 'commitGraph', value: branch },
+				{ key: 'commitGraph', value: { branch, ...linkParams } },
 				{ key: 'date', value: branch.updatedAt },
 				{ key: 'avatars', value: contributors },
 				{ key: 'number', value: branch.version || 0 }
 			]}
+			{isTopEntry}
 			separatedTop={roundedTop}
 			separatedBottom={roundedBottom}
 		/>

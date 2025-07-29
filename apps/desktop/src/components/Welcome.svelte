@@ -1,14 +1,15 @@
 <script lang="ts">
-	import WelcomeAction from './WelcomeAction.svelte';
-	import WelcomeSigninAction from './WelcomeSigninAction.svelte';
+	import { goto } from '$app/navigation';
 	import IconLink from '$components/IconLink.svelte';
+	import WelcomeAction from '$components/WelcomeAction.svelte';
+	import WelcomeSigninAction from '$components/WelcomeSigninAction.svelte';
 	import cloneRepoSvg from '$lib/assets/welcome/clone-repo.svg?raw';
 	import newProjectSvg from '$lib/assets/welcome/new-local-project.svg?raw';
-	import { ProjectsService } from '$lib/project/projectsService';
-	import { getContext } from '@gitbutler/shared/context';
-	import { goto } from '$app/navigation';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { TestId } from '$lib/testing/testIds';
+	import { inject } from '@gitbutler/shared/context';
 
-	const projectsService = getContext(ProjectsService);
+	const projectsService = inject(PROJECTS_SERVICE);
 
 	let newProjectLoading = $state(false);
 	let directoryInputElement = $state<HTMLInputElement | undefined>();
@@ -28,7 +29,7 @@
 	}
 </script>
 
-<div class="welcome">
+<div class="welcome" data-testid={TestId.WelcomePage}>
 	<h1 class="welcome-title text-serif-40">Welcome to GitButler</h1>
 	<div class="welcome__actions">
 		<div class="welcome__actions--repo">
@@ -43,7 +44,7 @@
 				loading={newProjectLoading}
 				onclick={onNewProject}
 				dimMessage
-				testId="add-local-project"
+				testId={TestId.WelcomePageAddLocalProjectButton}
 			>
 				{#snippet icon()}
 					{@html newProjectSvg}
@@ -105,8 +106,8 @@
 	.welcome__actions {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
 		margin-top: 32px;
+		gap: 8px;
 	}
 
 	.welcome__actions--repo {
@@ -116,11 +117,11 @@
 
 	.links {
 		display: flex;
-		gap: 56px;
-		padding: 28px;
-		background: var(--clr-bg-1-muted);
-		border-radius: var(--radius-m);
 		margin-top: 20px;
+		padding: 28px;
+		gap: 56px;
+		border-radius: var(--radius-m);
+		background: var(--clr-bg-1-muted);
 	}
 
 	.links__section {
@@ -133,8 +134,8 @@
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 6px;
 		margin-left: -6px;
+		gap: 6px;
 	}
 
 	.community-links {

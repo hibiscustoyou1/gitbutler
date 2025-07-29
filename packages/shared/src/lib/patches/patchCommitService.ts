@@ -1,3 +1,4 @@
+import { InjectionToken } from '$lib/context';
 import { InterestStore, type Interest } from '$lib/interest/interestStore';
 import { errorToLoadable } from '$lib/network/loadable';
 import { patchCommitTable } from '$lib/patches/patchCommitsSlice';
@@ -12,6 +13,8 @@ type PatchUpdateParams = {
 	sectionOrder?: string[];
 	message?: string;
 };
+
+export const PATCH_COMMIT_SERVICE = new InjectionToken<PatchCommitService>('PatchCommitService');
 
 export class PatchCommitService {
 	private readonly patchInterests = new InterestStore<{ changeId: string }>(POLLING_REGULAR);
@@ -43,7 +46,7 @@ export class PatchCommitService {
 						patchCommitTable.upsertOne({ status: 'found', id: changeId, value: patch })
 					);
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(patchCommitTable.upsertOne(errorToLoadable(error, changeId)));
+					this.appDispatch.dispatch(patchCommitTable.addOne(errorToLoadable(error, changeId)));
 				}
 			})
 			.createInterest();

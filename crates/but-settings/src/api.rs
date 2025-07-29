@@ -16,6 +16,10 @@ pub struct TelemetryUpdate {
 /// Update request for [`crate::app_settings::FeatureFlags`].
 pub struct FeatureFlagsUpdate {
     pub v3: Option<bool>,
+    pub ws3: Option<bool>,
+    pub actions: Option<bool>,
+    pub butbot: Option<bool>,
+    pub rules: Option<bool>,
 }
 
 /// Mutation, immediately followed by writing everything to disk.
@@ -40,10 +44,37 @@ impl AppSettingsWithDiskSync {
         settings.save()
     }
 
-    pub fn update_feature_flags(&self, update: FeatureFlagsUpdate) -> Result<()> {
+    pub fn update_telemetry_distinct_id(&self, app_distinct_id: Option<String>) -> Result<()> {
         let mut settings = self.get_mut_enforce_save()?;
-        if let Some(v3) = update.v3 {
+        settings.telemetry.app_distinct_id = app_distinct_id;
+        settings.save()
+    }
+
+    pub fn update_feature_flags(
+        &self,
+        FeatureFlagsUpdate {
+            v3,
+            ws3,
+            actions,
+            butbot,
+            rules,
+        }: FeatureFlagsUpdate,
+    ) -> Result<()> {
+        let mut settings = self.get_mut_enforce_save()?;
+        if let Some(v3) = v3 {
             settings.feature_flags.v3 = v3;
+        }
+        if let Some(ws3) = ws3 {
+            settings.feature_flags.ws3 = ws3;
+        }
+        if let Some(actions) = actions {
+            settings.feature_flags.actions = actions;
+        }
+        if let Some(butbot) = butbot {
+            settings.feature_flags.butbot = butbot;
+        }
+        if let Some(rules) = rules {
+            settings.feature_flags.rules = rules;
         }
         settings.save()
     }

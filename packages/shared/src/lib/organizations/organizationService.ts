@@ -1,4 +1,5 @@
 import { apiToBranch } from '$lib/branches/types';
+import { InjectionToken } from '$lib/context';
 import { InterestStore, type Interest } from '$lib/interest/interestStore';
 import { type HttpClient } from '$lib/network/httpClient';
 import { errorToLoadable } from '$lib/network/loadable';
@@ -21,6 +22,8 @@ import type { AppDispatch } from '$lib/redux/store.svelte';
 
 // Define the LoadablePatchStacks type
 export type LoadablePatchStacks = Loadable<Branch[]> & { ownerSlug: string };
+
+export const ORGANIZATION_SERVICE = new InjectionToken<OrganizationService>('OrganizationService');
 
 export class OrganizationService {
 	private readonly organizationListingInterests = new InterestStore<undefined>(POLLING_SLOW);
@@ -73,7 +76,7 @@ export class OrganizationService {
 						})
 					);
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(organizationTable.upsertOne(errorToLoadable(error, slug)));
+					this.appDispatch.dispatch(organizationTable.addOne(errorToLoadable(error, slug)));
 				}
 			})
 			.createInterest();
@@ -157,15 +160,11 @@ export class OrganizationService {
 	 * @returns Array of patch stacks converted to Branch format
 	 */
 	async fetchPatchStacks(ownerSlug: string): Promise<Branch[]> {
-		console.log(`[OrganizationService] Fetching patch stacks for org: ${ownerSlug}`);
-
 		// Try different API endpoint patterns since we're not sure about the exact one
 		const endpoint = `organization/${ownerSlug}/patch_stacks`;
 
 		try {
-			console.log(`[OrganizationService] Trying API URL: ${endpoint}`);
 			const response = await this.httpClient.get<ApiBranch[]>(endpoint);
-			console.log(`[OrganizationService] API response successful for ${endpoint}:`, response);
 
 			// Convert ApiBranch objects to Branch objects
 			return response.map(apiToBranch);
@@ -178,7 +177,6 @@ export class OrganizationService {
 			}
 
 			// If it's a 404, we'll try the next endpoint
-			console.log(`[OrganizationService] Endpoint ${endpoint} returned 404, trying next...`);
 		}
 
 		// If we've tried all endpoints and none worked, return empty array
@@ -196,5 +194,106 @@ export class OrganizationService {
 		} else {
 			this.patchStackCache.clear();
 		}
+	}
+
+	async removeUser(slug: string, login: string): Promise<Organization> {
+		const apiOrganization = await this.httpClient.post<ApiOrganizationWithDetails>(
+			`organization/${slug}/remove?login=${login}`,
+			{}
+		);
+
+		const organization = apiToOrganization(apiOrganization);
+		this.appDispatch.dispatch(
+			organizationTable.upsertOne({ status: 'found', id: slug, value: organization })
+		);
+
+		return organization;
+	}
+
+	async resetInviteCode(slug: string): Promise<Organization> {
+		const apiOrganization = await this.httpClient.post<ApiOrganizationWithDetails>(
+			`organization/${slug}/reset_invite_code`,
+			{}
+		);
+
+		const organization = apiToOrganization(apiOrganization);
+		this.appDispatch.dispatch(
+			organizationTable.upsertOne({ status: 'found', id: slug, value: organization })
+		);
+
+		return organization;
+	}
+
+	async changeUserRole(slug: string, login: string, role: string): Promise<Organization> {
+		const apiOrganization = await this.httpClient.put<ApiOrganizationWithDetails>(
+			`organization/${slug}/${login}?role=${role}`,
+			{}
+		);
+
+		const organization = apiToOrganization(apiOrganization);
+		this.appDispatch.dispatch(
+			organizationTable.upsertOne({ status: 'found', id: slug, value: organization })
+		);
+
+		return organization;
+	}
+
+	async getOrganizationBySlug(slug: string): Promise<Organization | undefined> {
+		try {
+			const apiOrganization = await this.httpClient.get<ApiOrganizationWithDetails>(
+				`organization/${slug}`
+			);
+
+			// Convert API format to application format
+			const organization = apiToOrganization(apiOrganization);
+
+			// Update the organization in the store
+			this.appDispatch.dispatch(
+				organizationTable.upsertOne({ status: 'found', id: slug, value: organization })
+			);
+
+			return organization;
+		} catch (error: any) {
+			if (error.response && error.response.status === 404) {
+				return undefined;
+			}
+
+			// Rethrow other errors
+			throw error;
+		}
+	}
+
+	async updateOrganization(
+		slug: string,
+		params: { name?: string; new_slug?: string; description?: string }
+	): Promise<Organization> {
+		const apiOrganization = await this.httpClient.put<ApiOrganizationWithDetails>(
+			`organization/${slug}`,
+			{
+				body: {
+					name: params.name,
+					new_slug: params.new_slug,
+					description: params.description
+				}
+			}
+		);
+
+		// Convert API format to application format
+		const organization = apiToOrganization(apiOrganization);
+
+		// If the slug was updated, we need to update the ID in the store
+		const newSlug = params.new_slug || slug;
+
+		// Update the organization in the store
+		this.appDispatch.dispatch(
+			organizationTable.upsertOne({ status: 'found', id: newSlug, value: organization })
+		);
+
+		// If slug was changed, remove the old entry
+		if (newSlug !== slug) {
+			this.appDispatch.dispatch(organizationTable.removeOne(slug));
+		}
+
+		return organization;
 	}
 }

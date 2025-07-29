@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { UserService, type LoginToken } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Link from '@gitbutler/ui/link/Link.svelte';
+	import { USER_SERVICE, type LoginToken } from '$lib/user/userService';
+	import { inject } from '@gitbutler/shared/context';
+	import { Button, Link } from '@gitbutler/ui';
+	import { writable } from 'svelte/store';
 
-	const userService = getContext(UserService);
+	const userService = inject(USER_SERVICE);
 	const loading = userService.loading;
 	const user = userService.user;
 
@@ -13,6 +13,8 @@
 	}
 
 	const { wide = false }: Props = $props();
+
+	const aborted = writable(false);
 
 	let token: LoginToken | undefined;
 </script>
@@ -40,23 +42,37 @@
 		{/if}
 	</p>
 {:else}
-	<div>
+	<div class="login-buttons">
 		<Button
 			style="pop"
 			loading={$loading}
 			icon="signin"
 			{wide}
 			onclick={async () => {
-				await userService.login();
+				$aborted = false;
+				await userService.login(aborted);
 			}}
 		>
 			Sign up or Log in
 		</Button>
+
+		{#if $loading}
+			<div>
+				<Button kind="outline" onclick={() => ($aborted = true)} loading={$aborted}
+					>Cancel login attempt</Button
+				>
+			</div>
+		{/if}
 	</div>
 {/if}
 
 <style>
 	.helper-text {
 		color: var(--clr-text-2);
+	}
+
+	.login-buttons {
+		display: flex;
+		gap: 8px;
 	}
 </style>

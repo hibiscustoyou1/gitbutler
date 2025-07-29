@@ -16,11 +16,18 @@ testing = []
 serde = { workspace = true, features = ["std"] }
 bstr.workspace = true
 tracing.workspace = true
-anyhow = "1.0.95"
-gix = { workspace = true, features = ["dirwalk", "credentials", "parallel", "serde", "status"] }
+anyhow = "1.0.98"
+gix = { workspace = true, features = [
+    "dirwalk",
+    "credentials",
+    "parallel",
+    "serde",
+    "status",
+] }
 gitbutler-serde.workspace = true
 gitbutler-error.workspace = true
 uuid.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 but-testsupport.workspace = true

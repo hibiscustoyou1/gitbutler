@@ -9,11 +9,14 @@ import {
 	type PatchChatMessageParams,
 	type SendChatMessageParams
 } from '$lib/chat/types';
+import { InjectionToken } from '$lib/context';
 import { InterestStore, type Interest } from '$lib/interest/interestStore';
 import { errorToLoadable } from '$lib/network/loadable';
 import { POLLING_GLACIALLY } from '$lib/polling';
 import type { HttpClient } from '$lib/network/httpClient';
 import type { AppDispatch } from '$lib/redux/store.svelte';
+
+export const CHAT_CHANNELS_SERVICE = new InjectionToken<ChatChannelsService>('ChatChannelsService');
 
 export class ChatChannelsService {
 	private readonly chatMessagesInterests = new InterestStore<{
@@ -56,7 +59,7 @@ export class ChatChannelsService {
 					this.appDispatch.dispatch(chatChannelTable.upsertOne(chatChannel));
 				} catch (error: unknown) {
 					this.appDispatch.dispatch(
-						chatChannelTable.upsertOne(errorToLoadable(error, chatChannelKey))
+						chatChannelTable.addOne(errorToLoadable(error, chatChannelKey))
 					);
 				}
 			})

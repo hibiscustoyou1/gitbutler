@@ -1,26 +1,23 @@
 <script lang="ts">
-	import { Project } from '$lib/project/project';
-	import { ProjectsService } from '$lib/project/projectsService';
-	import { getContext, maybeGetContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import OptionsGroup from '@gitbutler/ui/select/OptionsGroup.svelte';
-	import Select from '@gitbutler/ui/select/Select.svelte';
-	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
 	import { goto } from '$app/navigation';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { projectPath } from '$lib/routes/routes.svelte';
+	import { inject } from '@gitbutler/shared/context';
+	import { Button, OptionsGroup, Select, SelectItem } from '@gitbutler/ui';
 
-	const projectsService = getContext(ProjectsService);
-	const project = maybeGetContext(Project);
+	const { projectId }: { projectId?: string } = $props();
 
-	const projects = $derived(projectsService.projects);
+	const projectsService = inject(PROJECTS_SERVICE);
+	const projectsResult = $derived(projectsService.projects());
+
+	let selectedId = $state<string | undefined>(projectId);
 
 	const mappedProjects = $derived(
-		$projects?.map((project) => ({
+		projectsResult.current?.data?.map((project) => ({
 			value: project.id,
 			label: project.title
 		})) || []
 	);
-
-	let selectedProjectId: string | undefined = $state(project ? project.id : undefined);
 
 	let newProjectLoading = $state(false);
 	let cloneProjectLoading = $state(false);
@@ -28,17 +25,17 @@
 
 <div class="project-switcher">
 	<Select
-		value={selectedProjectId}
+		value={selectedId}
 		options={mappedProjects}
 		label="Switch to another project"
 		wide
 		onselect={(value) => {
-			selectedProjectId = value;
+			selectedId = value;
 		}}
 		searchable
 	>
 		{#snippet itemSnippet({ item, highlighted })}
-			<SelectItem selected={item.value === selectedProjectId} {highlighted}>
+			<SelectItem selected={item.value === selectedId} {highlighted}>
 				{item.label}
 			</SelectItem>
 		{/snippet}
@@ -50,7 +47,11 @@
 				onClick={async () => {
 					newProjectLoading = true;
 					try {
-						await projectsService.addProject();
+						const project = await projectsService.addProject();
+						if (!project) {
+							throw new Error('Failed to add project.');
+						}
+						goto(projectPath(project.id));
 					} finally {
 						newProjectLoading = false;
 					}
@@ -78,9 +79,9 @@
 	<Button
 		style="pop"
 		icon="chevron-right-small"
-		disabled={selectedProjectId === project?.id}
-		onmousedown={() => {
-			if (selectedProjectId) goto(`/${selectedProjectId}/`);
+		disabled={selectedId === projectId}
+		onclick={() => {
+			if (selectedId) goto(projectPath(selectedId));
 		}}
 	>
 		Open project
@@ -91,7 +92,7 @@
 	.project-switcher {
 		display: flex;
 		flex-direction: column;
-		gap: 10px;
 		align-items: flex-end;
+		gap: 10px;
 	}
 </style>

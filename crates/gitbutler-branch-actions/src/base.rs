@@ -1,17 +1,16 @@
 use std::{path::Path, time};
 
 use crate::{
-    conflicts::RepoConflictsExt,
     hunk::VirtualBranchHunk,
     integration::update_workspace_commit,
     remote::{commit_to_remote_commit, RemoteCommit},
     VirtualBranchesExt,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use gitbutler_branch::GITBUTLER_WORKSPACE_REFERENCE;
 use gitbutler_command_context::CommandContext;
 use gitbutler_error::error::Marker;
-use gitbutler_oxidize::{git2_to_gix_object_id, gix_to_git2_oid, GixRepositoryExt};
+use gitbutler_oxidize::ObjectIdExt;
 use gitbutler_project::FetchResult;
 use gitbutler_reference::{Refname, RemoteRefname};
 use gitbutler_repo::{
@@ -55,58 +54,26 @@ pub fn get_base_branch_data(ctx: &CommandContext) -> Result<BaseBranch> {
 }
 
 fn go_back_to_integration(ctx: &CommandContext, default_target: &Target) -> Result<BaseBranch> {
+    let gix_repo = ctx.gix_repo_for_merging()?;
+    let (mut outcome, conflict_kind) =
+        but_workspace::merge_worktree_with_workspace(ctx, &gix_repo)?;
+
+    if outcome.has_unresolved_conflicts(conflict_kind) {
+        return Err(anyhow!("Conflicts while going back to gitbutler/workspace"))
+            .context(Marker::ProjectConflict);
+    }
+
+    let final_tree_id = outcome.tree.write()?.detach();
+
     let repo = ctx.repo();
-    let statuses = repo
-        .statuses(Some(
-            git2::StatusOptions::new()
-                .show(git2::StatusShow::IndexAndWorkdir)
-                .include_untracked(true),
-        ))
-        .context("failed to get status")?;
-    if !statuses.is_empty() {
-        return Err(anyhow!("current HEAD is dirty")).context(Marker::ProjectConflict);
-    }
-
-    let vb_state = ctx.project().virtual_branches();
-    let virtual_branches = vb_state
-        .list_stacks_in_workspace()
-        .context("failed to read virtual branches")?;
-
-    let target_commit = repo
-        .find_commit(default_target.sha)
-        .context("failed to find target commit")?;
-
-    let base_tree = git2_to_gix_object_id(target_commit.tree_id());
-    let mut final_tree_id = git2_to_gix_object_id(target_commit.tree_id());
-    let gix_repo = ctx.gix_repository_for_merging()?;
-    let (merge_options_fail_fast, conflict_kind) = gix_repo.merge_options_fail_fast()?;
-    for branch in &virtual_branches {
-        // merge this branches tree with our tree
-        let branch_tree_id = git2_to_gix_object_id(
-            repo.find_commit(branch.head())
-                .context("failed to find branch head")?
-                .tree_id(),
-        );
-        let mut merge = gix_repo.merge_trees(
-            base_tree,
-            final_tree_id,
-            branch_tree_id,
-            gix_repo.default_merge_labels(),
-            merge_options_fail_fast.clone(),
-        )?;
-        if merge.has_unresolved_conflicts(conflict_kind) {
-            bail!("Merge failed with conflicts");
-        }
-        final_tree_id = merge.tree.write()?.detach();
-    }
-
-    let final_tree = repo.find_tree(gix_to_git2_oid(final_tree_id))?;
+    let final_tree = repo.find_tree(final_tree_id.to_git2())?;
     repo.checkout_tree_builder(&final_tree)
         .force()
         .checkout()
         .context("failed to checkout tree")?;
 
     let base = target_to_base_branch(ctx, default_target)?;
+    let vb_state = VirtualBranchesHandle::new(ctx.project().gb_dir());
     update_workspace_commit(&vb_state, ctx)?;
     Ok(base)
 }
@@ -114,8 +81,18 @@ fn go_back_to_integration(ctx: &CommandContext, default_target: &Target) -> Resu
 pub(crate) fn set_base_branch(
     ctx: &CommandContext,
     target_branch_ref: &RemoteRefname,
+    stash_uncommitted: bool,
 ) -> Result<BaseBranch> {
     let repo = ctx.repo();
+
+    // If requested, stash uncommitted changes
+    if stash_uncommitted {
+        let sig = repo
+            .signature()
+            .unwrap_or(git2::Signature::now("Author", "author@email.com")?);
+        let mut r = git2::Repository::open(ctx.project().path.clone())?;
+        r.stash_save2(&sig, None, Some(git2::StashFlags::INCLUDE_UNTRACKED))?;
+    }
 
     // if target exists, and it is the same as the requested branch, we should go back
     if let Ok(target) = default_target(&ctx.project().gb_dir()) {
@@ -243,7 +220,7 @@ pub(crate) fn set_base_branch(
                 None,
                 ctx.project().ok_with_force_push.into(),
                 true, // allow duplicate name since here we are creating a lane from an existing branch
-            );
+            )?;
             branch.ownership = ownership;
 
             vb_state.set_stack(branch)?;
@@ -397,7 +374,6 @@ fn default_target(base_path: &Path) -> Result<Target> {
 }
 
 pub(crate) fn push(ctx: &CommandContext, with_force: bool) -> Result<()> {
-    ctx.assure_resolved()?;
     let target = default_target(&ctx.project().gb_dir())?;
     let _ = ctx.push(target.sha, &target.branch, with_force, None, None);
     Ok(())

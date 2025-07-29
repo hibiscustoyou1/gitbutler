@@ -1,5 +1,5 @@
 <script lang="ts" generics="A">
-	import LoadingState from './LoadingState.svelte';
+	import LoadingState from '$lib/network/LoadingState.svelte';
 	import type { Loadable } from '$lib/network/types';
 	import type { Snippet } from 'svelte';
 
@@ -8,11 +8,10 @@
 		children: Snippet<[A]>;
 	};
 
-	// eslint-disable-next-line no-undef
 	const { loadable, children }: Props<A> = $props();
 </script>
 
-{#if !loadable}
+{#if loadable === undefined}
 	<span>Uninitialized...</span>
 {:else if loadable.status === 'found'}
 	{@render children(loadable.value)}

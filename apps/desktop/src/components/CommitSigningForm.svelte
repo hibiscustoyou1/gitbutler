@@ -3,26 +3,21 @@
 	import Section from '$components/Section.svelte';
 	import SectionCardDisclaimer from '$components/SectionCardDisclaimer.svelte';
 	import { invoke } from '$lib/backend/ipc';
-	import { GitConfigService } from '$lib/config/gitConfigService';
-	import { Project } from '$lib/project/project';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
-	import Textbox from '@gitbutler/ui/Textbox.svelte';
-	import Toggle from '@gitbutler/ui/Toggle.svelte';
-	import Link from '@gitbutler/ui/link/Link.svelte';
-	import Select from '@gitbutler/ui/select/Select.svelte';
-	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
+	import { GIT_CONFIG_SERVICE } from '$lib/config/gitConfigService';
+	import { inject } from '@gitbutler/shared/context';
+	import { Button, Link, SectionCard, Select, SelectItem, Textbox, Toggle } from '@gitbutler/ui';
+
 	import { onMount } from 'svelte';
 
-	const project = getContext(Project);
-	const gitConfig = getContext(GitConfigService);
+	const { projectId }: { projectId: string } = $props();
+
+	const gitConfig = inject(GIT_CONFIG_SERVICE);
 
 	let signCommits = $state(false);
 
 	async function setSignCommits(targetState: boolean) {
 		signCommits = targetState;
-		await gitConfig.setGbConfig(project.id, { signCommits: targetState });
+		await gitConfig.setGbConfig(projectId, { signCommits: targetState });
 	}
 
 	// gpg.format
@@ -62,13 +57,12 @@
 		errorMessage = '';
 		checked = true;
 		loading = true;
-		await invoke('check_signing_settings', { id: project.id })
+		await invoke('check_signing_settings', { id: projectId })
 			.then((_) => {
 				signCheckResult = true;
 			})
 			.catch((err) => {
 				console.error('Error checking signing:', err);
-				console.log(err.message);
 				errorMessage = err.message;
 				signCheckResult = false;
 			});
@@ -82,11 +76,11 @@
 			gpgProgram: signingFormat === 'openpgp' ? signingProgram : '',
 			gpgSshProgram: signingFormat === 'ssh' ? signingProgram : ''
 		};
-		await gitConfig.setGbConfig(project.id, signUpdate);
+		await gitConfig.setGbConfig(projectId, signUpdate);
 	}
 
 	onMount(async () => {
-		let gitConfigSettings = await gitConfig.getGbConfig(project.id);
+		let gitConfigSettings = await gitConfig.getGbConfig(projectId);
 		signCommits = gitConfigSettings.signCommits || false;
 		signingFormat = gitConfigSettings.signingFormat || 'openpgp';
 		signingKey = gitConfigSettings.signingKey || '';
@@ -110,7 +104,8 @@
 		{#snippet caption()}
 			Use GPG or SSH to sign your commits so they can be verified as authentic.
 			<br />
-			GitButler will sign commits as per your git configuration.
+			GitButler will sign commits as per your git configuration, but evaluates
+			<code class="code-string">gitbutler.signCommits</code> with priority.
 		{/snippet}
 		{#snippet actions()}
 			<Toggle id="signCommits" checked={signCommits} onclick={handleSignCommitsClick} />
@@ -121,6 +116,7 @@
 			<Select
 				value={signingFormat}
 				options={signingFormatOptions}
+				wide
 				label="Signing format"
 				onselect={(value: string) => {
 					signingFormat = value;
@@ -183,7 +179,7 @@
 			<SectionCardDisclaimer>
 				Signing commits can allow other people to verify your commits if you publish the public
 				version of your signing key.
-				<Link href="https://docs.gitbutler.com/features/virtual-branches/verifying-commits"
+				<Link href="https://docs.gitbutler.com/features/virtual-branches/signing-commits"
 					>Read more</Link
 				> about commit signing and verification.
 			</SectionCardDisclaimer>

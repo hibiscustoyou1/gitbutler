@@ -6,7 +6,7 @@ use gix::diff::blob::unified_diff::ContextSize;
 use serde::Serialize;
 
 /// A hunk as used in a [UnifiedDiff], which also contains all added and removed lines.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffHunk {
     /// The 1-based line number at which the previous version of the file started.
@@ -34,7 +34,24 @@ pub struct DiffHunk {
     pub diff: BString,
 }
 
+impl std::fmt::Debug for DiffHunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if f.alternate() {
+            write!(f, r#"DiffHunk("{}")"#, self.diff)
+        } else {
+            write!(f, r#"DiffHunk("{:?}")"#, self.diff)
+        }
+    }
+}
+
 impl UnifiedDiff {
+    /// Determine how resources are converted to their form used for diffing.
+    ///
+    /// `ToGit` means that we want to see manifests of `git-lfs` for instance, or generally the result of 'clean' filters.
+    /// Doing so also yields a more 'universal' form that is certainly helpful when displaying it in a user interface.
+    pub const CONVERSION_MODE: gix::diff::blob::pipeline::Mode =
+        gix::diff::blob::pipeline::Mode::ToGitUnlessBinaryToTextIsPresent;
+
     /// Given a worktree-relative `path` to a resource already tracked in Git, or one that is currently untracked,
     /// create a patch in unified diff format that turns `previous_state` into `current_state`, with the given
     /// amount of `context_lines`.
@@ -45,6 +62,7 @@ impl UnifiedDiff {
     /// `current_state` is either the state we know the resource currently has, or is `None`, if there is no current state.
     /// `previous_state`, if `None`, indicates the file is new so there is nothing to compare to.
     /// Otherwise, it's the state of the resource as previously known.
+    /// Return `None` if the given states cannot produce a diff, typically because a submodule is involved.
     ///
     /// ### Special Types
     ///
@@ -59,20 +77,36 @@ impl UnifiedDiff {
         current_state: impl Into<Option<ChangeState>>,
         previous_state: impl Into<Option<ChangeState>>,
         context_lines: u32,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Option<Self>> {
+        let current_state = current_state.into();
+        let mut cache = filter_from_state(repo, current_state, Self::CONVERSION_MODE)?;
+        Self::compute_with_filter(
+            repo,
+            path,
+            previous_path,
+            current_state,
+            previous_state,
+            context_lines,
+            &mut cache,
+        )
+    }
+
+    /// Similar to [`Self::compute()`], but uses `diff_filter` to obtain the diff content.
+    ///
+    /// This is useful to assure it's clear which content is ultimately used for the produced uni-diff,
+    /// as `filter` is responsible for that.
+    pub fn compute_with_filter(
+        repo: &gix::Repository,
+        path: &BStr,
+        previous_path: Option<&BStr>,
+        current_state: impl Into<Option<ChangeState>>,
+        previous_state: impl Into<Option<ChangeState>>,
+        context_lines: u32,
+        diff_filter: &mut gix::diff::blob::Platform,
+    ) -> anyhow::Result<Option<Self>> {
         let current_state = current_state.into();
         let previous_state = previous_state.into();
-        let mut cache = repo.diff_resource_cache(
-            gix::diff::blob::pipeline::Mode::ToGitUnlessBinaryToTextIsPresent,
-            gix::diff::blob::pipeline::WorktreeRoots {
-                old_root: None,
-                new_root: current_state
-                    .filter(|state| state.id.is_null())
-                    .and_then(|_| repo.work_dir().map(ToOwned::to_owned)),
-            },
-        )?;
-
-        cache.set_resource(
+        match diff_filter.set_resource(
             current_state.map_or(repo.object_hash().null(), |state| state.id),
             current_state.map_or_else(
                 || {
@@ -85,8 +119,14 @@ impl UnifiedDiff {
             path.as_bstr(),
             ResourceKind::NewOrDestination,
             repo,
-        )?;
-        cache.set_resource(
+        ) {
+            Ok(()) => {}
+            Err(gix::diff::blob::platform::set_resource::Error::InvalidMode { .. }) => {
+                return Ok(None);
+            }
+            Err(err) => return Err(err.into()),
+        };
+        match diff_filter.set_resource(
             previous_state.map_or(repo.object_hash().null(), |state| state.id),
             previous_state.map_or_else(
                 || {
@@ -99,10 +139,16 @@ impl UnifiedDiff {
             previous_path.unwrap_or(path.as_bstr()),
             ResourceKind::OldOrSource,
             repo,
-        )?;
+        ) {
+            Ok(()) => {}
+            Err(gix::diff::blob::platform::set_resource::Error::InvalidMode { .. }) => {
+                return Ok(None);
+            }
+            Err(err) => return Err(err.into()),
+        };
 
-        let prep = cache.prepare_diff()?;
-        Ok(match prep.operation {
+        let prep = diff_filter.prepare_diff()?;
+        Ok(Some(match prep.operation {
             Operation::InternalDiff { algorithm } => {
                 #[derive(Default)]
                 struct ProduceDiffHunk {
@@ -140,17 +186,19 @@ impl UnifiedDiff {
                     }
                 }
                 let input = prep.interned_input();
+                let uni_diff = gix::diff::blob::UnifiedDiff::new(
+                    &input,
+                    ProduceDiffHunk::default(),
+                    gix::diff::blob::unified_diff::NewlineSeparator::AfterHeaderAndWhenNeeded("\n"),
+                    ContextSize::symmetrical(context_lines),
+                );
+                let hunks = gix::diff::blob::diff(algorithm, &input, uni_diff)?;
+                let (lines_added, lines_removed) = compute_line_changes(&hunks);
                 UnifiedDiff::Patch {
-                    hunks: gix::diff::blob::diff(
-                        algorithm,
-                        &input,
-                        gix::diff::blob::UnifiedDiff::new(
-                            &input,
-                            ProduceDiffHunk::default(),
-                            gix::diff::blob::unified_diff::NewlineSeparator::AfterHeaderAndWhenNeeded("\n"),
-                            ContextSize::symmetrical(context_lines),
-                        ),
-                    )?,
+                    is_result_of_binary_to_text_conversion: prep.old_or_new_is_derived,
+                    hunks,
+                    lines_added,
+                    lines_removed,
                 }
             }
             Operation::ExternalCommand { .. } => {
@@ -162,11 +210,11 @@ impl UnifiedDiff {
                 use gix::diff::blob::platform::resource::Data;
                 fn size_for_data(data: Data<'_>) -> Option<u64> {
                     match data {
-                        Data::Missing | Data::Buffer(_) => None,
+                        Data::Missing | Data::Buffer { .. } => None,
                         Data::Binary { size } => Some(size),
                     }
                 }
-                let (old, new) = cache
+                let (old, new) = diff_filter
                     .resources()
                     .expect("prepare would have failed if a resource is missing");
                 let size = size_for_data(old.data)
@@ -181,6 +229,38 @@ impl UnifiedDiff {
                     UnifiedDiff::Binary
                 }
             }
-        })
+        }))
     }
+}
+
+fn compute_line_changes(hunks: &Vec<DiffHunk>) -> (u32, u32) {
+    let mut lines_added = 0;
+    let mut lines_removed = 0;
+    for hunk in hunks {
+        hunk.diff.lines().for_each(|line| {
+            if line.starts_with(b"+") {
+                lines_added += 1;
+            } else if line.starts_with(b"-") {
+                lines_removed += 1;
+            }
+        });
+    }
+    (lines_added, lines_removed)
+}
+
+/// Produce a filter from `repo` and `state` using `mode` that is able to perform diffs of `state`.
+pub fn filter_from_state(
+    repo: &gix::Repository,
+    state: Option<ChangeState>,
+    filter_mode: gix::diff::blob::pipeline::Mode,
+) -> anyhow::Result<gix::diff::blob::Platform> {
+    Ok(repo.diff_resource_cache(
+        filter_mode,
+        gix::diff::blob::pipeline::WorktreeRoots {
+            old_root: None,
+            new_root: state
+                .filter(|state| state.id.is_null())
+                .and_then(|_| repo.workdir().map(ToOwned::to_owned)),
+        },
+    )?)
 }

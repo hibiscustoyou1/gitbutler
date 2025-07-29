@@ -1,6 +1,9 @@
 #![forbid(rust_2018_idioms)]
 pub const VAR_NO_CLEANUP: &str = "GITBUTLER_TESTS_NO_CLEANUP";
 
+use but_graph::VirtualBranchesTomlMetadata;
+use but_workspace::{ui::StackDetails, StackId, StacksFilter};
+use gitbutler_command_context::CommandContext;
 use gix::bstr::BStr;
 /// Direct access to lower-level utilities for cases where this is enough.
 ///
@@ -129,7 +132,7 @@ pub fn visualize_gix_tree(tree_id: gix::Id<'_>) -> termtree::Tree<String> {
                             mode = if mode.is_tree() {
                                 "".into()
                             } else {
-                                format!("{:o}:", mode.0)
+                                format!("{:o}:", mode.value())
                             }
                         )
                     }
@@ -160,6 +163,40 @@ pub fn visualize_gix_tree(tree_id: gix::Id<'_>) -> termtree::Tree<String> {
 pub fn visualize_git2_tree(tree_id: git2::Oid, repo: &git2::Repository) -> termtree::Tree<String> {
     let repo = gix::open_opts(repo.path(), gix::open::Options::isolated()).unwrap();
     visualize_gix_tree(git2_to_gix_object_id(tree_id).attach(&repo))
+}
+
+pub fn stack_details(ctx: &CommandContext) -> Vec<(StackId, StackDetails)> {
+    let repo = ctx.gix_repo_for_merging_non_persisting().unwrap();
+    let stacks = if ctx.app_settings().feature_flags.ws3 {
+        let meta = VirtualBranchesTomlMetadata::from_path(
+            ctx.project().gb_dir().join("virtual_branches.toml"),
+        )
+        .unwrap();
+        but_workspace::stacks_v3(&repo, &meta, StacksFilter::default())
+    } else {
+        but_workspace::stacks(ctx, &ctx.project().gb_dir(), &repo, StacksFilter::default())
+    }
+    .unwrap();
+    let mut details = vec![];
+    for stack in stacks {
+        let stack_id = stack
+            .id
+            .expect("BUG(opt-stack-id): test code shouldn't trigger this");
+        details.push((
+            stack_id,
+            if ctx.app_settings().feature_flags.ws3 {
+                let meta = VirtualBranchesTomlMetadata::from_path(
+                    ctx.project().gb_dir().join("virtual_branches.toml"),
+                )
+                .unwrap();
+                but_workspace::stack_details_v3(stack_id.into(), &repo, &meta)
+            } else {
+                but_workspace::stack_details(&ctx.project().gb_dir(), stack_id, ctx)
+            }
+            .unwrap(),
+        ));
+    }
+    details
 }
 
 pub mod read_only {
@@ -201,7 +238,11 @@ pub mod read_only {
         // Assure the project is valid the first time.
         let project = if was_inserted {
             let tmp = tempfile::TempDir::new()?;
-            gitbutler_project::Controller::from_path(tmp.path()).add(project_worktree_dir)?
+            gitbutler_project::Controller::from_path(tmp.path()).add(
+                project_worktree_dir,
+                None,
+                None,
+            )?
         } else {
             Project {
                 id: ProjectId::generate(),

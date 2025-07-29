@@ -1,3 +1,4 @@
+import { InjectionToken } from '$lib/context';
 import { InterestStore, type Interest } from '$lib/interest/interestStore';
 import { errorToLoadable } from '$lib/network/loadable';
 import { POLLING_SLOW } from '$lib/polling';
@@ -13,6 +14,9 @@ import {
 import { userTable, userByLoginTable } from '$lib/users/usersSlice';
 import type { HttpClient } from '$lib/network/httpClient';
 import type { AppDispatch } from '$lib/redux/store.svelte';
+
+export const USER_SERVICE = new InjectionToken<UserService>('UserService');
+export const NEW_USER_SERVICE = new InjectionToken<UserService>('NewUserService');
 
 export class UserService {
 	private readonly userInterests = new InterestStore<{ id: number }>(POLLING_SLOW);
@@ -52,7 +56,7 @@ export class UserService {
 						);
 					}
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(userTable.upsertOne(errorToLoadable(error, id)));
+					this.appDispatch.dispatch(userTable.addOne(errorToLoadable(error, id)));
 				}
 			})
 			.createInterest();
@@ -87,7 +91,7 @@ export class UserService {
 						userTable.upsertOne({ status: 'found', id: user.id, value: user })
 					);
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(userByLoginTable.upsertOne(errorToLoadable(error, login)));
+					this.appDispatch.dispatch(userByLoginTable.addOne(errorToLoadable(error, login)));
 				}
 			})
 			.createInterest();

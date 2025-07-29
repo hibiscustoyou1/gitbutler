@@ -1,23 +1,28 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
+use but_rebase::{RebaseOutput, RebaseStep};
+use but_workspace::stack_ext::StackExt;
 use gitbutler_command_context::CommandContext;
 use gitbutler_commit::commit_ext::CommitExt;
+use gitbutler_oxidize::{ObjectIdExt, OidExt};
 use gitbutler_project::access::WorktreeWritePermission;
 use gitbutler_repo::{
     logging::{LogUntil, RepositoryExt as _},
-    rebase::{cherry_rebase_group, gitbutler_merge_commits},
+    rebase::gitbutler_merge_commits,
     RepositoryExt as _,
 };
-use gitbutler_stack::stack_context::CommandContextExt;
 use gitbutler_stack::StackId;
-use gitbutler_workspace::{
-    checkout_branch_trees, compute_updated_branch_head_for_commits, BranchHeadAndTree,
-};
+use gitbutler_workspace::branch_trees::{update_uncommited_changes, WorkspaceState};
+#[allow(deprecated)]
+use gix::refs::FullName;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-use crate::{conflicts, VirtualBranchesExt as _};
+use crate::{
+    upstream_integration::{as_buckets, flatten_buckets},
+    VirtualBranchesExt as _,
+};
 
 pub fn integrate_upstream_commits_for_series(
     ctx: &CommandContext,
@@ -26,8 +31,7 @@ pub fn integrate_upstream_commits_for_series(
     series_name: String,
     integration_strategy: Option<IntegrationStrategy>,
 ) -> Result<()> {
-    conflicts::is_conflicting(ctx, None)?;
-
+    let old_workspace = WorkspaceState::create(ctx, perm.read_permission())?;
     let repo = ctx.repo();
     let vb_state = ctx.project().virtual_branches();
 
@@ -43,9 +47,10 @@ pub fn integrate_upstream_commits_for_series(
         .ok_or(anyhow!("Series not found"))?;
     let upstream_reference = subject_branch.remote_reference(remote.as_str());
     let remote_head = repo.find_reference(&upstream_reference)?.peel_to_commit()?;
+    let gix_repo = ctx.gix_repo()?;
 
-    let series_head = subject_branch.head_oid(&ctx.to_stack_context()?, &stack)?;
-    let series_head = repo.find_commit(series_head)?;
+    let series_head = subject_branch.head_oid(&gix_repo)?;
+    let series_head = repo.find_commit(series_head.to_git2())?;
 
     let strategy = integration_strategy.unwrap_or_else(|| {
         let do_rebease = stack.allow_rebasing
@@ -58,91 +63,27 @@ pub fn integrate_upstream_commits_for_series(
     });
 
     let integrate_upstream_context = IntegrateUpstreamContext {
-        repository: repo,
+        repo,
         target_branch_head: default_target.sha,
-        branch_head: stack.head(),
-        branch_tree: stack.tree,
         branch_name: subject_branch.name(),
+        branch_full_name: subject_branch.full_name()?,
         remote_head: remote_head.id(),
         remote_branch_name: &subject_branch.remote_reference(&remote),
         strategy,
+        stack_steps: stack.as_rebase_steps(ctx, &gix_repo)?,
+        gix_repo: &gix_repo,
     };
 
-    let (BranchHeadAndTree { head, tree }, new_series_head) =
+    let ((head, tree), _new_series_head, rebase_output) =
         integrate_upstream_context.inner_integrate_upstream_commits_for_series(series_head.id())?;
 
     let mut branch = stack.clone();
-    branch.set_stack_head(ctx, head, Some(tree))?;
-    checkout_branch_trees(ctx, perm)?;
-    branch.replace_head(ctx, &series_head, &repo.find_commit(new_series_head)?)?;
+    branch.set_stack_head(&vb_state, &gix_repo, head, tree)?;
+    let new_workspace = WorkspaceState::create(ctx, perm.read_permission())?;
+    update_uncommited_changes(ctx, old_workspace, new_workspace, perm)?;
+    branch.set_heads_from_rebase_output(ctx, rebase_output.references)?;
+    // branch.replace_head(ctx, &series_head, &repo.find_commit(new_series_head)?)?;
     crate::integration::update_workspace_commit(&vb_state, ctx)?;
-    Ok(())
-}
-
-/// Integrates upstream work from a remote branch.
-///
-/// Any to-be integrated commits that are upstream will be placed at the bottom
-/// of the branch. Any other upstream commits are placed above the local
-/// commits.
-///
-pub fn integrate_upstream_commits(
-    ctx: &CommandContext,
-    stack_id: StackId,
-    perm: &mut WorktreeWritePermission,
-) -> Result<()> {
-    conflicts::is_conflicting(ctx, None)?;
-
-    let repository = ctx.repo();
-    let project = ctx.project();
-    let vb_state = project.virtual_branches();
-
-    let stack = vb_state.get_stack_in_workspace(stack_id)?;
-
-    let Some(upstream_refname) = stack.clone().upstream else {
-        bail!("No upstream reference found for branch");
-    };
-
-    let upstream_branch = repository.find_branch_by_refname(&upstream_refname.into())?;
-    let upstream_branch_head = upstream_branch.get().peel_to_commit()?.id();
-
-    // If the upstream branch head is the same as the local, then the branch is
-    // up to date.
-    if upstream_branch_head == stack.head() {
-        return Ok(());
-    }
-
-    let default_target = vb_state.get_default_target()?;
-    let default_target_branch = repository.find_branch_by_refname(&default_target.branch.into())?;
-    let target_branch_head = default_target_branch.get().peel_to_commit()?.id();
-
-    let integration_strategy = if stack.allow_rebasing {
-        IntegrationStrategy::Rebase
-    } else {
-        IntegrationStrategy::Merge
-    };
-
-    let integrate_upstream_context = IntegrateUpstreamContext {
-        repository,
-        target_branch_head,
-        branch_head: stack.head(),
-        branch_tree: stack.tree,
-        branch_name: &stack.name,
-        remote_head: upstream_branch_head,
-        remote_branch_name: upstream_branch.name()?.unwrap_or("Unknown"),
-        strategy: integration_strategy,
-    };
-
-    let BranchHeadAndTree { head, tree } =
-        integrate_upstream_context.inner_integrate_upstream_commits()?;
-
-    let mut stack = stack.clone();
-
-    stack.set_stack_head(ctx, head, Some(tree))?;
-
-    checkout_branch_trees(ctx, perm)?;
-
-    crate::integration::update_workspace_commit(&vb_state, ctx)?;
-
     Ok(())
 }
 
@@ -151,20 +92,16 @@ pub fn integrate_upstream_commits(
 pub enum IntegrationStrategy {
     Merge,
     Rebase,
-    HardReset,
 }
 
 struct IntegrateUpstreamContext<'a, 'b> {
-    repository: &'a git2::Repository,
+    repo: &'a git2::Repository,
     /// GitButler's target branch
     target_branch_head: git2::Oid,
 
-    /// The local branch head
-    branch_head: git2::Oid,
-    /// The uncommited changes associated to the branch
-    branch_tree: git2::Oid,
     /// The name of the local branch
     branch_name: &'b str,
+    branch_full_name: FullName,
 
     /// The remote branch head
     remote_head: git2::Oid,
@@ -173,6 +110,9 @@ struct IntegrateUpstreamContext<'a, 'b> {
 
     /// Strategy to use when integrating the upstream commits
     strategy: IntegrationStrategy,
+
+    stack_steps: Vec<RebaseStep>,
+    gix_repo: &'a gix::Repository,
 }
 
 impl IntegrateUpstreamContext<'_, '_> {
@@ -181,23 +121,51 @@ impl IntegrateUpstreamContext<'_, '_> {
     fn inner_integrate_upstream_commits_for_series(
         &self,
         series_head: git2::Oid,
-    ) -> Result<(BranchHeadAndTree, git2::Oid)> {
-        let (new_stack_head, new_series_head) = match self.strategy {
+    ) -> Result<((git2::Oid, Option<git2::Oid>), git2::Oid, RebaseOutput)> {
+        let (new_stack_head, new_series_head, rebase_output) = match self.strategy {
             IntegrationStrategy::Merge => {
                 // If rebase is not allowed AND this is the latest series - create a merge commit on top
-                let series_head_commit = self.repository.find_commit(series_head)?;
-                let remote_head_commit = self.repository.find_commit(self.remote_head)?;
+                let series_head_commit = self.repo.find_commit(series_head)?;
+                let remote_head_commit = self.repo.find_commit(self.remote_head)?;
                 let merge_commit = gitbutler_merge_commits(
-                    self.repository,
+                    self.repo,
                     series_head_commit,
                     remote_head_commit,
                     self.branch_name,        // for error messages only
                     self.remote_branch_name, // for error messages only
                 )?;
-                // the are the same
-                let new_stack_head = merge_commit.id();
-                let new_series_head = merge_commit.id();
-                (new_stack_head, new_series_head)
+                let mut steps = self.stack_steps.clone();
+                // Go over the steps, and immediatelly after the series head, insert the merge commit
+                for (i, step) in steps.iter().enumerate() {
+                    if let RebaseStep::Pick { commit_id, .. } = step {
+                        if commit_id == &series_head.to_gix() {
+                            steps.insert(
+                                i + 1,
+                                RebaseStep::Pick {
+                                    commit_id: merge_commit.id().to_gix(),
+                                    new_message: None,
+                                },
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                let merge_base = self.repo.merge_base_octopussy(&[
+                    self.target_branch_head,
+                    series_head,
+                    self.remote_head,
+                ])?;
+                let mut rebase = but_rebase::Rebase::new(self.gix_repo, merge_base.to_gix(), None)?;
+                rebase.steps(steps)?;
+                rebase.rebase_noops(false);
+                let output = rebase.rebase()?;
+                let stack_head = output.top_commit.to_git2();
+                (
+                    stack_head,
+                    new_series_head(&output, self.branch_name, &self.branch_full_name),
+                    output,
+                )
             }
             IntegrationStrategy::Rebase => {
                 // Get the commits to rebase for the series
@@ -205,104 +173,63 @@ impl IntegrateUpstreamContext<'_, '_> {
                     merge_base,
                     ordered_commits,
                 } = order_commits_for_rebasing(
-                    self.repository,
+                    self.repo,
                     self.target_branch_head,
                     series_head,
                     self.remote_head,
                 )?;
-                // First rebase the series with it's remote commits
-                let new_series_head = cherry_rebase_group(
-                    self.repository,
-                    merge_base,
-                    &ordered_commits,
-                    false,
-                    false,
-                )?;
-                // Get the commits that come after the series head, until the stack head
-                let remaining_ids_to_rebase =
-                    self.repository
-                        .l(self.branch_head, LogUntil::Commit(series_head), false)?;
-                // Rebase the remaining commits on top of the new series head in order to get the new stack head
+
+                let mut buckets = as_buckets(self.stack_steps.clone());
+                let (_, steps) = buckets
+                    .iter_mut()
+                    .find(|(r, _)| match r {
+                        but_core::Reference::Virtual(name) => name == self.branch_name,
+                        but_core::Reference::Git(name) => name == &self.branch_full_name,
+                    })
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("failed to find branch to rebase in the stack rebase steps")
+                    })?;
+                // replace the steps with the ordered commits
+                *steps = ordered_commits
+                    .iter()
+                    .rev()
+                    .map(|commit_id| RebaseStep::Pick {
+                        commit_id: commit_id.to_gix(),
+                        new_message: None,
+                    })
+                    .collect();
+                let updated_steps = flatten_buckets(buckets);
+                let mut rebase = but_rebase::Rebase::new(self.gix_repo, merge_base.to_gix(), None)?;
+                rebase.steps(updated_steps)?;
+                rebase.rebase_noops(false);
+                let output = rebase.rebase()?;
+                let stack_head = output.top_commit.to_git2();
                 (
-                    cherry_rebase_group(
-                        self.repository,
-                        new_series_head,
-                        &remaining_ids_to_rebase,
-                        false,
-                        false,
-                    )?,
-                    new_series_head,
-                )
-            }
-            IntegrationStrategy::HardReset => {
-                let remote_head_commit = self.repository.find_commit(self.remote_head)?;
-                // Get the commits that come after the series head, until the stack head
-                let remaining_ids_to_rebase =
-                    self.repository
-                        .l(self.branch_head, LogUntil::Commit(series_head), false)?;
-                (
-                    cherry_rebase_group(
-                        self.repository,
-                        remote_head_commit.id(),
-                        &remaining_ids_to_rebase,
-                        false,
-                        false,
-                    )?,
-                    remote_head_commit.id(),
+                    stack_head,
+                    new_series_head(&output, self.branch_name, &self.branch_full_name),
+                    output,
                 )
             }
         };
-        // Find what the new head and branch tree should be
-        Ok((
-            compute_updated_branch_head_for_commits(
-                self.repository,
-                self.branch_head,
-                self.branch_tree,
-                new_stack_head,
-            )?,
-            new_series_head,
-        ))
+        Ok(((new_stack_head, None), new_series_head, rebase_output))
     }
+}
 
-    fn inner_integrate_upstream_commits(&self) -> Result<BranchHeadAndTree> {
-        // Find the new branch head after integrating the upstream commits
-        let new_head = match self.strategy {
-            IntegrationStrategy::Merge => {
-                let branch_head_commit = self.repository.find_commit(self.branch_head)?;
-                let remote_head_commit = self.repository.find_commit(self.remote_head)?;
-                gitbutler_merge_commits(
-                    self.repository,
-                    branch_head_commit,
-                    remote_head_commit,
-                    self.branch_name,
-                    self.remote_branch_name,
-                )?
-                .id()
-            }
-            IntegrationStrategy::Rebase => {
-                let OrderCommitsResult {
-                    merge_base,
-                    ordered_commits,
-                } = order_commits_for_rebasing(
-                    self.repository,
-                    self.target_branch_head,
-                    self.branch_head,
-                    self.remote_head,
-                )?;
-
-                cherry_rebase_group(self.repository, merge_base, &ordered_commits, false, false)?
-            }
-            IntegrationStrategy::HardReset => self.remote_head,
-        };
-
-        // Find what the new head and branch tree should be
-        compute_updated_branch_head_for_commits(
-            self.repository,
-            self.branch_head,
-            self.branch_tree,
-            new_head,
-        )
-    }
+fn new_series_head(
+    output: &RebaseOutput,
+    branch_name: &str,
+    full_branch_name: &FullName,
+) -> git2::Oid {
+    output
+        .references
+        .iter()
+        .find(|r| match r.reference.clone() {
+            but_core::Reference::Virtual(name) => name == branch_name,
+            but_core::Reference::Git(name) => &name == full_branch_name,
+        })
+        .map(|r| r.commit_id)
+        .expect("failed to find the new series head")
+        .to_git2()
 }
 
 struct OrderCommitsResult {
@@ -318,20 +245,18 @@ struct OrderCommitsResult {
 /// 3. If a remote commit does not match the any local commits, insert it in the order it came.
 /// 4. Insert the unmatched local commits above its parents.
 fn order_commits_for_rebasing(
-    repository: &git2::Repository,
+    repo: &git2::Repository,
     target_branch_head: git2::Oid,
     local_head: git2::Oid,
     remote_head: git2::Oid,
 ) -> Result<OrderCommitsResult> {
-    let merge_base =
-        repository.merge_base_octopussy(&[target_branch_head, local_head, remote_head])?;
+    let merge_base = repo.merge_base_octopussy(&[target_branch_head, local_head, remote_head])?;
 
     // 1. Build the change id map for the local branch.
-    let local_branch_commits =
-        repository.l(local_head, LogUntil::Commit(target_branch_head), false)?;
-    let remote_branch_commits = repository.l(remote_head, LogUntil::Commit(merge_base), false)?;
+    let local_branch_commits = repo.l(local_head, LogUntil::Commit(target_branch_head), false)?;
+    let remote_branch_commits = repo.l(remote_head, LogUntil::Commit(merge_base), false)?;
 
-    let change_id_map = build_change_id_map(&local_branch_commits, repository)?;
+    let change_id_map = build_change_id_map(&local_branch_commits, repo)?;
 
     let mut ordered_for_zipping: Vec<(Option<String>, git2::Oid)> = vec![];
     let mut added_local_commits: HashSet<git2::Oid> = HashSet::new();
@@ -339,7 +264,7 @@ fn order_commits_for_rebasing(
     // 2. Start populating the ordered list with the remote commits
     // and their respective local commits (matched by change id).
     process_remote_commits_for_zipping(
-        repository,
+        repo,
         &change_id_map,
         remote_branch_commits,
         &mut ordered_for_zipping,
@@ -348,7 +273,7 @@ fn order_commits_for_rebasing(
 
     // 3. Add the remaining local commits.
     insert_remaining_local_commits(
-        repository,
+        repo,
         target_branch_head,
         local_branch_commits,
         &added_local_commits,
@@ -372,7 +297,7 @@ fn order_commits_for_rebasing(
 /// All the local commits that were not matched by an incoming change id need to be inserted
 /// at the right position in the ordered list.
 fn insert_remaining_local_commits(
-    repository: &git2::Repository,
+    repo: &git2::Repository,
     merge_base: git2::Oid,
     local_branch_commits: Vec<git2::Oid>,
     added_local_commits: &HashSet<git2::Oid>,
@@ -386,13 +311,13 @@ fn insert_remaining_local_commits(
 
     for remaining_commit_id in branch_commits_remaining {
         let insertion_index = find_insertion_index_for_remaining_commit(
-            repository,
+            repo,
             remaining_commit_id,
             merge_base,
             ordered_for_zipping,
         )?;
 
-        let remaining_commit = repository.find_commit(*remaining_commit_id)?;
+        let remaining_commit = repo.find_commit(*remaining_commit_id)?;
         ordered_for_zipping.insert(
             insertion_index,
             (remaining_commit.change_id(), *remaining_commit_id),
@@ -410,16 +335,16 @@ fn insert_remaining_local_commits(
 ///
 /// The insertion index is the index of the first parent of the remaining commit.
 fn find_insertion_index_for_remaining_commit(
-    repository: &git2::Repository,
+    repo: &git2::Repository,
     remaining_commit_id: &git2::Oid,
     merge_base: git2::Oid,
     ordered_for_zipping: &[(Option<String>, git2::Oid)],
 ) -> Result<usize, anyhow::Error> {
     let remaining_commit_id_parent_ids =
-        repository.l(*remaining_commit_id, LogUntil::Commit(merge_base), false)?;
+        repo.l(*remaining_commit_id, LogUntil::Commit(merge_base), false)?;
     let remaining_commit_id_parents = remaining_commit_id_parent_ids
         .iter()
-        .filter_map(|id| repository.find_commit(*id).ok())
+        .filter_map(|id| repo.find_commit(*id).ok())
         .collect_vec();
 
     let mut insertion_index = None;
@@ -472,7 +397,7 @@ fn find_insertion_index_for_remaining_commit(
 /// right after the first remote commit that matches the change id.
 /// And we are force to assume that because there is no way to know better, yet.
 fn process_remote_commits_for_zipping<'a>(
-    repository: &'a git2::Repository,
+    repo: &'a git2::Repository,
     change_id_map: &'a HashMap<String, Vec<git2::Oid>>,
     remote_branch_commits: Vec<git2::Oid>,
     ordered_for_zipping: &'a mut Vec<(Option<String>, git2::Oid)>,
@@ -480,7 +405,7 @@ fn process_remote_commits_for_zipping<'a>(
 ) -> Result<(), anyhow::Error> {
     let mut visited_change_ids = HashSet::new();
     for remote_commit_id in remote_branch_commits {
-        let remote_commit = repository.find_commit(remote_commit_id)?;
+        let remote_commit = repo.find_commit(remote_commit_id)?;
 
         let change_id = match remote_commit.change_id() {
             Some(change_id) => change_id,
@@ -513,11 +438,11 @@ fn process_remote_commits_for_zipping<'a>(
 /// Usually, a change id is unique to a commit, but it's not a certainty.
 fn build_change_id_map(
     local_branch_commits: &[git2::Oid],
-    repository: &git2::Repository,
+    repo: &git2::Repository,
 ) -> Result<HashMap<String, Vec<git2::Oid>>> {
     let mut change_id_map = HashMap::new();
     for commit_id in local_branch_commits {
-        let commit = repository.find_commit(*commit_id)?;
+        let commit = repo.find_commit(*commit_id)?;
         let change_id = match commit.change_id() {
             Some(change_id) => change_id,
             None => continue,
@@ -533,69 +458,17 @@ fn build_change_id_map(
 #[cfg(test)]
 mod test {
     use crate::branch_upstream_integration::IntegrateUpstreamContext;
-    use gitbutler_testsupport::testing_repository::{
-        assert_commit_tree_matches, TestingRepository,
-    };
+    use gitbutler_testsupport::testing_repository::TestingRepository;
 
     mod inner_integrate_upstream_commits {
-        use gitbutler_commit::commit_ext::CommitExt as _;
+        use but_rebase::RebaseStep;
+        use gitbutler_oxidize::OidExt;
         use gitbutler_repo::logging::LogUntil;
         use gitbutler_repo::logging::RepositoryExt as _;
-        use gitbutler_workspace::BranchHeadAndTree;
 
         use crate::branch_upstream_integration::IntegrationStrategy;
 
         use super::*;
-
-        /// Local:  Base -> A -> B
-        /// Remote: Base -> A -> B -> X -> Y
-        /// Trunk:  Base
-        /// Result: Base -> A -> B -> X -> Y
-        #[test]
-        fn other_added_remote_changes() {
-            let test_repository = TestingRepository::open();
-
-            let base_commit = test_repository.commit_tree(None, &[("foo.txt", "foo")]);
-            let local_a = test_repository.commit_tree(Some(&base_commit), &[("foo.txt", "foo1")]);
-            let local_b = test_repository.commit_tree(Some(&local_a), &[("foo.txt", "foo2")]);
-
-            let remote_x = test_repository.commit_tree(Some(&local_b), &[("foo.txt", "foo3")]);
-            let remote_y = test_repository.commit_tree(Some(&remote_x), &[("foo.txt", "foo4")]);
-
-            let ctx = IntegrateUpstreamContext {
-                repository: &test_repository.repository,
-                target_branch_head: base_commit.id(),
-                branch_head: local_b.id(),
-                branch_tree: local_b.tree_id(),
-                branch_name: "test",
-                remote_head: remote_y.id(),
-                remote_branch_name: "test",
-                strategy: IntegrationStrategy::Rebase,
-            };
-
-            let BranchHeadAndTree { head, tree: _tree } =
-                ctx.inner_integrate_upstream_commits().unwrap();
-
-            assert_eq!(
-                test_repository
-                    .repository
-                    .l(head, LogUntil::Commit(base_commit.id()), false)
-                    .unwrap(),
-                vec![remote_y.id(), remote_x.id(), local_b.id(), local_a.id()],
-            );
-
-            // Also ensure the series implementation does the same thing
-            let (BranchHeadAndTree { head, tree: _tree }, _) = ctx
-                .inner_integrate_upstream_commits_for_series(local_b.id())
-                .unwrap();
-            assert_eq!(
-                test_repository
-                    .repository
-                    .l(head, LogUntil::Commit(base_commit.id()), false)
-                    .unwrap(),
-                vec![remote_y.id(), remote_x.id(), local_b.id(), local_a.id()],
-            );
-        }
 
         /// Full Stack: Base -> A -> B -> C -> D
         /// Series One:         A -> B
@@ -606,40 +479,61 @@ mod test {
         /// Result Series One Head: Y
         #[test]
         fn other_added_remote_changes_multiple_series() {
-            let test_repository = TestingRepository::open();
+            let repo = TestingRepository::open();
 
-            let base_commit = test_repository.commit_tree(None, &[("foo.txt", "foo")]);
-            let local_a = test_repository.commit_tree(Some(&base_commit), &[("foo.txt", "foo1")]);
-            let local_b = test_repository.commit_tree(Some(&local_a), &[("foo.txt", "foo2")]);
-            let local_c = test_repository.commit_tree(Some(&local_b), &[("foo.txt", "fooC")]);
-            let local_d = test_repository.commit_tree(Some(&local_c), &[("foo.txt", "fooD")]);
+            let base_commit = repo.commit_tree(None, &[("foo.txt", "foo")]);
+            let local_a = repo.commit_tree(Some(&base_commit), &[("foo.txt", "foo1")]);
+            let local_b = repo.commit_tree(Some(&local_a), &[("foo.txt", "foo2")]);
+            let local_c = repo.commit_tree(Some(&local_b), &[("foo.txt", "fooC")]);
+            let local_d = repo.commit_tree(Some(&local_c), &[("foo.txt", "fooD")]);
 
-            let remote_x = test_repository.commit_tree(Some(&local_b), &[("foo.txt", "foo3")]);
-            let remote_y = test_repository.commit_tree(Some(&remote_x), &[("foo.txt", "foo4")]);
+            let steps = vec![
+                RebaseStep::Pick {
+                    commit_id: local_a.id().to_gix(),
+                    new_message: None,
+                },
+                RebaseStep::Pick {
+                    commit_id: local_b.id().to_gix(),
+                    new_message: None,
+                },
+                RebaseStep::Reference(but_core::Reference::Virtual("One".to_string())),
+                RebaseStep::Pick {
+                    commit_id: local_c.id().to_gix(),
+                    new_message: None,
+                },
+                RebaseStep::Pick {
+                    commit_id: local_d.id().to_gix(),
+                    new_message: None,
+                },
+                RebaseStep::Reference(but_core::Reference::Virtual("Two".to_string())),
+            ];
+
+            let remote_x = repo.commit_tree(Some(&local_b), &[("foo.txt", "foo3")]);
+            let remote_y = repo.commit_tree(Some(&remote_x), &[("foo.txt", "foo4")]);
 
             let ctx = IntegrateUpstreamContext {
-                repository: &test_repository.repository,
+                repo: &repo.repository,
                 target_branch_head: base_commit.id(),
-                branch_head: local_d.id(),
-                branch_tree: local_d.tree_id(),
-                branch_name: "test",
+                branch_name: "One",
+                branch_full_name: "refs/heads/One".try_into().unwrap(),
                 remote_head: remote_y.id(),
-                remote_branch_name: "test",
+                remote_branch_name: "One",
                 strategy: IntegrationStrategy::Rebase,
+                stack_steps: steps,
+                gix_repo: &repo.gix_repository(),
             };
 
-            let (BranchHeadAndTree { head, tree: _tree }, new_series_head) = ctx
+            let ((head, _tree), new_series_head, _rebase_output) = ctx
                 .inner_integrate_upstream_commits_for_series(local_b.id()) // series head is earlier than stack head
                 .unwrap();
             assert_eq!(new_series_head, remote_y.id());
             assert_eq!(
-                test_repository
-                    .repository
+                repo.repository
                     .l(head, LogUntil::Commit(base_commit.id()), false)
                     .unwrap()
                     .iter()
                     .map(|c| {
-                        let commit = test_repository.repository.find_commit(*c).unwrap();
+                        let commit = repo.repository.find_commit(*c).unwrap();
                         commit.message().unwrap().to_string()
                     })
                     .collect::<Vec<_>>(),
@@ -651,563 +545,6 @@ mod test {
                     local_b.message().unwrap(),
                     local_a.message().unwrap()
                 ],
-            );
-        }
-
-        /// Local:  Base -> A -> B
-        /// Remote: Base -> A -> B' -> Y
-        /// Trunk:  Base
-        /// Result: Base -> A -> B -> B'' -> Y'
-        #[test]
-        fn modified_local_commit_unconflicting_content() {
-            let test_repository = TestingRepository::open();
-
-            let base_commit = test_repository.commit_tree(None, &[]);
-            let local_a = test_repository.commit_tree_with_message(
-                Some(&base_commit),
-                "A",
-                &[("foo.txt", "foo")],
-            );
-            let local_b = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "B",
-                &[("foo.txt", "foo1")],
-            );
-
-            // imagine someone on the remote rebased local_b
-            let remote_b = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "B'",
-                &[("foo.txt", "foo1"), ("bar.txt", "foo2")],
-            );
-            let remote_y = test_repository.commit_tree_with_message(
-                Some(&remote_b),
-                "Y",
-                &[("foo.txt", "foo3")],
-            );
-
-            let ctx = IntegrateUpstreamContext {
-                repository: &test_repository.repository,
-                target_branch_head: base_commit.id(),
-                branch_head: local_b.id(),
-                branch_tree: local_b.tree_id(),
-                branch_name: "test",
-                remote_head: remote_y.id(),
-                remote_branch_name: "test",
-                strategy: IntegrationStrategy::Rebase,
-            };
-
-            let BranchHeadAndTree { head, tree: _tree } =
-                ctx.inner_integrate_upstream_commits().unwrap();
-
-            let commits = test_repository
-                .repository
-                .log(head, LogUntil::Commit(base_commit.id()), false)
-                .unwrap();
-
-            assert_eq!(commits.len(), 4);
-
-            let new_y = commits[0].clone();
-            let new_b_prime = commits[1].clone();
-            let new_b = commits[2].clone();
-            let new_a = commits[3].clone();
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_y,
-                &[("foo.txt", b"foo3")],
-            );
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b_prime,
-                &[("foo.txt", b"foo1"), ("bar.txt", b"foo2")],
-            );
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b,
-                &[("foo.txt", b"foo1")],
-            );
-
-            assert_commit_tree_matches(&test_repository.repository, &new_a, &[("foo.txt", b"foo")]);
-
-            // Ensure the series implementation does the same
-            let (BranchHeadAndTree { head, tree: _tree }, _) = ctx
-                .inner_integrate_upstream_commits_for_series(local_b.id())
-                .unwrap();
-
-            let commits = test_repository
-                .repository
-                .log(head, LogUntil::Commit(base_commit.id()), false)
-                .unwrap();
-
-            assert_eq!(commits.len(), 4);
-
-            let new_y = commits[0].clone();
-            let new_b_prime = commits[1].clone();
-            let new_b = commits[2].clone();
-            let new_a = commits[3].clone();
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_y,
-                &[("foo.txt", b"foo3")],
-            );
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b_prime,
-                &[("foo.txt", b"foo1"), ("bar.txt", b"foo2")],
-            );
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b,
-                &[("foo.txt", b"foo1")],
-            );
-
-            assert_commit_tree_matches(&test_repository.repository, &new_a, &[("foo.txt", b"foo")]);
-        }
-
-        /// Local:  Base -> A -> B
-        /// Remote: Base -> A -> B' (will conflict when rebased on top of B) -> Y
-        /// Trunk:  Base
-        /// Result: Base -> A -> B -> B'' (Cft) -> Y'
-        #[test]
-        fn modified_local_commit_conflicting_content() {
-            let test_repository = TestingRepository::open();
-
-            let base_commit = test_repository.commit_tree(None, &[]);
-            let local_a = test_repository.commit_tree_with_message(
-                Some(&base_commit),
-                "A",
-                &[("foo.txt", "foo")],
-            );
-            let local_b = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "B",
-                &[("foo.txt", "foo1")],
-            );
-
-            // imagine someone on the remote rebased local_b
-            let remote_b = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "B'",
-                &[("foo.txt", "foo2")],
-            );
-            let remote_y = test_repository.commit_tree_with_message(
-                Some(&remote_b),
-                "Y",
-                &[("foo.txt", "foo3")],
-            );
-
-            let ctx = IntegrateUpstreamContext {
-                repository: &test_repository.repository,
-                target_branch_head: base_commit.id(),
-                branch_head: local_b.id(),
-                branch_tree: local_b.tree_id(),
-                branch_name: "test",
-                remote_head: remote_y.id(),
-                remote_branch_name: "test",
-                strategy: IntegrationStrategy::Rebase,
-            };
-
-            let BranchHeadAndTree { head, tree: _tree } =
-                ctx.inner_integrate_upstream_commits().unwrap();
-
-            let commits = test_repository
-                .repository
-                .log(head, LogUntil::Commit(base_commit.id()), false)
-                .unwrap();
-
-            assert_eq!(commits.len(), 4);
-
-            let new_y = commits[0].clone();
-            let new_b_prime = commits[1].clone();
-            let new_b = commits[2].clone();
-            let new_a = commits[3].clone();
-
-            assert!(new_y.is_conflicted());
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_y,
-                &[
-                    (".auto-resolution/foo.txt", b"foo1"),
-                    (".conflict-base-0/foo.txt", b"foo2"),
-                    (".conflict-side-0/foo.txt", b"foo1"),
-                    (".conflict-side-1/foo.txt", b"foo3"),
-                ],
-            );
-
-            assert!(new_b_prime.is_conflicted());
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b_prime,
-                &[
-                    (".auto-resolution/foo.txt", b"foo1"),
-                    (".conflict-base-0/foo.txt", b"foo"),
-                    (".conflict-side-0/foo.txt", b"foo1"),
-                    (".conflict-side-1/foo.txt", b"foo2"),
-                ],
-            );
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b,
-                &[("foo.txt", b"foo1")],
-            );
-
-            assert_commit_tree_matches(&test_repository.repository, &new_a, &[("foo.txt", b"foo")]);
-
-            // Also ensure the series implementation does the same thing
-            let (BranchHeadAndTree { head, tree: _tree }, _) = ctx
-                .inner_integrate_upstream_commits_for_series(local_b.id())
-                .unwrap();
-
-            let commits = test_repository
-                .repository
-                .log(head, LogUntil::Commit(base_commit.id()), false)
-                .unwrap();
-
-            assert_eq!(commits.len(), 4);
-
-            let new_y = commits[0].clone();
-            let new_b_prime = commits[1].clone();
-            let new_b = commits[2].clone();
-            let new_a = commits[3].clone();
-
-            assert!(new_y.is_conflicted());
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_y,
-                &[
-                    (".auto-resolution/foo.txt", b"foo1"),
-                    (".conflict-base-0/foo.txt", b"foo2"),
-                    (".conflict-side-0/foo.txt", b"foo1"),
-                    (".conflict-side-1/foo.txt", b"foo3"),
-                ],
-            );
-
-            assert!(new_b_prime.is_conflicted());
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b_prime,
-                &[
-                    (".auto-resolution/foo.txt", b"foo1"),
-                    (".conflict-base-0/foo.txt", b"foo"),
-                    (".conflict-side-0/foo.txt", b"foo1"),
-                    (".conflict-side-1/foo.txt", b"foo2"),
-                ],
-            );
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b,
-                &[("foo.txt", b"foo1")],
-            );
-
-            assert_commit_tree_matches(&test_repository.repository, &new_a, &[("foo.txt", b"foo")]);
-        }
-
-        /// Local:  Base -> A -> B
-        /// Remote: Base -> A -> B' (no diff changes) -> Y
-        /// Trunk:  Base
-        /// Result: Base -> A -> B -> Y'
-        /// The empty B' commit should be dropped
-        #[test]
-        fn modified_local_commit_unconflicting_no_op() {
-            let test_repository = TestingRepository::open();
-
-            let base_commit = test_repository.commit_tree(None, &[]);
-            let local_a = test_repository.commit_tree_with_message(
-                Some(&base_commit),
-                "A",
-                &[("foo.txt", "foo")],
-            );
-            let local_b = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "B",
-                &[("foo.txt", "foo1")],
-            );
-
-            // imagine someone on the remote rebased local_b
-            let remote_b = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "B'",
-                &[("foo.txt", "foo1")],
-            );
-            let remote_y = test_repository.commit_tree_with_message(
-                Some(&remote_b),
-                "Y",
-                &[("foo.txt", "foo3")],
-            );
-
-            let ctx = IntegrateUpstreamContext {
-                repository: &test_repository.repository,
-                target_branch_head: base_commit.id(),
-                branch_head: local_b.id(),
-                branch_tree: local_b.tree_id(),
-                branch_name: "test",
-                remote_head: remote_y.id(),
-                remote_branch_name: "test",
-                strategy: IntegrationStrategy::Rebase,
-            };
-
-            let BranchHeadAndTree { head, tree: _tree } =
-                ctx.inner_integrate_upstream_commits().unwrap();
-
-            let commits = test_repository
-                .repository
-                .log(head, LogUntil::Commit(base_commit.id()), false)
-                .unwrap();
-
-            assert_eq!(commits.len(), 3);
-
-            let new_y = commits[0].clone();
-            let new_b = commits[1].clone();
-            let new_a = commits[2].clone();
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_y,
-                &[("foo.txt", b"foo3")],
-            );
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b,
-                &[("foo.txt", b"foo1")],
-            );
-
-            assert_commit_tree_matches(&test_repository.repository, &new_a, &[("foo.txt", b"foo")]);
-
-            // Also ensure the series implementation does the same thing
-            let (BranchHeadAndTree { head, tree: _tree }, _) = ctx
-                .inner_integrate_upstream_commits_for_series(local_b.id())
-                .unwrap();
-
-            let commits = test_repository
-                .repository
-                .log(head, LogUntil::Commit(base_commit.id()), false)
-                .unwrap();
-
-            assert_eq!(commits.len(), 3);
-
-            let new_y = commits[0].clone();
-            let new_b = commits[1].clone();
-            let new_a = commits[2].clone();
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_y,
-                &[("foo.txt", b"foo3")],
-            );
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b,
-                &[("foo.txt", b"foo1")],
-            );
-
-            assert_commit_tree_matches(&test_repository.repository, &new_a, &[("foo.txt", b"foo")]);
-        }
-
-        /// Reset
-        /// Local:  Base -> A -> B
-        /// Remote: Base -> A -> B'
-        /// Trunk:  Base
-        /// Result: Base -> A -> B'
-        #[test]
-        fn hard_reset_to_externally_amended_commit() {
-            let test_repository = TestingRepository::open();
-
-            let base_commit = test_repository.commit_tree(None, &[]);
-            let local_a = test_repository.commit_tree_with_message(
-                Some(&base_commit),
-                "A",
-                &[("foo.txt", "foo")],
-            );
-            let local_b = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "B",
-                &[("foo.txt", "foo1")],
-            );
-
-            // imagine someone on the remote rebased local_b and force pushed
-            let remote_b = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "B'",
-                &[("foo.txt", "Look at me, I'm so amended")],
-            );
-
-            let ctx = IntegrateUpstreamContext {
-                repository: &test_repository.repository,
-                target_branch_head: base_commit.id(),
-                branch_head: local_b.id(),
-                branch_tree: local_b.tree_id(),
-                branch_name: "test",
-                remote_head: remote_b.id(),
-                remote_branch_name: "test",
-                strategy: IntegrationStrategy::HardReset,
-            };
-
-            let BranchHeadAndTree { head, tree: _tree } =
-                ctx.inner_integrate_upstream_commits().unwrap();
-
-            let commits = test_repository
-                .repository
-                .log(head, LogUntil::Commit(base_commit.id()), false)
-                .unwrap();
-
-            assert_eq!(commits.len(), 2);
-
-            let new_b = commits[0].clone();
-            let new_a = commits[1].clone();
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b,
-                &[("foo.txt", b"Look at me, I'm so amended")],
-            );
-
-            assert_commit_tree_matches(&test_repository.repository, &new_a, &[("foo.txt", b"foo")]);
-        }
-
-        /// Reset
-        /// Local:  Base -> A -> B -> C
-        /// Remote: Base -> A -> C'
-        /// Trunk:  Base
-        /// Result: Base -> A -> C'
-        #[test]
-        fn hard_reset_to_externally_removed_commit() {
-            let test_repository = TestingRepository::open();
-
-            let base_commit = test_repository.commit_tree(None, &[]);
-            let local_a = test_repository.commit_tree_with_message(
-                Some(&base_commit),
-                "A",
-                &[("foo.txt", "foo")],
-            );
-            let local_b = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "B",
-                &[("foo.txt", "foo1")],
-            );
-            let local_c = test_repository.commit_tree_with_message(
-                Some(&local_b),
-                "C",
-                &[("foo.txt", "foo2")],
-            );
-
-            // imagine someone on the remote rebased local_b and force pushed
-            let remote_c = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "C'",
-                &[("foo.txt", "foo2")],
-            );
-
-            let ctx = IntegrateUpstreamContext {
-                repository: &test_repository.repository,
-                target_branch_head: base_commit.id(),
-                branch_head: local_c.id(),
-                branch_tree: local_c.tree_id(),
-                branch_name: "test",
-                remote_head: remote_c.id(),
-                remote_branch_name: "test",
-                strategy: IntegrationStrategy::HardReset,
-            };
-
-            let BranchHeadAndTree { head, tree: _tree } =
-                ctx.inner_integrate_upstream_commits().unwrap();
-
-            let commits = test_repository
-                .repository
-                .log(head, LogUntil::Commit(base_commit.id()), false)
-                .unwrap();
-
-            assert_eq!(commits.len(), 2);
-
-            let new_c = commits[0].clone();
-            let new_a = commits[1].clone();
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_c,
-                &[("foo.txt", b"foo2")],
-            );
-
-            assert_commit_tree_matches(&test_repository.repository, &new_a, &[("foo.txt", b"foo")]);
-        }
-
-        /// Reset
-        /// Local:  Base -> A -> B
-        /// Remote: Base -> A' -> B'
-        /// Trunk:  Base
-        /// Result: Base -> A' -> B'
-        #[test]
-        fn hard_reset_to_externally_amended_branch() {
-            let test_repository = TestingRepository::open();
-
-            let base_commit = test_repository.commit_tree(None, &[]);
-            let local_a = test_repository.commit_tree_with_message(
-                Some(&base_commit),
-                "A",
-                &[("foo.txt", "foo")],
-            );
-            let local_b = test_repository.commit_tree_with_message(
-                Some(&local_a),
-                "B",
-                &[("foo.txt", "foo1")],
-            );
-
-            // imagine someone on the remote rebased local_b and force pushed
-            let remote_a = test_repository.commit_tree_with_message(
-                Some(&base_commit),
-                "A'",
-                &[("foo.txt", "amended foo")],
-            );
-
-            let remote_b = test_repository.commit_tree_with_message(
-                Some(&remote_a),
-                "B'",
-                &[("foo.txt", "amended foo1")],
-            );
-
-            let ctx = IntegrateUpstreamContext {
-                repository: &test_repository.repository,
-                target_branch_head: base_commit.id(),
-                branch_head: local_b.id(),
-                branch_tree: local_b.tree_id(),
-                branch_name: "test",
-                remote_head: remote_b.id(),
-                remote_branch_name: "test",
-                strategy: IntegrationStrategy::HardReset,
-            };
-
-            let BranchHeadAndTree { head, tree: _tree } =
-                ctx.inner_integrate_upstream_commits().unwrap();
-
-            let commits = test_repository
-                .repository
-                .log(head, LogUntil::Commit(base_commit.id()), false)
-                .unwrap();
-
-            assert_eq!(commits.len(), 2);
-
-            let new_b = commits[0].clone();
-            let new_a = commits[1].clone();
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_b,
-                &[("foo.txt", b"amended foo1")],
-            );
-
-            assert_commit_tree_matches(
-                &test_repository.repository,
-                &new_a,
-                &[("foo.txt", b"amended foo")],
             );
         }
     }
@@ -1223,17 +560,17 @@ mod test {
         /// Result: Base -> A -> B -> X -> Y
         #[test]
         fn other_added_remote_changes() {
-            let test_repository = TestingRepository::open();
+            let test_repo = TestingRepository::open();
 
-            let base_commit = test_repository.commit_tree(None, &[]);
-            let local_a = test_repository.commit_tree_with_change_id(Some(&base_commit), "a", &[]);
-            let local_b = test_repository.commit_tree_with_change_id(Some(&local_a), "b", &[]);
+            let base_commit = test_repo.commit_tree(None, &[]);
+            let local_a = test_repo.commit_tree_with_change_id(Some(&base_commit), "a", &[]);
+            let local_b = test_repo.commit_tree_with_change_id(Some(&local_a), "b", &[]);
 
-            let remote_x = test_repository.commit_tree_with_change_id(Some(&local_b), "x", &[]);
-            let remote_y = test_repository.commit_tree_with_change_id(Some(&remote_x), "y", &[]);
+            let remote_x = test_repo.commit_tree_with_change_id(Some(&local_b), "x", &[]);
+            let remote_y = test_repo.commit_tree_with_change_id(Some(&remote_x), "y", &[]);
 
             let commits = order_commits_for_rebasing(
-                &test_repository.repository,
+                &test_repo.repository,
                 base_commit.id(),
                 local_b.id(),
                 remote_y.id(),
@@ -1252,18 +589,18 @@ mod test {
         /// Result: Base -> A -> B -> B' -> Y
         #[test]
         fn modified_local_commit() {
-            let test_repository = TestingRepository::open();
+            let test_repo = TestingRepository::open();
 
-            let base_commit = test_repository.commit_tree(None, &[]);
-            let local_a = test_repository.commit_tree_with_change_id(Some(&base_commit), "a", &[]);
-            let local_b = test_repository.commit_tree_with_change_id(Some(&local_a), "b", &[]);
+            let base_commit = test_repo.commit_tree(None, &[]);
+            let local_a = test_repo.commit_tree_with_change_id(Some(&base_commit), "a", &[]);
+            let local_b = test_repo.commit_tree_with_change_id(Some(&local_a), "b", &[]);
 
             // imagine someone on the remote rebased local_b
-            let remote_b = test_repository.commit_tree_with_change_id(Some(&local_a), "b", &[]);
-            let remote_y = test_repository.commit_tree_with_change_id(Some(&remote_b), "y", &[]);
+            let remote_b = test_repo.commit_tree_with_change_id(Some(&local_a), "b", &[]);
+            let remote_y = test_repo.commit_tree_with_change_id(Some(&remote_b), "y", &[]);
 
             let commits = order_commits_for_rebasing(
-                &test_repository.repository,
+                &test_repo.repository,
                 base_commit.id(),
                 local_b.id(),
                 remote_y.id(),
@@ -1282,7 +619,7 @@ mod test {
         /// Result: Base -> M -> N -> A -> A' -> B -> B' -> Y
         #[test]
         fn remote_includes_integrated_commits() {
-            let test_repository = TestingRepository::open();
+            let test_repo = TestingRepository::open();
 
             // Setup:
             // (z)
@@ -1296,20 +633,20 @@ mod test {
             //  m   a
             //  \   /
             //   base_commit
-            let base_commit = test_repository.commit_tree(None, &[]);
-            let trunk_m = test_repository.commit_tree_with_change_id(Some(&base_commit), "m", &[]);
-            let trunk_n = test_repository.commit_tree_with_change_id(Some(&trunk_m), "n", &[]);
+            let base_commit = test_repo.commit_tree(None, &[]);
+            let trunk_m = test_repo.commit_tree_with_change_id(Some(&base_commit), "m", &[]);
+            let trunk_n = test_repo.commit_tree_with_change_id(Some(&trunk_m), "n", &[]);
 
-            let local_a = test_repository.commit_tree_with_change_id(Some(&base_commit), "a", &[]);
-            let local_b = test_repository.commit_tree_with_change_id(Some(&local_a), "b", &[]);
+            let local_a = test_repo.commit_tree_with_change_id(Some(&base_commit), "a", &[]);
+            let local_b = test_repo.commit_tree_with_change_id(Some(&local_a), "b", &[]);
 
             // imagine someone on the remote rebased local_a
-            let remote_x = test_repository.commit_tree_with_change_id(Some(&trunk_n), "a", &[]);
-            let remote_y = test_repository.commit_tree_with_change_id(Some(&remote_x), "b", &[]);
-            let remote_z = test_repository.commit_tree_with_change_id(Some(&remote_y), "y", &[]);
+            let remote_x = test_repo.commit_tree_with_change_id(Some(&trunk_n), "a", &[]);
+            let remote_y = test_repo.commit_tree_with_change_id(Some(&remote_x), "b", &[]);
+            let remote_z = test_repo.commit_tree_with_change_id(Some(&remote_y), "y", &[]);
 
             let commits = order_commits_for_rebasing(
-                &test_repository.repository,
+                &test_repo.repository,
                 trunk_n.id(),
                 local_b.id(),
                 remote_z.id(),

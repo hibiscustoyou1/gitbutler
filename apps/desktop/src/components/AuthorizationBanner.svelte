@@ -1,17 +1,11 @@
 <script lang="ts">
-	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
+	import Login from '$components/Login.svelte';
+	import { Icon, SectionCard } from '@gitbutler/ui';
 
 	interface Props {
 		title?: string;
 		message?: string;
 	}
-
-	const userService = getContext(UserService);
-	const loading = userService.loading;
 
 	const {
 		title: titleLabel = 'Authorization Required',
@@ -30,12 +24,6 @@
 		{message}
 	{/snippet}
 	{#snippet actions()}
-		<Button
-			loading={$loading}
-			style="pop"
-			onclick={async () => {
-				await userService.login();
-			}}>Log in or Sign up</Button
-		>
+		<Login />
 	{/snippet}
 </SectionCard>

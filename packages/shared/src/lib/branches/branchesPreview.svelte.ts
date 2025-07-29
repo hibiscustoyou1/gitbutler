@@ -1,29 +1,36 @@
 import { branchReviewListingTable } from '$lib/branches/branchReviewListingsSlice';
+import { BRANCH_SERVICE } from '$lib/branches/branchService';
 import { branchTable } from '$lib/branches/branchesSlice';
-import { BranchStatus, toCombineSlug, type Branch, type LoadableBranch } from '$lib/branches/types';
+import {
+	branchReviewListingKey,
+	BranchStatus,
+	type Branch,
+	type LoadableBranch
+} from '$lib/branches/types';
+import { inject } from '$lib/context';
 import { registerInterest, type InView } from '$lib/interest/registerInterestFunction.svelte';
 import { isFound } from '$lib/network/loadable';
-import type { BranchService } from '$lib/branches/branchService';
+import { APP_STATE } from '$lib/redux/store.svelte';
 import type { Loadable } from '$lib/network/types';
-import type { AppBranchesState, AppBranchReviewListingsState } from '$lib/redux/store.svelte';
 import type { Reactive } from '$lib/storeUtils';
 
 /** Returns a 2D List of branches. Branches grouped in a sub-array are stack*/
 export function getBranchReviewsForRepository(
-	appState: AppBranchesState & AppBranchReviewListingsState,
-	branchService: BranchService,
 	ownerSlug: string,
 	projectSlug: string,
 	status: BranchStatus = BranchStatus.All,
 	inView?: InView
 ): Reactive<Loadable<Branch[][]>> {
+	const appState = inject(APP_STATE);
+	const branchService = inject(BRANCH_SERVICE);
+
 	const branchReviewsInterest = branchService.getBranchesInterest(ownerSlug, projectSlug, status);
 	registerInterest(branchReviewsInterest, inView);
 
 	const branchListing = $derived(
 		branchReviewListingTable.selectors.selectById(
 			appState.branchReviewListings,
-			toCombineSlug(ownerSlug, projectSlug)
+			branchReviewListingKey(ownerSlug, projectSlug, status)
 		)
 	);
 
@@ -62,11 +69,11 @@ export function getBranchReviewsForRepository(
 }
 
 export function getBranchReview(
-	appState: AppBranchesState,
-	branchService: BranchService,
 	uuid: string,
 	inView?: InView
 ): Reactive<LoadableBranch | undefined> {
+	const branchService = inject(BRANCH_SERVICE);
+	const appState = inject(APP_STATE);
 	const branchReviewInterest = branchService.getBranchInterest(uuid);
 	registerInterest(branchReviewInterest, inView);
 

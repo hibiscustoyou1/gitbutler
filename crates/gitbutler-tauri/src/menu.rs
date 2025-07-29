@@ -1,5 +1,6 @@
 use std::{env, fs};
 
+use crate::error::Error;
 use anyhow::Context;
 use gitbutler_error::error::{self, Code};
 #[cfg(target_os = "macos")]
@@ -10,8 +11,6 @@ use tauri::{
     AppHandle, Manager, Runtime, WebviewWindow,
 };
 use tracing::instrument;
-
-use crate::error::Error;
 
 static SHORTCUT_EVENT: &str = "menu://shortcut";
 
@@ -113,11 +112,7 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::menu::Me
 
     #[cfg(target_os = "macos")]
     {
-        edit_menu.append_items(&[
-            &PredefinedMenuItem::undo(handle, None)?,
-            &PredefinedMenuItem::redo(handle, None)?,
-            &PredefinedMenuItem::separator(handle)?,
-        ])?;
+        edit_menu.append_items(&[&PredefinedMenuItem::separator(handle)?])?;
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -165,13 +160,34 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::menu::Me
             .build(handle)?,
     ])?;
 
-    let project_menu = &SubmenuBuilder::new(handle, "Project")
+    let mut project_menu_builder = SubmenuBuilder::new(handle, "Project")
         .item(
-            &MenuItemBuilder::with_id("project/history", "Project History")
+            &MenuItemBuilder::with_id("project/history", "Operations History")
                 .accelerator("CmdOrCtrl+Shift+H")
                 .build(handle)?,
         )
-        .text("project/open-in-vscode", "Open in Editor")
+        .separator()
+        .text("project/open-in-vscode", "Open in Editor");
+
+    #[cfg(target_os = "macos")]
+    {
+        project_menu_builder =
+            project_menu_builder.text("project/show-in-finder", "Show in Finder");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        project_menu_builder =
+            project_menu_builder.text("project/show-in-finder", "Show in Explorer");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        project_menu_builder =
+            project_menu_builder.text("project/show-in-finder", "Show in File Manager");
+    }
+
+    let project_menu = &project_menu_builder
         .separator()
         .text("project/settings", "Project Settings")
         .build()?;
@@ -186,22 +202,25 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::menu::Me
         ])
         .build()?;
 
-    let help_menu = &SubmenuBuilder::new(handle, "Help")
+    let mut help_menu = SubmenuBuilder::new(handle, "Help")
         .text("help/documentation", "Documentation")
         .text("help/github", "Source Code")
         .text("help/release-notes", "Release Notes")
-        .separator()
+        .separator();
+    help_menu = help_menu
         .item(
             &MenuItemBuilder::with_id("help/keyboard-shortcuts", "Keyboard Shortcuts")
                 .accelerator("CmdOrCtrl+/")
                 .build(handle)?,
         )
-        .separator()
+        .separator();
+    let help_menu = help_menu
         .text("help/share-debug-info", "Share Debug Info…")
         .text("help/report-issue", "Report an Issue…")
         .separator()
         .text("help/discord", "Discord")
         .text("help/youtube", "YouTube")
+        .text("help/Bluesky", "Bluesky")
         .text("help/x", "X")
         .separator()
         .item(
@@ -226,7 +245,7 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::menu::Me
             project_menu,
             #[cfg(target_os = "macos")]
             window_menu,
-            help_menu,
+            &help_menu,
         ],
     )
 }
@@ -285,7 +304,7 @@ pub fn handle_event(webview: &WebviewWindow, event: &MenuEvent) {
     }
 
     if event.id() == "help/share-debug-info" {
-        emit(webview, SHORTCUT_EVENT, "share-debug");
+        emit(webview, SHORTCUT_EVENT, "share-debug-info");
         return;
     }
 
@@ -296,6 +315,11 @@ pub fn handle_event(webview: &WebviewWindow, event: &MenuEvent) {
 
     if event.id() == "project/open-in-vscode" {
         emit(webview, SHORTCUT_EVENT, "open-in-vscode");
+        return;
+    }
+
+    if event.id() == "project/show-in-finder" {
+        emit(webview, SHORTCUT_EVENT, "show-in-finder");
         return;
     }
 
@@ -331,6 +355,7 @@ pub fn handle_event(webview: &WebviewWindow, event: &MenuEvent) {
             }
             "help/discord" => open::that("https://discord.com/invite/MmFkmaJ42D"),
             "help/youtube" => open::that("https://www.youtube.com/@gitbutlerapp"),
+            "help/bluesky" => open::that("https://bsky.app/profile/gitbutler.com"),
             "help/x" => open::that("https://x.com/gitbutler"),
             _ => break 'open_link,
         };

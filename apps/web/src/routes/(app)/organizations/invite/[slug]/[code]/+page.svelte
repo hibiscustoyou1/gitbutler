@@ -1,16 +1,17 @@
 <script lang="ts">
-	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
-	import { OrganizationService } from '@gitbutler/shared/organizations/organizationService';
-	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/shared/context';
+	import { ORGANIZATION_SERVICE } from '@gitbutler/shared/organizations/organizationService';
+	import { WEB_ROUTES_SERVICE } from '@gitbutler/shared/routing/webRoutes.svelte';
+	import { Button } from '@gitbutler/ui';
+
 	import { env } from '$env/dynamic/public';
 
-	const userService = getContext(UserService);
-	const organizationService = getContext(OrganizationService);
+	const userService = inject(USER_SERVICE);
+	const organizationService = inject(ORGANIZATION_SERVICE);
 
 	const user = $derived(userService.user);
 
@@ -19,20 +20,16 @@
 	const slug = $derived($page.params.slug);
 
 	// Get services from context
-	const routes = getContext(WebRoutesService);
+	const routes = inject(WEB_ROUTES_SERVICE);
 
 	// Track the auth and join status
-	let isLoggedIn = $state(false);
+	const isLoggedIn = $derived(!!$user?.id);
 	let isJoining = $state(false);
 	let joinError = $state<string | null>(null);
 	let joinSuccess = $state(false);
 	let showConfirmation = $state(false);
 
 	// Check auth status and respond accordingly
-	$effect(() => {
-		isLoggedIn = !!$user?.id;
-	});
-
 	// Process the invite when authenticated
 	async function processInvite() {
 		if (!isLoggedIn) return;
@@ -51,7 +48,24 @@
 				goto(routes.ownerPath({ ownerSlug: slug }));
 			}, 1500);
 		} catch (error: any) {
-			joinError = error.message || 'Failed to join organization';
+			// Try to extract error message from JSON response if available
+			let errorMessage = 'Failed to join organization';
+			try {
+				// Check if error has a response with JSON data
+				if (error.response && error.response.data) {
+					// Extract error message from JSON response
+					errorMessage = error.response.data.error || errorMessage;
+				} else if (typeof error.message === 'string') {
+					// Try to parse error message as JSON if it's a string
+					const errorJson = JSON.parse(error.message.replace(/^[^{]*/, ''));
+					errorMessage = errorJson.error || errorMessage;
+				}
+			} catch (_) {
+				// If JSON parsing fails, use the original error message
+				errorMessage = error.message || errorMessage;
+			}
+
+			joinError = errorMessage;
 			isJoining = false;
 		}
 	}
@@ -117,19 +131,19 @@
 <style>
 	.invite-container {
 		display: flex;
-		justify-content: center;
 		align-items: center;
+		justify-content: center;
 		min-height: 70vh;
 		padding: 2rem;
 	}
 
 	.invite-card {
-		background-color: var(--color-bg-card);
-		border-radius: 0.5rem;
-		padding: 2rem;
-		box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-		max-width: 500px;
 		width: 100%;
+		max-width: 500px;
+		padding: 2rem;
+		border-radius: 0.5rem;
+		background-color: var(--color-bg-card);
+		box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 		text-align: center;
 	}
 
