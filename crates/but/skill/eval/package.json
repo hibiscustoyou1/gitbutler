@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.27",
-    "promptfoo": "^0.120.23"
+    "promptfoo": "^0.120.25"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
