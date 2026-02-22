@@ -18,10 +18,13 @@
     "promptfoo": "^0.120.25"
   },
   "devDependencies": {
-    "@types/node": "^24.10.1",
+    "@types/node": "^22.19.11",
     "typescript": "^5.9.3"
   },
   "pnpm": {
+    "overrides": {
+      "fast-xml-parser": "5.3.7"
+    },
     "onlyBuiltDependencies": [
       "@playwright/browser-chromium",
       "@swc/core",

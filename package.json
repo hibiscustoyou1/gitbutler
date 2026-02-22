@@ -70,6 +70,7 @@
 	},
 	"pnpm": {
 		"overrides": {
+			"fast-xml-parser": "5.3.7",
 			"@lexical/clipboard": "0.27.2",
 			"@lexical/code": "0.27.2",
 			"@lexical/file": "0.27.2",
