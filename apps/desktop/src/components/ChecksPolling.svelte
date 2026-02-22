@@ -69,19 +69,20 @@
 			return {
 				style: 'danger',
 				icon: 'warning-small',
-				text: 'Failed to load',
-				reducedText: 'Failed'
+				text: 'Failed to load checks',
+				reducedText: 'Error',
+				tooltip: 'Failed to load checks. Click to retry.'
 			};
 		}
 
 		if (checks) {
 			const style = checks.completed ? (checks.success ? 'safe' : 'danger') : 'warning';
-			const icon =
-				checks.completed && !loading
-					? checks.success
-						? 'success-small'
-						: 'error-small'
-					: 'spinner';
+			// Keep the terminal icon stable during background re-fetches
+			const icon = checks.completed
+				? checks.success
+					? 'success-small'
+					: 'error-small'
+				: 'spinner';
 			const text = checks.completed
 				? checks.success
 					? 'Checks passed'
@@ -97,10 +98,22 @@
 			return { style, icon, text, reducedText, tooltip };
 		}
 		if (loading) {
-			return { style: 'gray', icon: 'spinner', text: 'Checks', reducedText: 'Checks' };
+			return {
+				style: 'gray',
+				icon: 'spinner',
+				text: 'Loading checks',
+				reducedText: 'Checks',
+				tooltip: 'Waiting for checks to start…'
+			};
 		}
 
-		return { style: 'gray', icon: undefined, text: 'No PR checks', reducedText: 'No checks' };
+		return {
+			style: 'gray',
+			icon: undefined,
+			text: 'No checks configured',
+			reducedText: 'No checks',
+			tooltip: 'No CI checks are configured.'
+		};
 	});
 
 	// Track previous state to detect transitions.
