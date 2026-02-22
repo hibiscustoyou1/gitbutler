@@ -102,6 +102,10 @@ export class GitHubPrService implements ForgePrService {
 	) {
 		await this.api.endpoints.updatePr.mutate({ number, update });
 	}
+
+	async setDraft(number: number, draft: boolean) {
+		await this.api.endpoints.setDraft.mutate({ number, draft });
+	}
 }
 
 async function fetchRepoPermissions(
@@ -234,6 +238,46 @@ function injectEndpoints(api: GitHubApi) {
 						},
 						extra: api.extra
 					});
+					if (result.error) {
+						return { error: result.error };
+					}
+					return { data: undefined };
+				},
+				invalidatesTags: [invalidatesList(ReduxTag.PullRequests)]
+			}),
+			setDraft: build.mutation<void, { number: number; draft: boolean }>({
+				queryFn: async ({ number, draft }, api) => {
+					// First, get the PR's node_id needed for GraphQL mutations
+					const prResult = await ghQuery({
+						domain: 'pulls',
+						action: 'get',
+						parameters: { pull_number: number },
+						extra: api.extra
+					});
+					if (prResult.error) {
+						return { error: prResult.error };
+					}
+					const nodeId = prResult.data.node_id;
+
+					// GitHub requires GraphQL to toggle draft status.
+					// Use ghQuery's function form to access the authenticated octokit client.
+					const mutation = draft
+						? `mutation($pullRequestId: ID!) {
+								convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
+									pullRequest { id }
+								}
+							}`
+						: `mutation($pullRequestId: ID!) {
+								markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+									pullRequest { id }
+								}
+							}`;
+
+					const result = await ghQuery(async (octokit) => {
+						await octokit.graphql(mutation, { pullRequestId: nodeId });
+						return { data: undefined as never };
+					}, api.extra);
+
 					if (result.error) {
 						return { error: result.error };
 					}

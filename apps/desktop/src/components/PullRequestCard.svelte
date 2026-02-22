@@ -4,6 +4,7 @@
 	import ReduxResult from '$components/ReduxResult.svelte';
 	import { CLIPBOARD_SERVICE } from '$lib/backend/clipboard';
 	import { DEFAULT_FORGE_FACTORY } from '$lib/forge/forgeFactory.svelte';
+	import { showError } from '$lib/notifications/toasts';
 	import { URL_SERVICE } from '$lib/utils/url';
 	import { inject } from '@gitbutler/core/context';
 	import {
@@ -34,7 +35,14 @@
 		baseIsTargetBranch?: boolean;
 		parentIsPushed?: boolean;
 		button?: Snippet<
-			[{ pr: DetailedPullRequest; mergeStatus: ButtonStatus; reopenStatus: ButtonStatus }]
+			[
+				{
+					pr: DetailedPullRequest;
+					mergeStatus: ButtonStatus;
+					reopenStatus: ButtonStatus;
+					setDraft: (draft: boolean) => Promise<void>;
+				}
+			]
 		>;
 	}
 
@@ -66,6 +74,20 @@
 	const { name, abbr, symbol } = $derived(prService!.unit);
 
 	const prLoading = $state(false);
+	let draftToggling = $state(false);
+
+	async function handleSetDraft(draft: boolean) {
+		if (!prService || draftToggling) return;
+		draftToggling = true;
+		try {
+			await prService.setDraft(prNumber, draft);
+			await prService.fetch(prNumber, { forceRefetch: true });
+		} catch (err: unknown) {
+			showError('Failed to update draft status', err);
+		} finally {
+			draftToggling = false;
+		}
+	}
 
 	const mergeStatus = $derived.by(() => {
 		let disabled = true;
@@ -140,6 +162,16 @@
 						}
 					}}
 				/>
+				{#if pr.state === 'open' && !pr.mergedAt}
+					<ContextMenuItem
+						label={pr.draft ? 'Ready for review' : 'Convert to draft'}
+						disabled={draftToggling}
+						onclick={async () => {
+							contextMenuEl?.close();
+							await handleSetDraft(!pr.draft);
+						}}
+					/>
+				{/if}
 			</ContextMenuSection>
 			{#if hasChecks}
 				<ContextMenuSection>
@@ -223,7 +255,7 @@
 
 			{#if button}
 				<div class="pr-row">
-					{@render button({ pr, mergeStatus, reopenStatus })}
+					{@render button({ pr, mergeStatus, reopenStatus, setDraft: handleSetDraft })}
 				</div>
 			{/if}
 		</div>
