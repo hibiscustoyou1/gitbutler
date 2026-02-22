@@ -280,7 +280,8 @@ impl InputOutputChannel<'_> {
                         }
                     }
                     KeyEditAction::Submit => {
-                        self.out.stdout.write_all(b"\n")?;
+                        // In raw mode, '\n' may not return to column 0, so always emit CRLF.
+                        self.out.stdout.write_all(b"\r\n")?;
                         self.out.stdout.flush()?;
                         let trimmed = line.trim().to_owned();
                         return if trimmed.is_empty() {
@@ -290,7 +291,8 @@ impl InputOutputChannel<'_> {
                         };
                     }
                     KeyEditAction::EndOfInput => {
-                        self.out.stdout.write_all(b"\n")?;
+                        // Keep follow-up output aligned even after prompt cancellation.
+                        self.out.stdout.write_all(b"\r\n")?;
                         self.out.stdout.flush()?;
                         return Ok(ReadlineInput::EndOfInput);
                     }
