@@ -74,6 +74,7 @@ catalogs:
       version: 4.4.0
 
 overrides:
+  ajv@6.12.6: 6.14.0
   axios: 1.13.5
   devalue: 5.6.3
   fast-xml-parser: 5.3.7
@@ -4667,10 +4668,10 @@ packages:
   ajv-keywords@3.5.2:
     resolution: {integrity: sha512-5p6WTN0DdTGVQk6VjcEju19IgaHudalcfabD7yhDGeA6bcQnmL+CpveLJq/3hvfwd1aof6L386Ougkx6RfyMIQ==}
     peerDependencies:
-      ajv: ^6.9.1
+      ajv: 6.14.0
 
-  ajv@6.12.6:
-    resolution: {integrity: sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==}
+  ajv@6.14.0:
+    resolution: {integrity: sha512-IWrosm/yrn43eiKqkfkHis7QioDleaXQHdDVPKg0FSwwd/DuvyX79TZnFOnYpB7dcsFAMmtFztZuXPDvSePkFw==}
 
   allure-js-commons@3.4.3:
     resolution: {integrity: sha512-2n2uUFVmI7OaKXfkUPq2AcD1ksPR/WXZ9IhmQlMylb8bNpPChn1QPA/W97+RDYawFgvfhnadzIrH9ZWTWKjiNg==}
@@ -9992,8 +9993,8 @@ snapshots:
 
   '@develar/schema-utils@2.6.5':
     dependencies:
-      ajv: 6.12.6
-      ajv-keywords: 3.5.2(ajv@6.12.6)
+      ajv: 6.14.0
+      ajv-keywords: 3.5.2(ajv@6.14.0)
 
   '@electron/asar@3.4.1':
     dependencies:
@@ -10406,7 +10407,7 @@ snapshots:
 
   '@eslint/eslintrc@3.3.3':
     dependencies:
-      ajv: 6.12.6
+      ajv: 6.14.0
       debug: 4.4.3(supports-color@8.1.1)
       espree: 10.4.0
       globals: 14.0.0
@@ -13515,11 +13516,11 @@ snapshots:
       clean-stack: 4.2.0
       indent-string: 5.0.0
 
-  ajv-keywords@3.5.2(ajv@6.12.6):
+  ajv-keywords@3.5.2(ajv@6.14.0):
     dependencies:
-      ajv: 6.12.6
+      ajv: 6.14.0
 
-  ajv@6.12.6:
+  ajv@6.14.0:
     dependencies:
       fast-deep-equal: 3.1.3
       fast-json-stable-stringify: 2.1.0
@@ -14602,7 +14603,7 @@ snapshots:
     dependencies:
       '@types/plist': 3.0.5
       '@types/verror': 1.10.11
-      ajv: 6.12.6
+      ajv: 6.14.0
       crc: 3.8.0
       iconv-corefoundation: 1.1.7
       plist: 3.1.0
@@ -15053,7 +15054,7 @@ snapshots:
       '@humanwhocodes/module-importer': 1.0.1
       '@humanwhocodes/retry': 0.4.3
       '@types/estree': 1.0.8
-      ajv: 6.12.6
+      ajv: 6.14.0
       chalk: 4.1.2
       cross-spawn: 7.0.6
       debug: 4.4.3(supports-color@8.1.1)

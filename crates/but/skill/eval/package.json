@@ -23,6 +23,7 @@
   },
   "pnpm": {
     "overrides": {
+      "ajv@8.17.1": "8.18.0",
       "fast-xml-parser": "5.3.7",
       "tar": "7.5.8"
     },
