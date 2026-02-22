@@ -13,7 +13,7 @@ const DEFAULT_HELP_MESSAGE: &str = "Space to select, enter to submit";
 /// Prompt that allows to select multiple options from the given list.
 /// Supports filtering and moving the selection with arrow keys.
 ///
-/// ```rust
+/// ```rust,no_run
 /// use cli_prompts::{
 ///     prompts::{Multiselect, AbortReason},
 ///     DisplayPrompt,

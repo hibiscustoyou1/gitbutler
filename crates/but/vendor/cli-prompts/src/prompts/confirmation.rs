@@ -7,7 +7,7 @@ use super::Prompt;
 /// Pressing 'Enter' without any previous input will trigger the default ansewer, which is
 /// configurable
 ///
-/// ```rust
+/// ```rust,no_run
 /// use cli_prompts::{
 ///     prompts::{Confirmation, AbortReason},
 ///     style::{ConfirmationStyle, Formatting},

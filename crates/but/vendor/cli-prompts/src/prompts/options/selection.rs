@@ -12,7 +12,7 @@ const DEFAULT_OPTIONS_COUNT: u16 = 5;
 /// Prompt that allows to select one option from the given list.
 /// Supports filtering and moving the selection with arrow keys.
 ///
-/// ```rust
+/// ```rust,no_run
 /// use cli_prompts::{
 ///      prompts::{Selection, AbortReason},
 ///      DisplayPrompt,
