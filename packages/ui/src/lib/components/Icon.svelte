@@ -65,10 +65,17 @@
 	style="--spinner-radius: {spinnerRadius}; --custom-icon-color: {getGenericColors()};"
 >
 	{#if name === 'spinner'}
-		<g class:spinner={name === 'spinner'}>
-			<circle class="spinner-path" cx="8" cy="8" r={spinnerRadius} fill="none" />
+		<g class="spinner">
 			<circle
 				class="spinner-back-path"
+				cx="8"
+				cy="8"
+				r={spinnerRadius}
+				fill="none"
+				vector-effect="non-scaling-stroke"
+			/>
+			<circle
+				class="spinner-path"
 				cx="8"
 				cy="8"
 				r={spinnerRadius}
@@ -91,7 +98,8 @@
 
 	.spinner {
 		transform-origin: center;
-		animation: spinning 1s infinite linear;
+		animation: spinning 0.75s infinite linear;
+		will-change: transform;
 	}
 	@keyframes spinning {
 		100% {
@@ -100,27 +108,14 @@
 	}
 	.spinner-path {
 		stroke: currentColor;
+		stroke-dasharray: calc(var(--spinner-radius) * 3.5), calc(var(--spinner-radius) * 6.3);
+		stroke-linecap: round;
 		stroke-width: var(--spinner-stroke-width);
-		animation: spinning-path 2s infinite ease-in-out;
 	}
 
 	.spinner-back-path {
 		stroke: currentColor;
 		stroke-width: var(--spinner-stroke-width);
-		opacity: 0.3;
-	}
-	@keyframes spinning-path {
-		0% {
-			stroke-dasharray: 1, 120;
-			stroke-dashoffset: 0;
-		}
-		60% {
-			stroke-dasharray: 60, 120;
-			stroke-dashoffset: -10;
-		}
-		100% {
-			stroke-dasharray: 60, 120;
-			stroke-dashoffset: calc(-1 * var(--spinner-radius) * 5.5);
-		}
+		opacity: 0.2;
 	}
 </style>
