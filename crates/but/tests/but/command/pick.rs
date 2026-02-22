@@ -43,7 +43,9 @@ fn pick_by_full_sha() -> anyhow::Result<()> {
     env.setup_metadata(&["applied-branch"])?;
 
     let sha = get_commit_sha(&env, "refs/gitbutler/pickable-first");
-    env.but(format!("pick {sha} applied-branch")).assert().success();
+    env.but(format!("pick {sha} applied-branch"))
+        .assert()
+        .success();
 
     assert!(branch_has_commit_message(
         &env,
@@ -59,7 +61,9 @@ fn pick_by_short_sha() -> anyhow::Result<()> {
     env.setup_metadata(&["applied-branch"])?;
 
     let short_sha = &get_commit_sha(&env, "refs/gitbutler/pickable-first")[..7];
-    env.but(format!("pick {short_sha} applied-branch")).assert().success();
+    env.but(format!("pick {short_sha} applied-branch"))
+        .assert()
+        .success();
 
     assert!(branch_has_commit_message(
         &env,
@@ -75,7 +79,9 @@ fn pick_by_branch_name() -> anyhow::Result<()> {
     env.setup_metadata(&["applied-branch"])?;
 
     // When picking by branch name in non-interactive mode, picks the head commit
-    env.but("pick unapplied-branch applied-branch").assert().success();
+    env.but("pick unapplied-branch applied-branch")
+        .assert()
+        .success();
 
     assert!(branch_has_commit_message(
         &env,
@@ -106,7 +112,9 @@ fn pick_target_is_case_insensitive() -> anyhow::Result<()> {
     env.setup_metadata(&["applied-branch"])?;
 
     let sha = get_commit_sha(&env, "refs/gitbutler/pickable-first");
-    env.but(format!("pick {sha} APPLIED-BRANCH")).assert().success();
+    env.but(format!("pick {sha} APPLIED-BRANCH"))
+        .assert()
+        .success();
 
     Ok(())
 }

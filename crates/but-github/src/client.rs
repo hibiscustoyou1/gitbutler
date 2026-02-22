@@ -13,15 +13,26 @@ pub struct GitHubClient {
 impl GitHubClient {
     pub fn new(access_token: &Sensitive<String>) -> Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("gb-github-integration"));
-        headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
-        headers.insert("X-GitHub-Api-Version", HeaderValue::from_static("2022-11-28"));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static("gb-github-integration"),
+        );
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/vnd.github+json"),
+        );
+        headers.insert(
+            "X-GitHub-Api-Version",
+            HeaderValue::from_static("2022-11-28"),
+        );
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", access_token.0))?,
         );
 
-        let client = reqwest::Client::builder().default_headers(headers).build()?;
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()?;
 
         Ok(Self {
             client,
@@ -45,15 +56,26 @@ impl GitHubClient {
 
     pub fn new_with_host_override(access_token: &Sensitive<String>, host: &str) -> Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("gb-github-integration"));
-        headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
-        headers.insert("X-GitHub-Api-Version", HeaderValue::from_static("2022-11-28"));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static("gb-github-integration"),
+        );
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/vnd.github+json"),
+        );
+        headers.insert(
+            "X-GitHub-Api-Version",
+            HeaderValue::from_static("2022-11-28"),
+        );
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", access_token.0))?,
         );
 
-        let client = reqwest::Client::builder().default_headers(headers).build()?;
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()?;
 
         Ok(Self {
             client,
@@ -87,7 +109,12 @@ impl GitHubClient {
         })
     }
 
-    pub async fn list_checks_for_ref(&self, owner: &str, repo: &str, reference: &str) -> Result<Vec<CheckRun>> {
+    pub async fn list_checks_for_ref(
+        &self,
+        owner: &str,
+        repo: &str,
+        reference: &str,
+    ) -> Result<Vec<CheckRun>> {
         #[derive(Deserialize)]
         struct CheckRunsResponse {
             check_runs: Vec<CheckRun>,
@@ -98,7 +125,12 @@ impl GitHubClient {
             self.base_url, owner, repo, reference
         );
 
-        let response = self.client.get(&url).query(&[("filter", "latest")]).send().await?;
+        let response = self
+            .client
+            .get(&url)
+            .query(&[("filter", "latest")])
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             bail!("Failed to list checks for ref: {}", response.status());
@@ -131,7 +163,12 @@ impl GitHubClient {
         Ok(pulls.into_iter().map(Into::into).collect())
     }
 
-    pub async fn list_pulls_for_base(&self, owner: &str, repo: &str, base: &str) -> Result<Vec<PullRequest>> {
+    pub async fn list_pulls_for_base(
+        &self,
+        owner: &str,
+        repo: &str,
+        base: &str,
+    ) -> Result<Vec<PullRequest>> {
         let url = format!("{}/repos/{}/{}/pulls", self.base_url, owner, repo);
 
         let response = self
@@ -155,7 +192,10 @@ impl GitHubClient {
         Ok(pulls.into_iter().map(Into::into).collect())
     }
 
-    pub async fn create_pull_request(&self, params: &CreatePullRequestParams<'_>) -> Result<PullRequest> {
+    pub async fn create_pull_request(
+        &self,
+        params: &CreatePullRequestParams<'_>,
+    ) -> Result<PullRequest> {
         #[derive(Serialize)]
         struct CreatePullRequestBody<'a> {
             title: &'a str,
@@ -165,7 +205,10 @@ impl GitHubClient {
             draft: bool,
         }
 
-        let url = format!("{}/repos/{}/{}/pulls", self.base_url, params.owner, params.repo);
+        let url = format!(
+            "{}/repos/{}/{}/pulls",
+            self.base_url, params.owner, params.repo
+        );
 
         let body = CreatePullRequestBody {
             title: params.title,
@@ -185,8 +228,16 @@ impl GitHubClient {
         Ok(pr.into())
     }
 
-    pub async fn get_pull_request(&self, owner: &str, repo: &str, pr_number: i64) -> Result<PullRequest> {
-        let url = format!("{}/repos/{}/{}/pulls/{}", self.base_url, owner, repo, pr_number);
+    pub async fn get_pull_request(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: i64,
+    ) -> Result<PullRequest> {
+        let url = format!(
+            "{}/repos/{}/{}/pulls/{}",
+            self.base_url, owner, repo, pr_number
+        );
 
         let response = self.client.get(&url).send().await?;
 
@@ -198,7 +249,10 @@ impl GitHubClient {
         Ok(pr.into())
     }
 
-    pub async fn update_pull_request(&self, params: &UpdatePullRequestParams<'_>) -> Result<PullRequest> {
+    pub async fn update_pull_request(
+        &self,
+        params: &UpdatePullRequestParams<'_>,
+    ) -> Result<PullRequest> {
         #[derive(Serialize)]
         struct UpdatePullRequestBody<'a> {
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -374,7 +428,10 @@ impl From<GitHubApiUser> for GitHubUser {
             name: user.name,
             email: user.email,
             avatar_url: user.avatar_url,
-            is_bot: user.user_type.map(|user_type| user_type == "bot").unwrap_or(false),
+            is_bot: user
+                .user_type
+                .map(|user_type| user_type == "bot")
+                .unwrap_or(false),
         }
     }
 }
@@ -496,7 +553,9 @@ pub(crate) fn resolve_account(
 ) -> Result<crate::GithubAccountIdentifier, anyhow::Error> {
     let known_accounts = crate::token::list_known_github_accounts(storage)?;
     let Some(default_account) = known_accounts.first() else {
-        bail!("No authenticated GitHub users found.\nRun 'but config forge auth' to authenticate with GitHub.");
+        bail!(
+            "No authenticated GitHub users found.\nRun 'but config forge auth' to authenticate with GitHub."
+        );
     };
     let account = if let Some(account) = preferred_account {
         if known_accounts.contains(account) {

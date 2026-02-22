@@ -120,7 +120,9 @@ impl CiChecksHandle<'_> {
     /// Lists all unique references that have CI checks in the database.
     // TODO: make this return `gix::refs::FullName`.
     pub fn list_all_references(&self) -> rusqlite::Result<Vec<String>> {
-        let mut stmt = self.conn.prepare("SELECT DISTINCT reference FROM ci_checks")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT reference FROM ci_checks")?;
 
         let results = stmt.query_map([], |row| row.get(0))?;
 

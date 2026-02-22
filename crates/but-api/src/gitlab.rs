@@ -40,7 +40,10 @@ pub async fn store_gitlab_pat(access_token: Sensitive<String>) -> Result<AuthSta
 /// * `Err(_)` - If the token is invalid, host is unreachable, or storage fails
 #[but_api(json::AuthStatusResponseSensitive)]
 #[instrument(err(Debug))]
-pub async fn store_gitlab_selfhosted_pat(access_token: Sensitive<String>, host: String) -> Result<AuthStatusResponse> {
+pub async fn store_gitlab_selfhosted_pat(
+    access_token: Sensitive<String>,
+    host: String,
+) -> Result<AuthStatusResponse> {
     let storage = but_forge_storage::Controller::from_path(but_path::app_data_dir()?);
     but_gitlab::store_selfhosted_pat(&host, &access_token, &storage).await
 }
@@ -97,7 +100,9 @@ pub fn clear_all_gitlab_tokens() -> Result<()> {
 /// * `Err(_)` - If the API request fails or credentials are invalid
 #[but_api(json::AuthenticatedUserSensitive)]
 #[instrument(err(Debug))]
-pub async fn get_gl_user(account: but_gitlab::GitlabAccountIdentifier) -> Result<Option<AuthenticatedUser>> {
+pub async fn get_gl_user(
+    account: but_gitlab::GitlabAccountIdentifier,
+) -> Result<Option<AuthenticatedUser>> {
     let storage = but_forge_storage::Controller::from_path(but_path::app_data_dir()?);
     but_gitlab::get_gl_user(&account, &storage).await
 }

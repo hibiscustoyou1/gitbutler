@@ -14,8 +14,8 @@ use gitbutler_branch_actions::update_workspace_commit;
 use gitbutler_cherry_pick::{ConflictedTreeKey, RepositoryExt as _};
 use gitbutler_commit::commit_ext::{CommitExt, CommitMessageBstr as _};
 use gitbutler_operating_modes::{
-    EDIT_BRANCH_REF, EditModeMetadata, OperatingMode, WORKSPACE_BRANCH_REF, operating_mode, read_edit_mode_metadata,
-    write_edit_mode_metadata,
+    EDIT_BRANCH_REF, EditModeMetadata, OperatingMode, WORKSPACE_BRANCH_REF, operating_mode,
+    read_edit_mode_metadata, write_edit_mode_metadata,
 };
 use gitbutler_repo::{RepositoryExt as _, SignaturePurpose, signature};
 use gitbutler_stack::VirtualBranchesHandle;
@@ -142,7 +142,10 @@ fn commit_uncommited_changes(ctx: &Context) -> Result<()> {
 
 fn get_uncommited_changes(ctx: &Context) -> Result<git2::Oid> {
     let repo = &*ctx.git2_repo.get()?;
-    let uncommited_changes = repo.find_reference(UNCOMMITTED_CHANGES_REF)?.peel_to_tree()?.id();
+    let uncommited_changes = repo
+        .find_reference(UNCOMMITTED_CHANGES_REF)?
+        .peel_to_tree()?
+        .id();
     Ok(uncommited_changes)
 }
 
@@ -193,7 +196,11 @@ pub(crate) fn enter_edit_mode(
     Ok(edit_mode_metadata)
 }
 
-pub(crate) fn abort_and_return_to_workspace(ctx: &Context, force: bool, perm: &mut RepoExclusive) -> Result<()> {
+pub(crate) fn abort_and_return_to_workspace(
+    ctx: &Context,
+    force: bool,
+    perm: &mut RepoExclusive,
+) -> Result<()> {
     if !force && !changes_from_initial(ctx, perm.read_permission())?.is_empty() {
         bail!(
             "The working tree differs from the original commit. A forced abort is necessary.\nIf you are seeing this message, please report it as a bug. The UI should have prevented this line getting hit."
@@ -367,7 +374,9 @@ pub(crate) fn starting_index_state(
     let tree_changes = but_core::diff::tree_changes(
         &gix_repo,
         Some(commit_parent_tree.id().to_gix()),
-        repo.find_real_tree(&commit, ConflictedTreeKey::Theirs)?.id().to_gix(),
+        repo.find_real_tree(&commit, ConflictedTreeKey::Theirs)?
+            .id()
+            .to_gix(),
     )?;
 
     let outcome = tree_changes
@@ -385,7 +394,10 @@ pub(crate) fn changes_from_initial(ctx: &Context, _perm: &RepoShared) -> Result<
 
     let repo = &*ctx.git2_repo.get()?;
     let commit = repo.find_commit(metadata.commit_oid)?;
-    let base = repo.find_real_tree(&commit, Default::default())?.id().to_gix();
+    let base = repo
+        .find_real_tree(&commit, Default::default())?
+        .id()
+        .to_gix();
     let head = repo.create_wd_tree(0)?.id().to_gix();
 
     let gix_repo = ctx.repo.get()?;

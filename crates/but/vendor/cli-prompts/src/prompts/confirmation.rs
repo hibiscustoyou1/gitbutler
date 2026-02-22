@@ -1,6 +1,5 @@
-use crate::{engine::CommandBuffer, input::Key, prompts::EventOutcome, style::ConfirmationStyle};
-
 use super::Prompt;
+use crate::{engine::CommandBuffer, input::Key, prompts::EventOutcome, style::ConfirmationStyle};
 
 /// A prompt that expects a "yes or no" answer.
 /// You can press 'y' or 'n' for positive or negative result.

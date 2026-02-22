@@ -14,7 +14,10 @@ pub(crate) const M: &[M<'static>] = &[
 	PRIMARY KEY(`path`, `hunk_header`)
 );",
     ),
-    M::up(20250603111503, "ALTER TABLE `hunk_assignments` ADD COLUMN `id` TEXT;"),
+    M::up(
+        20250603111503,
+        "ALTER TABLE `hunk_assignments` ADD COLUMN `id` TEXT;",
+    ),
     M::up(
         20250607113323,
         "ALTER TABLE `hunk_assignments` DROP COLUMN `hunk_locks`;",

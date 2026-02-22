@@ -15,14 +15,19 @@ pub struct GitLabClient {
 impl GitLabClient {
     pub fn new(access_token: &Sensitive<String>) -> Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("gb-gitlab-integration"));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static("gb-gitlab-integration"),
+        );
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", access_token.0))?,
         );
 
-        let client = reqwest::Client::builder().default_headers(headers).build()?;
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()?;
 
         Ok(Self {
             client,
@@ -46,14 +51,19 @@ impl GitLabClient {
 
     pub fn new_with_host_override(access_token: &Sensitive<String>, host: &str) -> Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("gb-gitlab-integration"));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static("gb-gitlab-integration"),
+        );
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", access_token.0))?,
         );
 
-        let client = reqwest::Client::builder().default_headers(headers).build()?;
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()?;
 
         let base_url = if host.ends_with("/api/v4") {
             host.to_string()
@@ -131,14 +141,20 @@ impl GitLabClient {
             .await?;
 
         if !response.status().is_success() {
-            bail!("Failed to list merge requests for target branch: {}", response.status());
+            bail!(
+                "Failed to list merge requests for target branch: {}",
+                response.status()
+            );
         }
 
         let mrs: Vec<GitLabMergeRequest> = response.json().await?;
         Ok(mrs.into_iter().map(Into::into).collect())
     }
 
-    pub async fn create_merge_request(&self, params: &CreateMergeRequestParams<'_>) -> Result<MergeRequest> {
+    pub async fn create_merge_request(
+        &self,
+        params: &CreateMergeRequestParams<'_>,
+    ) -> Result<MergeRequest> {
         #[derive(Serialize)]
         struct CreateMergeRequestBody<'a> {
             title: &'a str,
@@ -149,7 +165,10 @@ impl GitLabClient {
             target_project_id: Option<i64>,
         }
 
-        let url = format!("{}/projects/{}/merge_requests", self.base_url, params.project_id);
+        let url = format!(
+            "{}/projects/{}/merge_requests",
+            self.base_url, params.project_id
+        );
 
         let body = CreateMergeRequestBody {
             title: params.title,
@@ -171,8 +190,15 @@ impl GitLabClient {
         Ok(mr.into())
     }
 
-    pub async fn get_merge_request(&self, project_id: GitLabProjectId, mr_iid: i64) -> Result<MergeRequest> {
-        let url = format!("{}/projects/{}/merge_requests/{}", self.base_url, project_id, mr_iid);
+    pub async fn get_merge_request(
+        &self,
+        project_id: GitLabProjectId,
+        mr_iid: i64,
+    ) -> Result<MergeRequest> {
+        let url = format!(
+            "{}/projects/{}/merge_requests/{}",
+            self.base_url, project_id, mr_iid
+        );
 
         let response = self.client.get(&url).send().await?;
 
@@ -196,7 +222,9 @@ impl GitLabClient {
             self.base_url, params.project_id, params.mr_iid
         );
 
-        let body = MergeMergeRequestBody { squash: params.squash };
+        let body = MergeMergeRequestBody {
+            squash: params.squash,
+        };
 
         let response = self.client.put(&url).json(&body).send().await?;
 
@@ -354,7 +382,9 @@ pub(crate) fn resolve_account(
 ) -> Result<crate::GitlabAccountIdentifier, anyhow::Error> {
     let known_accounts = crate::token::list_known_gitlab_accounts(storage)?;
     let Some(default_account) = known_accounts.first() else {
-        bail!("No authenticated GitLab users found.\nRun 'but config forge auth' to authenticate with GitLab.");
+        bail!(
+            "No authenticated GitLab users found.\nRun 'but config forge auth' to authenticate with GitLab."
+        );
     };
     let account = if let Some(account) = preferred_account {
         if known_accounts.contains(account) {

@@ -1,11 +1,10 @@
+use super::multioption_prompt::MultiOptionPrompt;
 use crate::{
     engine::CommandBuffer,
     input::Key,
     prompts::{options::Options, AbortReason, EventOutcome, Prompt},
     style::SelectionStyle,
 };
-
-use super::multioption_prompt::MultiOptionPrompt;
 
 const DEFAULT_OPTIONS_COUNT: u16 = 5;
 

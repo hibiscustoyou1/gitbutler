@@ -64,13 +64,18 @@ pub fn list(
     };
 
     let branch_review_map = if review {
-        crate::command::legacy::forge::review::get_review_map(ctx, Some(but_forge::CacheConfig::CacheOnly))?
+        crate::command::legacy::forge::review::get_review_map(
+            ctx,
+            Some(but_forge::CacheConfig::CacheOnly),
+        )?
     } else {
         HashMap::new()
     };
 
-    let mut applied_stacks =
-        but_api::legacy::workspace::stacks(ctx, Some(but_workspace::legacy::StacksFilter::InWorkspace))?;
+    let mut applied_stacks = but_api::legacy::workspace::stacks(
+        ctx,
+        Some(but_workspace::legacy::StacksFilter::InWorkspace),
+    )?;
 
     // Apply name filter to applied stacks if provided
     if let Some(ref filter_str) = filter {
@@ -111,12 +116,24 @@ pub fn list(
     // Apply name filter if provided
     if let Some(ref filter_str) = filter {
         let filter_lower = filter_str.to_lowercase();
-        branches.retain(|branch| branch.name.to_string().to_lowercase().contains(&filter_lower));
+        branches.retain(|branch| {
+            branch
+                .name
+                .to_string()
+                .to_lowercase()
+                .contains(&filter_lower)
+        });
     }
 
     // Filter out dependabot branches unless --all is specified
     if !all {
-        branches.retain(|branch| !branch.name.to_string().to_lowercase().contains("dependabot"));
+        branches.retain(|branch| {
+            !branch
+                .name
+                .to_string()
+                .to_lowercase()
+                .contains("dependabot")
+        });
     }
 
     // Sort all branches by last commit date (most recent first)
@@ -144,7 +161,11 @@ pub fn list(
 
     // Check merge status if requested
     let merge_status_map: Option<HashMap<String, bool>> = if check_merge {
-        Some(check_branches_merge_cleanly(ctx, &applied_stacks, &branches_to_show)?)
+        Some(check_branches_merge_cleanly(
+            ctx,
+            &applied_stacks,
+            &branches_to_show,
+        )?)
     } else {
         None
     };
@@ -214,7 +235,10 @@ pub fn list(
         }
 
         if more_count > 0 {
-            writeln!(out, "\n... and {more_count} more branches (use --all to show all)")?;
+            writeln!(
+                out,
+                "\n... and {more_count} more branches (use --all to show all)"
+            )?;
         }
     }
     Ok(())
@@ -244,8 +268,10 @@ fn output_json(
                 .iter()
                 .map(|head| {
                     let reviews = get_reviews_json(&head.name.to_string(), branch_review_map);
-                    let commits_ahead = commits_ahead_map.and_then(|map| map.get(&head.name.to_string()).copied());
-                    let merges_cleanly = merge_status_map.and_then(|map| map.get(&head.name.to_string()).copied());
+                    let commits_ahead =
+                        commits_ahead_map.and_then(|map| map.get(&head.name.to_string()).copied());
+                    let merges_cleanly =
+                        merge_status_map.and_then(|map| map.get(&head.name.to_string()).copied());
 
                     // Get commit information
                     let (last_commit_at, last_author) = match repo.find_commit(head.tip.to_git2()) {
@@ -289,8 +315,10 @@ fn output_json(
         .iter()
         .map(|branch| {
             let reviews = get_reviews_json(&branch.name.to_string(), branch_review_map);
-            let commits_ahead = commits_ahead_map.and_then(|map| map.get(&branch.name.to_string()).copied());
-            let merges_cleanly = merge_status_map.and_then(|map| map.get(&branch.name.to_string()).copied());
+            let commits_ahead =
+                commits_ahead_map.and_then(|map| map.get(&branch.name.to_string()).copied());
+            let merges_cleanly =
+                merge_status_map.and_then(|map| map.get(&branch.name.to_string()).copied());
             BranchOutput {
                 name: branch.name.to_string(),
                 reviews,
@@ -309,7 +337,11 @@ fn output_json(
     let output = BranchListOutput {
         applied_stacks: applied_stacks_output,
         branches: branches_output,
-        more_branches: if more_count > 0 { Some(more_count) } else { None },
+        more_branches: if more_count > 0 {
+            Some(more_count)
+        } else {
+            None
+        },
     };
 
     out.write_value(output)?;
@@ -349,7 +381,11 @@ fn check_branches_merge_cleanly(
     let target = stack.get_default_target()?;
 
     // Try to find the remote tracking branch (e.g., refs/remotes/origin/master)
-    let target_ref_name = format!("refs/remotes/{}/{}", target.branch.remote(), target.branch.branch());
+    let target_ref_name = format!(
+        "refs/remotes/{}/{}",
+        target.branch.remote(),
+        target.branch.branch()
+    );
     let target_commit = match repo.find_reference(&target_ref_name) {
         Ok(reference) => {
             let target_oid = reference.id();
@@ -445,7 +481,11 @@ fn calculate_commits_ahead(
     let target = stack.get_default_target()?;
 
     // Try to find the remote tracking branch (e.g., refs/remotes/origin/master)
-    let target_ref_name = format!("refs/remotes/{}/{}", target.branch.remote(), target.branch.branch());
+    let target_ref_name = format!(
+        "refs/remotes/{}/{}",
+        target.branch.remote(),
+        target.branch.branch()
+    );
     let target_oid = match repo.find_reference(&target_ref_name) {
         Ok(mut reference) => reference.peel_to_commit()?.id,
         Err(_) => {
@@ -466,7 +506,12 @@ fn calculate_commits_ahead(
         };
 
         // Walk from branch head to merge base
-        let traversal = match branch_oid.attach(&repo).ancestors().with_hidden(Some(merge_base)).all() {
+        let traversal = match branch_oid
+            .attach(&repo)
+            .ancestors()
+            .with_hidden(Some(merge_base))
+            .all()
+        {
             Ok(t) => t,
             Err(_) => continue,
         };
@@ -481,7 +526,10 @@ fn calculate_commits_ahead(
 fn format_date_for_display(timestamp_ms: u128) -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
 
     // Calculate days ago
     let age_ms = now.saturating_sub(timestamp_ms);
@@ -593,7 +641,8 @@ fn print_applied_branches_table(
             };
 
             // Get PR/review info
-            let reviews_str = if let Some(reviews) = branch_review_map.get(&branch.name.to_string()) {
+            let reviews_str = if let Some(reviews) = branch_review_map.get(&branch.name.to_string())
+            {
                 let review_numbers = reviews
                     .iter()
                     .map(|r| format!("{}{}", r.unit_symbol, r.number))

@@ -134,9 +134,10 @@ impl Subcommands {
                 Some(forge::pr::Subcommands::Template { .. }) => PrTemplate,
             },
             #[cfg(feature = "legacy")]
-            Subcommands::Actions(_) | Subcommands::Mcp { .. } | Subcommands::Setup { .. } | Subcommands::Teardown => {
-                Unknown
-            }
+            Subcommands::Actions(_)
+            | Subcommands::Mcp { .. }
+            | Subcommands::Setup { .. }
+            | Subcommands::Teardown => Unknown,
             Subcommands::Config(config::Platform { cmd }) => match cmd {
                 Some(config::Subcommands::Forge {
                     cmd: Some(config::ForgeSubcommand::Auth),
@@ -199,7 +200,9 @@ pub struct Props {
 
 impl Props {
     pub fn new() -> Self {
-        Props { values: HashMap::new() }
+        Props {
+            values: HashMap::new(),
+        }
     }
 
     pub fn from_result<E, T, R>(start: std::time::Instant, result: R) -> Props
@@ -288,7 +291,11 @@ impl BackgroundMetrics {
         // Only create client and sender if metrics are permitted
         let client = posthog_client(app_settings.clone());
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        let sender = if metrics_permitted { Some(sender) } else { None };
+        let sender = if metrics_permitted {
+            Some(sender)
+        } else {
+            None
+        };
         let metrics = BackgroundMetrics { sender };
 
         if let Some(client_future) = client {
