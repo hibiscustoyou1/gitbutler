@@ -183,6 +183,7 @@ impl ServerHandler for Mcp {
                 name: "GitButler MCP Server".into(),
                 title: None,
                 version: "1.0.0".into(),
+                description: None,
                 icons: None,
                 website_url: Some("https://gitbutler.com".into()),
             },

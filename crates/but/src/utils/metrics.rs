@@ -364,7 +364,7 @@ fn posthog_client(app_settings: AppSettings) -> Option<impl Future<Output = post
     {
         let options = posthog_rs::ClientOptionsBuilder::default()
             .api_key(api_key.to_string())
-            .api_endpoint("https://eu.i.posthog.com/i/v0/e/".to_string())
+            .host("https://eu.i.posthog.com".to_string())
             .build()
             .ok()?;
         Some(posthog_rs::client(options))
