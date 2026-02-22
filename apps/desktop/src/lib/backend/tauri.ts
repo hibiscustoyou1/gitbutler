@@ -4,6 +4,7 @@ import { invoke as invokeTauri } from '@tauri-apps/api/core';
 import { listen as listenTauri } from '@tauri-apps/api/event';
 import { documentDir as documentDirTauri } from '@tauri-apps/api/path';
 import { join as joinPathTauri } from '@tauri-apps/api/path';
+import { getCurrentWebview as getCurrentWebviewTauri } from '@tauri-apps/api/webview';
 import { getCurrentWindow, Window } from '@tauri-apps/api/window';
 import {
 	writeText as tauriWriteText,
@@ -62,6 +63,7 @@ export default class Tauri implements IBackend {
 	getAppInfo = tauriGetAppInfo;
 	readTextFromClipboard = tauriReadText;
 	writeTextToClipboard = tauriWriteText;
+	getCurrentWebView = getCurrentWebviewTauri;
 
 	async filePicker<T extends OpenDialogOptions>(options?: T) {
 		return await filePickerTauri<T>(options);

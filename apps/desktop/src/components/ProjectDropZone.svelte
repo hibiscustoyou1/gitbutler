@@ -1,13 +1,14 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { BACKEND } from '$lib/backend';
 	import { showError } from '$lib/notifications/toasts';
 	import { handleAddProjectOutcome } from '$lib/project/project';
 	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
 	import { projectPath } from '$lib/routes/routes.svelte';
 	import { inject } from '@gitbutler/core/context';
-	import { getCurrentWebview } from '@tauri-apps/api/webview';
 
 	const projectsService = inject(PROJECTS_SERVICE);
+	const backend = inject(BACKEND);
 
 	let isDraggingOver = $state(false);
 	let isProcessing = $state(false);
@@ -37,23 +38,24 @@
 	}
 
 	$effect(() => {
-		const webview = getCurrentWebview();
+		const webview = backend.getCurrentWebView();
+		if (webview) {
+			const unlistenPromise = webview.onDragDropEvent((event) => {
+				const { type } = event.payload;
 
-		const unlistenPromise = webview.onDragDropEvent((event) => {
-			const { type } = event.payload;
+				if (type === 'enter') {
+					isDraggingOver = true;
+				} else if (type === 'leave') {
+					isDraggingOver = false;
+				} else if (type === 'drop') {
+					handleDrop(event.payload.paths);
+				}
+			});
 
-			if (type === 'enter') {
-				isDraggingOver = true;
-			} else if (type === 'leave') {
-				isDraggingOver = false;
-			} else if (type === 'drop') {
-				handleDrop(event.payload.paths);
-			}
-		});
-
-		return () => {
-			unlistenPromise.then((unlisten) => unlisten());
-		};
+			return () => {
+				unlistenPromise.then((unlisten) => unlisten());
+			};
+		}
 	});
 </script>
 
