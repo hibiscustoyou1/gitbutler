@@ -1,5 +1,4 @@
 import { ghQuery } from '$lib/forge/github/ghQuery';
-import { GitHubClient } from '$lib/forge/github/githubClient';
 import {
 	ghResponseToInstance,
 	parseGitHubDetailedPullRequest,
@@ -248,49 +247,41 @@ function injectEndpoints(api: GitHubApi) {
 			}),
 			setDraft: build.mutation<void, { number: number; draft: boolean }>({
 				queryFn: async ({ number, draft }, api) => {
-					try {
-						// First, get the PR's node_id needed for GraphQL mutations
-						const prResult = await ghQuery({
-							domain: 'pulls',
-							action: 'get',
-							parameters: { pull_number: number },
-							extra: api.extra
-						});
-						if (prResult.error) {
-							return { error: prResult.error };
-						}
-						const nodeId = prResult.data.node_id;
-
-						// GitHub requires GraphQL to toggle draft status
-						const extra = api.extra as { gitHubClient: GitHubClient };
-						const octokit = extra.gitHubClient.octokit;
-
-						if (draft) {
-							await octokit.graphql(
-								`mutation($pullRequestId: ID!) {
-									convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
-										pullRequest { id }
-									}
-								}`,
-								{ pullRequestId: nodeId }
-							);
-						} else {
-							await octokit.graphql(
-								`mutation($pullRequestId: ID!) {
-									markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
-										pullRequest { id }
-									}
-								}`,
-								{ pullRequestId: nodeId }
-							);
-						}
-						return { data: undefined };
-					} catch (err: unknown) {
-						const message = err instanceof Error ? err.message : String(err);
-						return {
-							error: { name: 'GitHub API error: setDraft', message }
-						};
+					// First, get the PR's node_id needed for GraphQL mutations
+					const prResult = await ghQuery({
+						domain: 'pulls',
+						action: 'get',
+						parameters: { pull_number: number },
+						extra: api.extra
+					});
+					if (prResult.error) {
+						return { error: prResult.error };
 					}
+					const nodeId = prResult.data.node_id;
+
+					// GitHub requires GraphQL to toggle draft status.
+					// Use ghQuery's function form to access the authenticated octokit client.
+					const mutation = draft
+						? `mutation($pullRequestId: ID!) {
+								convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
+									pullRequest { id }
+								}
+							}`
+						: `mutation($pullRequestId: ID!) {
+								markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+									pullRequest { id }
+								}
+							}`;
+
+					const result = await ghQuery(async (octokit) => {
+						await octokit.graphql(mutation, { pullRequestId: nodeId });
+						return { data: undefined as never };
+					}, api.extra);
+
+					if (result.error) {
+						return { error: result.error };
+					}
+					return { data: undefined };
 				},
 				invalidatesTags: [invalidatesList(ReduxTag.PullRequests)]
 			})
