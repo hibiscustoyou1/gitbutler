@@ -88,7 +88,7 @@ gitbutler-repo = { workspace = true, optional = true }
 
 git2.workspace = true
 schemars.workspace = true
-posthog-rs = { version = "0.3.7" }
+posthog-rs = { git = "https://github.com/gitbutlerapp/posthog-rs", rev = "664c9245f79aaedcdd025b9f3c141b62bb866b8e" }
 serde.workspace = true
 shell-words.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "io-std"] }

@@ -10,8 +10,8 @@ use rmcp::{
     RoleServer, ServerHandler, ServiceExt,
     handler::server::{tool::ToolRouter, wrapper::Parameters},
     model::{
-        CallToolResult, GetPromptRequestParam, GetPromptResult, Implementation, ListPromptsResult,
-        PaginatedRequestParam, Prompt, PromptMessage, PromptMessageContent, PromptMessageRole,
+        CallToolResult, GetPromptRequestParams, GetPromptResult, Implementation, ListPromptsResult,
+        PaginatedRequestParams, Prompt, PromptMessage, PromptMessageContent, PromptMessageRole,
         ProtocolVersion, ServerCapabilities, ServerInfo,
     },
     schemars,
@@ -313,6 +313,7 @@ impl ServerHandler for Mcp {
                 name: "GitButler MCP Server".into(),
                 title: None,
                 version: "1.0.0".into(),
+                description: None,
                 icons: None,
                 website_url: Some("https://gitbutler.com".into()),
             },
@@ -322,10 +323,11 @@ impl ServerHandler for Mcp {
 
     async fn list_prompts(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, rmcp::ErrorData> {
         Ok(ListPromptsResult {
+            meta: None,
             next_cursor: None,
             prompts: vec![
                 Prompt::new(
@@ -346,7 +348,7 @@ impl ServerHandler for Mcp {
 
     async fn get_prompt(
         &self,
-        GetPromptRequestParam { name, .. }: GetPromptRequestParam,
+        GetPromptRequestParams { name, .. }: GetPromptRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, rmcp::ErrorData> {
         match name.as_str() {
