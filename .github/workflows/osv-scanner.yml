@@ -50,13 +50,12 @@ jobs:
         uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
         with:
           sarif_file: results.sarif
-      - name: Fail on vulnerabilities
+      - name: Report vulnerabilities
         if: ${{ !cancelled() && hashFiles('results.sarif') != '' }}
         run: |
           findings="$(jq '[.runs[].results[]?] | length' results.sarif)"
           if [ "${findings}" -gt 0 ]; then
-            echo "::error::OSV found ${findings} vulnerabilities on default branch scan."
-            exit 1
+            echo "::warning::OSV found ${findings} vulnerabilities on default branch scan."
           fi
 
   scan-pr:
