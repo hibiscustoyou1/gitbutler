@@ -52,6 +52,7 @@ export function parseGitHubDetailedPullRequest(
 	return {
 		data: {
 			id: data.id,
+			nodeId: data.node_id,
 			number: data.number,
 			author: data.user
 				? {

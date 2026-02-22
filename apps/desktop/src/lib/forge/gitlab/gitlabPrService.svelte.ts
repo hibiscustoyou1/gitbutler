@@ -95,6 +95,10 @@ export class GitLabPrService implements ForgePrService {
 	) {
 		await this.api.endpoints.updatePr.mutate({ number, update });
 	}
+
+	async setDraft(number: number, draft: boolean) {
+		await this.api.endpoints.setDraft.mutate({ number, draft });
+	}
 }
 
 function injectEndpoints(api: GitLabApi) {
@@ -183,6 +187,29 @@ function injectEndpoints(api: GitLabApi) {
 							targetBranch: update.targetBase,
 							description: update.description
 						});
+						return { data: undefined };
+					} catch (e: unknown) {
+						return { error: toSerializable(e) };
+					}
+				},
+				invalidatesTags: [invalidatesList(ReduxTag.GitLabPullRequests)]
+			}),
+			setDraft: build.mutation<void, { number: number; draft: boolean }>({
+				queryFn: async ({ number, draft }, query) => {
+					try {
+						const { api, upstreamProjectId } = gitlab(query.extra);
+						// GitLab uses title prefix to mark drafts
+						const mr = await api.MergeRequests.show(upstreamProjectId, number);
+						let title = mr.title;
+
+						// Remove existing draft prefixes
+						title = title.replace(/^\s*(Draft:\s*|\[Draft\]\s*|\(Draft\)\s*)/i, '');
+
+						if (draft) {
+							title = `Draft: ${title}`;
+						}
+
+						await api.MergeRequests.edit(upstreamProjectId, number, { title });
 						return { data: undefined };
 					} catch (e: unknown) {
 						return { error: toSerializable(e) };

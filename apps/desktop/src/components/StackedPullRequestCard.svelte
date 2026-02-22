@@ -98,15 +98,23 @@
 	{baseIsTargetBranch}
 	poll
 >
-	{#snippet button({ pr, mergeStatus, reopenStatus })}
+	{#snippet button({ pr, mergeStatus, reopenStatus, setDraft })}
 		{#if pr.state === 'open'}
-			<MergeButton
-				wide
-				{projectId}
-				disabled={mergeStatus.disabled}
-				tooltip={mergeStatus.tooltip}
-				onclick={handleMerge}
-			/>
+			{#if pr.draft}
+				<AsyncButton wide kind="outline" action={() => setDraft(false)}
+					>Ready for review</AsyncButton
+				>
+			{:else}
+				<MergeButton
+					wide
+					{projectId}
+					disabled={mergeStatus.disabled}
+					tooltip={mergeStatus.tooltip}
+					isDraft={pr.draft ?? false}
+					onSetDraft={setDraft}
+					onclick={handleMerge}
+				/>
+			{/if}
 		{:else if !pr.merged}
 			<AsyncButton
 				kind="outline"

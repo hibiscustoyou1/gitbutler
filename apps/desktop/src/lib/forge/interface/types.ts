@@ -104,6 +104,7 @@ export interface PullRequestPermissions {
 
 export interface DetailedPullRequest {
 	id: number;
+	nodeId?: string;
 	title: string;
 	author: Author | null;
 	body: string | undefined;

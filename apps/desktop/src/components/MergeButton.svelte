@@ -15,6 +15,8 @@
 		tooltip?: string;
 		style?: ButtonProps['style'];
 		kind?: ButtonProps['kind'];
+		isDraft?: boolean;
+		onSetDraft?: (draft: boolean) => Promise<void>;
 	}
 
 	const {
@@ -24,7 +26,9 @@
 		wide = false,
 		tooltip = '',
 		style = 'gray',
-		kind = 'outline'
+		kind = 'outline',
+		isDraft = false,
+		onSetDraft
 	}: Props = $props();
 
 	const forge = inject(DEFAULT_FORGE_FACTORY);
@@ -91,5 +95,21 @@
 				/>
 			{/each}
 		</ContextMenuSection>
+		{#if onSetDraft}
+			<ContextMenuSection>
+				<ContextMenuItem
+					label={isDraft ? 'Ready for review' : 'Convert to draft'}
+					onclick={async () => {
+						dropDown?.close();
+						loading = true;
+						try {
+							await onSetDraft(!isDraft);
+						} finally {
+							loading = false;
+						}
+					}}
+				/>
+			</ContextMenuSection>
+		{/if}
 	{/snippet}
 </DropdownButton>
