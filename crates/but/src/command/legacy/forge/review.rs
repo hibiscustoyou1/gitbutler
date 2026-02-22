@@ -79,8 +79,10 @@ pub async fn create_review(
     ensure_forge_authentication(ctx).await?;
 
     let review_map = get_review_map(ctx, Some(but_forge::CacheConfig::CacheOnly))?;
-    let applied_stacks =
-        but_api::legacy::workspace::stacks(ctx, Some(but_workspace::legacy::StacksFilter::InWorkspace))?;
+    let applied_stacks = but_api::legacy::workspace::stacks(
+        ctx,
+        Some(but_workspace::legacy::StacksFilter::InWorkspace),
+    )?;
 
     // If branch is specified, resolve it
     let maybe_branch_names = if let Some(branch_id) = branch {
@@ -150,7 +152,8 @@ async fn ensure_forge_authentication(ctx: &mut Context) -> Result<(), anyhow::Er
     })?;
 
     let account_validity =
-        but_forge::check_forge_account_is_valid(preferred_forge_user, &forge_repo_info, &storage).await?;
+        but_forge::check_forge_account_is_valid(preferred_forge_user, &forge_repo_info, &storage)
+            .await?;
 
     let forge_display_name = match forge_repo_info.forge {
         but_forge::ForgeName::Azure => {
@@ -191,7 +194,10 @@ fn get_branches_without_prs(
         for head in &stack_entry.heads {
             let branch_name = &head.name.to_string();
             if !review_map.contains_key(branch_name)
-                || review_map.get(branch_name).map(|v| v.is_empty()).unwrap_or(true)
+                || review_map
+                    .get(branch_name)
+                    .map(|v| v.is_empty())
+                    .unwrap_or(true)
             {
                 // This means that there are no associated reviews that are open, but that doesn't mean that there are
                 // no associated reviews.
@@ -252,7 +258,10 @@ pub async fn handle_multiple_branches_in_workspace(
 
     if selected_branches.is_empty() {
         if let Some(out) = out.for_human() {
-            writeln!(out, "No branches selected for review publication. Aborting.")?;
+            writeln!(
+                out,
+                "No branches selected for review publication. Aborting."
+            )?;
         }
         return Ok(());
     }
@@ -282,7 +291,9 @@ pub async fn handle_multiple_branches_in_workspace(
         .await?;
 
         overall_outcome.published.extend(outcome.published);
-        overall_outcome.already_existing.extend(outcome.already_existing);
+        overall_outcome
+            .already_existing
+            .extend(outcome.already_existing);
     }
 
     if let Some(out) = out.for_json() {
@@ -423,7 +434,9 @@ async fn publish_reviews_for_branch_and_dependents(
 
     let result = but_api::legacy::stack::push_stack(
         ctx,
-        stack_entry.id.context("BUG: Stack entry is missing ID for push")?,
+        stack_entry
+            .id
+            .context("BUG: Stack entry is missing ID for push")?,
         with_force,
         skip_force_push_protection,
         branch_name.to_string(),
@@ -432,7 +445,12 @@ async fn publish_reviews_for_branch_and_dependents(
     )?;
 
     if let Some(out) = out.for_human() {
-        writeln!(out, "  {} Pushed to {}", "✓".green().bold(), result.remote.cyan())?;
+        writeln!(
+            out,
+            "  {} Pushed to {}",
+            "✓".green().bold(),
+            result.remote.cyan()
+        )?;
     }
 
     let mut newly_published = Vec::new();
@@ -453,7 +471,11 @@ async fn publish_reviews_for_branch_and_dependents(
             )?;
         }
 
-        let message_for_head = if head.name == branch_name { message } else { None };
+        let message_for_head = if head.name == branch_name {
+            message
+        } else {
+            None
+        };
         let published_review = publish_review_for_branch(
             ctx,
             stack_entry.id,
@@ -526,7 +548,10 @@ fn display_review_publication_summary(
 }
 
 /// Print information about a newly created PR
-fn print_new_pr_info(review: &but_forge::ForgeReview, out: &mut dyn std::fmt::Write) -> std::fmt::Result {
+fn print_new_pr_info(
+    review: &but_forge::ForgeReview,
+    out: &mut dyn std::fmt::Write,
+) -> std::fmt::Result {
     writeln!(
         out,
         "{} {} {}{}",
@@ -536,8 +561,18 @@ fn print_new_pr_info(review: &but_forge::ForgeReview, out: &mut dyn std::fmt::Wr
         review.number.to_string().cyan().bold()
     )?;
     writeln!(out, "  {} {}", "Title:".dimmed(), review.title.bold())?;
-    writeln!(out, "  {} {}", "Branch:".dimmed(), review.source_branch.green())?;
-    writeln!(out, "  {} {}", "URL:".dimmed(), review.html_url.underline().blue())?;
+    writeln!(
+        out,
+        "  {} {}",
+        "Branch:".dimmed(),
+        review.source_branch.green()
+    )?;
+    writeln!(
+        out,
+        "  {} {}",
+        "URL:".dimmed(),
+        review.html_url.underline().blue()
+    )?;
     if review.draft {
         writeln!(out, "  {}", "Draft only".dimmed())?;
     }
@@ -546,7 +581,10 @@ fn print_new_pr_info(review: &but_forge::ForgeReview, out: &mut dyn std::fmt::Wr
 }
 
 /// Print information about an existing PR
-fn print_existing_pr_info(review: &but_forge::ForgeReview, out: &mut dyn std::fmt::Write) -> std::fmt::Result {
+fn print_existing_pr_info(
+    review: &but_forge::ForgeReview,
+    out: &mut dyn std::fmt::Write,
+) -> std::fmt::Result {
     writeln!(
         out,
         "{} {} {} {}{}",
@@ -556,7 +594,12 @@ fn print_existing_pr_info(review: &but_forge::ForgeReview, out: &mut dyn std::fm
         review.unit_symbol.cyan(),
         review.number.to_string().cyan().bold()
     )?;
-    writeln!(out, "  {} {}", "URL:".dimmed(), review.html_url.underline().blue())?;
+    writeln!(
+        out,
+        "  {} {}",
+        "URL:".dimmed(),
+        review.html_url.underline().blue()
+    )?;
 
     Ok(())
 }
@@ -648,7 +691,13 @@ async fn publish_review_for_branch(
     .map(|review| {
         if let Some(stack_id) = stack_id {
             let review_number = review.number.try_into().ok();
-            but_api::legacy::stack::update_branch_pr_number(ctx, stack_id, branch_name.to_string(), review_number).ok();
+            but_api::legacy::stack::update_branch_pr_number(
+                ctx,
+                stack_id,
+                branch_name.to_string(),
+                review_number,
+            )
+            .ok();
         }
         PublishReviewResult::Published(Box::new(review))
     })
@@ -688,7 +737,8 @@ fn get_pr_title_and_body_from_editor(
     let mut template = String::new();
 
     // Use the first line of the commit message as the default title if available
-    let commit_title = extract_commit_title(commit).map(|s| s.replace(HTML_COMMENT_START_MARKER, "<\\!--"));
+    let commit_title =
+        extract_commit_title(commit).map(|s| s.replace(HTML_COMMENT_START_MARKER, "<\\!--"));
     if let Some(commit_title) = commit_title {
         template.push_str(&commit_title);
     } else {
@@ -778,7 +828,8 @@ HTML comments are stripped before submit.
                         instructions.push_str(&format!("    - {change}\n"));
                     }
                     if changes.len() > 10 {
-                        instructions.push_str(&format!("    ... and {} more files\n", changes.len() - 10));
+                        instructions
+                            .push_str(&format!("    ... and {} more files\n", changes.len() - 10));
                     }
                 }
             }
@@ -803,7 +854,11 @@ fn extract_commit_description(commit: Option<&Commit>) -> Option<Vec<&str>> {
             .skip_while(|l| l.trim().is_empty())
             .map(|l| l.to_str().ok())
             .collect::<Option<Vec<&str>>>()?;
-        if desc_lines.is_empty() { None } else { Some(desc_lines) }
+        if desc_lines.is_empty() {
+            None
+        } else {
+            Some(desc_lines)
+        }
     })
 }
 
@@ -819,19 +874,22 @@ pub fn get_review_map(
     cache_config: Option<but_forge::CacheConfig>,
 ) -> anyhow::Result<std::collections::HashMap<String, Vec<but_forge::ForgeReview>>> {
     let reviews = but_api::legacy::forge::list_reviews(ctx, cache_config).unwrap_or_default();
-    let branch_review_map = reviews
-        .into_iter()
-        .fold(std::collections::HashMap::new(), |mut acc, r| {
-            // TODO: Handle forks properly
-            let clean_branch_name = r
-                .source_branch
-                .split(':')
-                .next_back()
-                .unwrap_or(&r.source_branch)
-                .to_string();
-            acc.entry(clean_branch_name).or_insert_with(Vec::new).push(r);
-            acc
-        });
+    let branch_review_map =
+        reviews
+            .into_iter()
+            .fold(std::collections::HashMap::new(), |mut acc, r| {
+                // TODO: Handle forks properly
+                let clean_branch_name = r
+                    .source_branch
+                    .split(':')
+                    .next_back()
+                    .unwrap_or(&r.source_branch)
+                    .to_string();
+                acc.entry(clean_branch_name)
+                    .or_insert_with(Vec::new)
+                    .push(r);
+                acc
+            });
 
     Ok(branch_review_map)
 }

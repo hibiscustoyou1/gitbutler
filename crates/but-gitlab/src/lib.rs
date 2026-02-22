@@ -5,7 +5,8 @@ mod client;
 pub mod mr;
 mod project;
 pub use client::{
-    CreateMergeRequestParams, GitLabClient, GitLabLabel, GitLabUser, MergeMergeRequestParams, MergeRequest,
+    CreateMergeRequestParams, GitLabClient, GitLabLabel, GitLabUser, MergeMergeRequestParams,
+    MergeRequest,
 };
 pub use project::GitLabProjectId;
 mod token;
@@ -80,8 +81,8 @@ async fn fetch_and_persist_selfhosted_user_data(
     access_token: &Sensitive<String>,
     storage: &but_forge_storage::Controller,
 ) -> Result<client::AuthenticatedUser, anyhow::Error> {
-    let gl =
-        client::GitLabClient::new_with_host_override(access_token, host).context("Failed to create GitLab client")?;
+    let gl = client::GitLabClient::new_with_host_override(access_token, host)
+        .context("Failed to create GitLab client")?;
     let user = gl
         .get_authenticated()
         .await
@@ -194,8 +195,9 @@ pub struct AuthenticatedUser {
 /// This module contains serializable versions of GitLab authentication types
 /// that expose sensitive data (like access tokens) as plain strings for API responses.
 pub mod json {
-    use crate::{AuthStatusResponse, AuthenticatedUser};
     use serde::Serialize;
+
+    use crate::{AuthStatusResponse, AuthenticatedUser};
 
     /// Serializable version of [`AuthStatusResponse`] with exposed access token.
     ///
@@ -317,7 +319,10 @@ mod tests {
         let result = client.get("http://192.0.2.1:80").send();
 
         if let Err(reqwest_err) = result {
-            assert!(is_network_error(&reqwest_err), "Should detect reqwest network errors");
+            assert!(
+                is_network_error(&reqwest_err),
+                "Should detect reqwest network errors"
+            );
         } else {
             panic!("Expected a network error but request succeeded");
         }

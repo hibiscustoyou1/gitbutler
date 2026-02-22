@@ -9,17 +9,26 @@ use serde::Serialize;
 #[cfg_attr(feature = "export-ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "export-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "export-ts", ts(export, export_to = "./workspace/legacy/index.ts"))]
+#[cfg_attr(
+    feature = "export-ts",
+    ts(export, export_to = "./workspace/legacy/index.ts")
+)]
 pub struct StackHeadInfo {
     /// The name of the branch.
     #[serde(with = "but_serde::bstring_lossy")]
     #[cfg_attr(feature = "export-ts", ts(type = "string"))]
-    #[cfg_attr(feature = "export-schema", schemars(schema_with = "but_schemars::bstring"))]
+    #[cfg_attr(
+        feature = "export-schema",
+        schemars(schema_with = "but_schemars::bstring")
+    )]
     pub name: BString,
     /// The tip of the branch.
     #[serde(with = "but_serde::object_id")]
     #[cfg_attr(feature = "export-ts", ts(type = "string"))]
-    #[cfg_attr(feature = "export-schema", schemars(schema_with = "but_schemars::object_id"))]
+    #[cfg_attr(
+        feature = "export-schema",
+        schemars(schema_with = "but_schemars::object_id")
+    )]
     pub tip: gix::ObjectId,
     /// The associated forge review with this branch, e.g. GitHub PRs or GitLab MRs
     pub review_id: Option<usize>,
@@ -46,11 +55,17 @@ impl StackHeadInfo {
 #[cfg_attr(feature = "export-ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "export-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "export-ts", ts(export, export_to = "./workspace/legacy/index.ts"))]
+#[cfg_attr(
+    feature = "export-ts",
+    ts(export, export_to = "./workspace/legacy/index.ts")
+)]
 pub struct StackEntry {
     /// The ID of the stack.
     #[cfg_attr(feature = "export-ts", ts(type = "string | null"))]
-    #[cfg_attr(feature = "export-schema", schemars(schema_with = "but_schemars::stack_id_opt"))]
+    #[cfg_attr(
+        feature = "export-schema",
+        schemars(schema_with = "but_schemars::stack_id_opt")
+    )]
     pub id: Option<StackId>,
     /// The list of the branch information that are part of the stack.
     /// The list is never empty.
@@ -59,7 +74,10 @@ pub struct StackEntry {
     /// The tip of the top-most branch, i.e., the most recent commit that would become the parent of new commits of the topmost stack branch.
     #[serde(with = "but_serde::object_id")]
     #[cfg_attr(feature = "export-ts", ts(type = "string"))]
-    #[cfg_attr(feature = "export-schema", schemars(schema_with = "but_schemars::object_id"))]
+    #[cfg_attr(
+        feature = "export-schema",
+        schemars(schema_with = "but_schemars::object_id")
+    )]
     pub tip: gix::ObjectId,
     /// The zero-based index for sorting stacks.
     pub order: Option<usize>,

@@ -1,7 +1,9 @@
 use anyhow::Result;
 use but_ctx::Context;
 use git2::build::CheckoutBuilder;
-use gitbutler_edit_mode::commands::{abort_and_return_to_workspace, enter_edit_mode, save_and_return_to_workspace};
+use gitbutler_edit_mode::commands::{
+    abort_and_return_to_workspace, enter_edit_mode, save_and_return_to_workspace,
+};
 use gitbutler_operating_modes::{EDIT_BRANCH_REF, WORKSPACE_BRANCH_REF};
 use gitbutler_stack::VirtualBranchesHandle;
 use tempfile::TempDir;
@@ -37,7 +39,12 @@ fn conficted_entries_get_written_when_leaving_edit_mode() -> Result<()> {
     let left = repo.find_reference("refs/heads/left")?.peel_to_commit()?;
     let right = repo.find_reference("refs/heads/right")?.peel_to_commit()?;
 
-    let mut merge = repo.merge_trees(&init.tree()?, &left.tree()?, &right.tree()?, Default::default())?;
+    let mut merge = repo.merge_trees(
+        &init.tree()?,
+        &left.tree()?,
+        &right.tree()?,
+        Default::default(),
+    )?;
 
     repo.checkout_index(
         Some(&mut merge),
@@ -91,7 +98,10 @@ fn abort_requires_force_when_changes_were_made() -> Result<()> {
     assert_eq!(ctx.git2_repo.get()?.head()?.name(), Some(EDIT_BRANCH_REF));
 
     abort_and_return_to_workspace(&mut ctx, true)?;
-    assert_eq!(ctx.git2_repo.get()?.head()?.name(), Some(WORKSPACE_BRANCH_REF));
+    assert_eq!(
+        ctx.git2_repo.get()?.head()?.name(),
+        Some(WORKSPACE_BRANCH_REF)
+    );
 
     Ok(())
 }

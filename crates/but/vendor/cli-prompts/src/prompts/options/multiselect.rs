@@ -1,11 +1,10 @@
+use super::multioption_prompt::MultiOptionPrompt;
 use crate::{
     engine::CommandBuffer,
     input::Key,
     prompts::{options::Options, AbortReason, EventOutcome, Prompt},
     style::MultiselectionStyle,
 };
-
-use super::multioption_prompt::MultiOptionPrompt;
 
 const DEFAUTL_MAX_OPTIONS: u16 = 5;
 const DEFAULT_HELP_MESSAGE: &str = "Space to select, enter to submit";

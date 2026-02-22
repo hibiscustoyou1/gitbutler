@@ -1,16 +1,15 @@
+#[cfg(feature = "askpass")]
+use std::time::Duration;
 use std::{collections::HashMap, path::Path};
-
-use gix::bstr::ByteSlice;
-
-use super::executor::{AskpassServer, GitExecutor, Pid, Socket};
-use crate::RefSpec;
 
 #[cfg(feature = "askpass")]
 use futures::{FutureExt, select};
+use gix::bstr::ByteSlice;
 #[cfg(feature = "askpass")]
 use rand::{Rng, SeedableRng};
-#[cfg(feature = "askpass")]
-use std::time::Duration;
+
+use super::executor::{AskpassServer, GitExecutor, Pid, Socket};
+use crate::RefSpec;
 
 #[cfg(feature = "askpass")]
 /// The number of characters in the secret used for checking
@@ -32,7 +31,9 @@ pub enum RepositoryError<
     AskpassServer(Easkpass),
     #[error("i/o error communicating with askpass utility: {0}")]
     AskpassIo(Esocket),
-    #[error("git command exited with non-zero exit code {status}: {args:?}\n\nSTDOUT:\n{stdout}\n\nSTDERR:\n{stderr}")]
+    #[error(
+        "git command exited with non-zero exit code {status}: {args:?}\n\nSTDOUT:\n{stdout}\n\nSTDERR:\n{stderr}"
+    )]
     Failed {
         status: usize,
         args: Vec<String>,
@@ -92,7 +93,8 @@ where
     Extra: Send + Clone,
 {
     #[cfg(feature = "askpass")]
-    return execute_with_indirect_askpass(harness_env, executor, args, envs, _on_prompt, _extra).await;
+    return execute_with_indirect_askpass(harness_env, executor, args, envs, _on_prompt, _extra)
+        .await;
     #[cfg(not(feature = "askpass"))]
     return execute_direct(harness_env, executor, args, envs).await;
 }
@@ -156,7 +158,10 @@ where
                     )
                 })
                 .unwrap_or_default();
-            (askpath_path.strip_prefix(&workdir).unwrap_or(&askpath_path), prefix)
+            (
+                askpath_path.strip_prefix(&workdir).unwrap_or(&askpath_path),
+                prefix,
+            )
         } else {
             (askpath_path.as_path(), "".into())
         };
@@ -168,7 +173,10 @@ where
     let askpath_stat = res?;
 
     #[cfg(unix)]
-    let setsid_stat = executor.stat(&setsid_path).await.map_err(Error::<E>::Exec)?;
+    let setsid_stat = executor
+        .stat(&setsid_path)
+        .await
+        .map_err(Error::<E>::Exec)?;
 
     #[expect(unsafe_code)]
     let sock_server = unsafe { executor.create_askpass_server() }
@@ -189,7 +197,10 @@ where
 
     // DISPLAY is required by SSH to check SSH_ASKPASS.
     // Please don't ask us why, it's unclear.
-    if !std::env::var("DISPLAY").map(|v| !v.is_empty()).unwrap_or(false) {
+    if !std::env::var("DISPLAY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+    {
         envs.insert("DISPLAY".into(), ":".into());
     }
 
@@ -205,7 +216,10 @@ where
         }
     };
 
-    envs.insert("GIT_SSH_COMMAND".into(), format!("{setsid_prefix}{git_ssh_command}"));
+    envs.insert(
+        "GIT_SSH_COMMAND".into(),
+        format!("{setsid_prefix}{git_ssh_command}"),
+    );
 
     let cwd = match harness_env {
         HarnessEnv::Repo(p) | HarnessEnv::Global(p) => p,
@@ -316,13 +330,19 @@ where
     E: GitExecutor,
 {
     let mut envs = envs.unwrap_or_default();
-    envs.insert("GIT_SSH_COMMAND".into(), resolve_git_ssh_command(&harness_env, &envs));
+    envs.insert(
+        "GIT_SSH_COMMAND".into(),
+        resolve_git_ssh_command(&harness_env, &envs),
+    );
 
     let cwd = match harness_env {
         HarnessEnv::Repo(p) | HarnessEnv::Global(p) => p,
     };
 
-    executor.execute(args, cwd, Some(envs)).await.map_err(Error::<E>::Exec)
+    executor
+        .execute(args, cwd, Some(envs))
+        .await
+        .map_err(Error::<E>::Exec)
 }
 
 fn resolve_git_ssh_command<P>(harness_env: &HarnessEnv<P>, envs: &HashMap<String, String>) -> String
@@ -403,8 +423,15 @@ where
     args.push(remote);
     args.push(&refspec);
 
-    let (status, stdout, stderr) =
-        execute_with_auth_harness(HarnessEnv::Repo(repo_path), &executor, &args, None, on_prompt, extra).await?;
+    let (status, stdout, stderr) = execute_with_auth_harness(
+        HarnessEnv::Repo(repo_path),
+        &executor,
+        &args,
+        None,
+        on_prompt,
+        extra,
+    )
+    .await?;
 
     if status == 0 {
         Ok(())
@@ -478,8 +505,15 @@ where
         args.push(opt.as_str());
     }
 
-    let (status, stdout, stderr) =
-        execute_with_auth_harness(HarnessEnv::Repo(repo_path), &executor, &args, None, on_prompt, extra).await?;
+    let (status, stdout, stderr) = execute_with_auth_harness(
+        HarnessEnv::Repo(repo_path),
+        &executor,
+        &args,
+        None,
+        on_prompt,
+        extra,
+    )
+    .await?;
 
     if status == 0 {
         return Ok(stderr);
@@ -545,8 +579,15 @@ where
     let target_dir_str = target_dir.to_string_lossy();
     let args = vec!["clone", "--", repository_url, &target_dir_str];
 
-    let (status, stdout, stderr) =
-        execute_with_auth_harness(HarnessEnv::Global(work_dir), &executor, &args, None, on_prompt, extra).await?;
+    let (status, stdout, stderr) = execute_with_auth_harness(
+        HarnessEnv::Global(work_dir),
+        &executor,
+        &args,
+        None,
+        on_prompt,
+        extra,
+    )
+    .await?;
 
     if status == 0 {
         Ok(())

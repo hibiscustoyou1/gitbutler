@@ -27,7 +27,11 @@ pub fn from_editor_no_comments(filename_safe_intent: &str, initial_text: &str) -
 /// Note that this string must be valid in filenames.
 ///
 /// Returns the edited text (*without known encoding*) verbatim.
-pub fn from_editor(filename_safe_intent: &str, initial_text: &str, file_suffix: &str) -> Result<BString> {
+pub fn from_editor(
+    filename_safe_intent: &str,
+    initial_text: &str,
+    file_suffix: &str,
+) -> Result<BString> {
     const ALLOWED_SUFFIXES: &[&str] = &[".txt", ".md"]; // feel free to add more allowed suffixes
     if !ALLOWED_SUFFIXES.contains(&file_suffix) {
         bail!(
@@ -73,10 +77,16 @@ pub fn get_editor_command() -> Result<String> {
 }
 
 /// Internal implementation that can be tested with the controlled environment `env`.
-fn get_editor_command_impl<AsOsStr: AsRef<OsStr>>(env: impl IntoIterator<Item = (AsOsStr, AsOsStr)>) -> Result<String> {
+fn get_editor_command_impl<AsOsStr: AsRef<OsStr>>(
+    env: impl IntoIterator<Item = (AsOsStr, AsOsStr)>,
+) -> Result<String> {
     // Run git var with the controlled environment
     let mut cmd = std::process::Command::new(gix::path::env::exe_invocation());
-    let res = cmd.args(["var", "GIT_EDITOR"]).env_clear().envs(env).output();
+    let res = cmd
+        .args(["var", "GIT_EDITOR"])
+        .env_clear()
+        .envs(env)
+        .output();
     if res.is_err() {
         // Avoid logging explicit env vars
         cmd.env_clear();
@@ -102,7 +112,9 @@ pub const HTML_COMMENT_START_MARKER: &str = "<!--";
 pub const HTML_COMMENT_END_MARKER: &str = "-->";
 
 pub fn strip_html_comments(s: &str) -> String {
-    let comment_start_positions = s.match_indices(HTML_COMMENT_START_MARKER).map(|(pos, _)| pos);
+    let comment_start_positions = s
+        .match_indices(HTML_COMMENT_START_MARKER)
+        .map(|(pos, _)| pos);
     let mut comment_end_positions = s.match_indices(HTML_COMMENT_END_MARKER).map(|(pos, _)| pos);
 
     let comment_ranges = comment_start_positions.map(|start| {

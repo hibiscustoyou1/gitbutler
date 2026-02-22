@@ -38,7 +38,9 @@ pub fn get_gl_access_token(
     Ok(account.map(|acct| acct.access_token()))
 }
 
-pub fn list_known_gitlab_accounts(storage: &but_forge_storage::Controller) -> Result<Vec<GitlabAccountIdentifier>> {
+pub fn list_known_gitlab_accounts(
+    storage: &but_forge_storage::Controller,
+) -> Result<Vec<GitlabAccountIdentifier>> {
     Ok(storage
         .gitlab_accounts()?
         .iter()
@@ -120,10 +122,12 @@ impl From<&GitLabAccount> for but_forge_storage::settings::GitLabAccount {
     fn from(account: &GitLabAccount) -> Self {
         let access_token_key = account.secret_key();
         match account {
-            GitLabAccount::Pat { username, .. } => but_forge_storage::settings::GitLabAccount::Pat {
-                username: username.to_owned(),
-                access_token_key,
-            },
+            GitLabAccount::Pat { username, .. } => {
+                but_forge_storage::settings::GitLabAccount::Pat {
+                    username: username.to_owned(),
+                    access_token_key,
+                }
+            }
             GitLabAccount::SelfHosted { host, username, .. } => {
                 but_forge_storage::settings::GitLabAccount::SelfHosted {
                     username: username.to_owned(),
@@ -138,9 +142,11 @@ impl From<&GitLabAccount> for but_forge_storage::settings::GitLabAccount {
 impl From<&but_forge_storage::settings::GitLabAccount> for GitlabAccountIdentifier {
     fn from(account: &but_forge_storage::settings::GitLabAccount) -> Self {
         match account {
-            but_forge_storage::settings::GitLabAccount::Pat { username, .. } => GitlabAccountIdentifier::PatUsername {
-                username: username.to_owned(),
-            },
+            but_forge_storage::settings::GitLabAccount::Pat { username, .. } => {
+                GitlabAccountIdentifier::PatUsername {
+                    username: username.to_owned(),
+                }
+            }
             but_forge_storage::settings::GitLabAccount::SelfHosted { host, username, .. } => {
                 GitlabAccountIdentifier::SelfHosted {
                     username: username.to_owned(),
@@ -191,16 +197,26 @@ fn retrieve_gitlab_secret(account_secret_key: &str) -> Result<Option<Sensitive<S
     secret::retrieve(account_secret_key, secret::Namespace::BuildKind)
 }
 
-fn persist_gitlab_account(account: &GitLabAccount, storage: &but_forge_storage::Controller) -> Result<()> {
+fn persist_gitlab_account(
+    account: &GitLabAccount,
+    storage: &but_forge_storage::Controller,
+) -> Result<()> {
     let secret_key = account.secret_key();
     storage.add_gitlab_account(&account.into())?;
 
     static FAIR_QUEUE: Mutex<()> = Mutex::new(());
     let _one_at_a_time_to_prevent_races = FAIR_QUEUE.lock().unwrap();
-    secret::persist(&secret_key, &account.secret_value()?, secret::Namespace::BuildKind)
+    secret::persist(
+        &secret_key,
+        &account.secret_value()?,
+        secret::Namespace::BuildKind,
+    )
 }
 
-fn delete_gitlab_account(account: &GitLabAccount, storage: &but_forge_storage::Controller) -> Result<()> {
+fn delete_gitlab_account(
+    account: &GitLabAccount,
+    storage: &but_forge_storage::Controller,
+) -> Result<()> {
     let secret_key = account.secret_key();
     storage.remove_gitlab_account(&account.into())?;
 
@@ -240,24 +256,27 @@ fn find_gitlab_account(
             }
             None
         }),
-        GitlabAccountIdentifier::SelfHosted { username, host } => accounts.iter().find_map(|account| {
-            if let but_forge_storage::settings::GitLabAccount::SelfHosted {
-                username: acct_username,
-                host: acct_host,
-                access_token_key,
-            } = account
-                && acct_host == host
-                && acct_username == username
-                && let Some(access_token) = retrieve_gitlab_secret(access_token_key).ok().flatten()
-            {
-                return Some(GitLabAccount::SelfHosted {
-                    username: acct_username.clone(),
-                    host: acct_host.clone(),
-                    access_token,
-                });
-            }
-            None
-        }),
+        GitlabAccountIdentifier::SelfHosted { username, host } => {
+            accounts.iter().find_map(|account| {
+                if let but_forge_storage::settings::GitLabAccount::SelfHosted {
+                    username: acct_username,
+                    host: acct_host,
+                    access_token_key,
+                } = account
+                    && acct_host == host
+                    && acct_username == username
+                    && let Some(access_token) =
+                        retrieve_gitlab_secret(access_token_key).ok().flatten()
+                {
+                    return Some(GitLabAccount::SelfHosted {
+                        username: acct_username.clone(),
+                        host: acct_host.clone(),
+                        access_token,
+                    });
+                }
+                None
+            })
+        }
     };
     Ok(result)
 }

@@ -9,13 +9,13 @@ mod confirmation;
 mod input;
 mod options;
 
+use std::io::stdout;
+
 pub use confirmation::Confirmation;
 pub use input::Input;
-pub use options::multiselect::Multiselect;
-pub use options::selection::Selection;
-pub use options::{multioption_prompt::MultiOptionPrompt, Options};
-
-use std::io::stdout;
+pub use options::{
+    multioption_prompt::MultiOptionPrompt, multiselect::Multiselect, selection::Selection, Options,
+};
 
 use crate::{
     engine::{Clear, CommandBuffer, CrosstermEngine, Engine},
@@ -165,13 +165,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::engine::{Clear, CommandBuffer};
     use std::{
         cell::{Cell, RefCell},
         collections::VecDeque,
         io::{Error, ErrorKind},
     };
+
+    use super::*;
+    use crate::engine::{Clear, CommandBuffer};
 
     #[derive(Default)]
     struct TestCommandBuffer;

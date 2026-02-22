@@ -4,7 +4,9 @@ use anyhow::{Result, anyhow};
 use petgraph::{Direction, visit::EdgeRef};
 use serde::{Deserialize, Serialize};
 
-use crate::graph_rebase::{Edge, Editor, Pick, Selector, Step, ToCommitSelector, ToReferenceSelector, ToSelector};
+use crate::graph_rebase::{
+    Edge, Editor, Pick, Selector, Step, ToCommitSelector, ToReferenceSelector, ToSelector,
+};
 
 /// Describes where relative to the selector a step should be inserted
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -63,7 +65,9 @@ impl Editor {
     pub fn select_reference(&self, target: &gix::refs::FullNameRef) -> Result<Selector> {
         match self.try_select_reference(target) {
             Some(selector) => Ok(selector),
-            None => Err(anyhow!("Failed to find reference {target} in rebase editor")),
+            None => Err(anyhow!(
+                "Failed to find reference {target} in rebase editor"
+            )),
         }
     }
 
@@ -117,7 +121,12 @@ impl Editor {
     /// instead.
     ///
     /// Returns a selector to the inserted step
-    pub fn insert(&mut self, target: impl ToSelector, step: Step, side: InsertSide) -> Result<Selector> {
+    pub fn insert(
+        &mut self,
+        target: impl ToSelector,
+        step: Step,
+        side: InsertSide,
+    ) -> Result<Selector> {
         let target = self.history.normalize_selector(target.to_selector(self)?)?;
         match side {
             InsertSide::Above => {

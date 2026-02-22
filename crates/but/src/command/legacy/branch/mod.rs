@@ -15,7 +15,11 @@ mod json;
 mod list;
 mod show;
 
-pub fn handle(cmd: Option<Subcommands>, ctx: &mut but_ctx::Context, out: &mut OutputChannel) -> anyhow::Result<()> {
+pub fn handle(
+    cmd: Option<Subcommands>,
+    ctx: &mut but_ctx::Context,
+    out: &mut OutputChannel,
+) -> anyhow::Result<()> {
     match cmd {
         None => handle(
             Some(Subcommands::List {
@@ -54,7 +58,10 @@ pub fn handle(cmd: Option<Subcommands>, ctx: &mut but_ctx::Context, out: &mut Ou
             show::show(ctx, &branch_id, out, review, files, ai, check)?;
             Ok(())
         }
-        Some(Subcommands::New { branch_name, anchor }) => {
+        Some(Subcommands::New {
+            branch_name,
+            anchor,
+        }) => {
             let id_map = IdMap::new_from_context(ctx, None)?;
             // Get branch name or use canned name
             let branch_name = branch_name
@@ -88,10 +95,12 @@ pub fn handle(cmd: Option<Subcommands>, ctx: &mut but_ctx::Context, out: &mut Ou
                             position: but_workspace::branch::create_reference::Position::Above,
                         })
                     }
-                    CliId::Branch { name, .. } => Some(but_api::legacy::stack::create_reference::Anchor::AtReference {
-                        short_name: name.clone(),
-                        position: but_workspace::branch::create_reference::Position::Above,
-                    }),
+                    CliId::Branch { name, .. } => Some(
+                        but_api::legacy::stack::create_reference::Anchor::AtReference {
+                            short_name: name.clone(),
+                            position: but_workspace::branch::create_reference::Position::Above,
+                        },
+                    ),
                     _ => {
                         return Err(anyhow::anyhow!(
                             "Invalid anchor type: {}, expected commit or branch",
@@ -105,10 +114,13 @@ pub fn handle(cmd: Option<Subcommands>, ctx: &mut but_ctx::Context, out: &mut Ou
             };
 
             let anchor_display = anchor.as_ref().map(|anchor_ref| match anchor_ref {
-                but_api::legacy::stack::create_reference::Anchor::AtReference { short_name, .. } => short_name.clone(),
-                but_api::legacy::stack::create_reference::Anchor::AtCommit { commit_id, .. } => {
-                    commit_id.to_string()[..7].to_string()
-                }
+                but_api::legacy::stack::create_reference::Anchor::AtReference {
+                    short_name,
+                    ..
+                } => short_name.clone(),
+                but_api::legacy::stack::create_reference::Anchor::AtCommit {
+                    commit_id, ..
+                } => commit_id.to_string()[..7].to_string(),
             });
 
             but_api::legacy::stack::create_reference(
@@ -129,7 +141,12 @@ pub fn handle(cmd: Option<Subcommands>, ctx: &mut but_ctx::Context, out: &mut Ou
                         anchor_name.dimmed()
                     )?;
                 } else {
-                    writeln!(out, "{} {}", "✓ Created branch".green(), branch_name.yellow())?;
+                    writeln!(
+                        out,
+                        "{} {}",
+                        "✓ Created branch".green(),
+                        branch_name.yellow()
+                    )?;
                 }
             } else if let Some(out) = out.for_shell() {
                 writeln!(out, "{branch_name}")?;
@@ -143,8 +160,10 @@ pub fn handle(cmd: Option<Subcommands>, ctx: &mut but_ctx::Context, out: &mut Ou
             Ok(())
         }
         Some(Subcommands::Delete { branch_name, force }) => {
-            let stacks =
-                but_api::legacy::workspace::stacks(ctx, Some(but_workspace::legacy::StacksFilter::InWorkspace))?;
+            let stacks = but_api::legacy::workspace::stacks(
+                ctx,
+                Some(but_workspace::legacy::StacksFilter::InWorkspace),
+            )?;
 
             // Find which stack this branch belongs to
             for stack_entry in &stacks {

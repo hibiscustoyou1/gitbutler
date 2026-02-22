@@ -14,13 +14,20 @@ use tempfile::TempDir;
 fn add_series_success() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
-    let reference = StackBranch::new(test_ctx.commits[1].id().to_gix(), "asdf".into(), &*ctx.repo.get()?)?;
+    let reference = StackBranch::new(
+        test_ctx.commits[1].id().to_gix(),
+        "asdf".into(),
+        &*ctx.repo.get()?,
+    )?;
     let result = test_ctx.stack.add_series(&ctx, reference, None);
     assert!(result.is_ok());
     assert_eq!(test_ctx.stack.heads.len(), 2);
     assert_eq!(test_ctx.stack.heads[0].name(), "asdf");
     // Assert persisted
-    assert_eq!(test_ctx.stack, test_ctx.handle.get_stack(test_ctx.stack.id)?);
+    assert_eq!(
+        test_ctx.stack,
+        test_ctx.handle.get_stack(test_ctx.stack.id)?
+    );
     Ok(())
 }
 
@@ -33,7 +40,10 @@ fn add_series_top_of_stack() -> Result<()> {
     assert_eq!(test_ctx.stack.heads.len(), 2);
     assert_eq!(test_ctx.stack.heads[1].name(), "asdf");
     // Assert persisted
-    assert_eq!(test_ctx.stack, test_ctx.handle.get_stack(test_ctx.stack.id)?);
+    assert_eq!(
+        test_ctx.stack,
+        test_ctx.handle.get_stack(test_ctx.stack.id)?
+    );
     Ok(())
 }
 
@@ -42,13 +52,18 @@ fn add_series_top_base() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
     let git2_repo = ctx.git2_repo.get()?;
-    let merge_base = git2_repo
-        .find_commit(git2_repo.merge_base(test_ctx.stack.head_oid(&ctx)?.to_git2(), test_ctx.default_target.sha)?)?;
+    let merge_base = git2_repo.find_commit(git2_repo.merge_base(
+        test_ctx.stack.head_oid(&ctx)?.to_git2(),
+        test_ctx.default_target.sha,
+    )?)?;
     let reference = StackBranch::new(merge_base.id().to_gix(), "asdf".into(), &*ctx.repo.get()?)?;
     let result = test_ctx.stack.add_series(&ctx, reference, None);
     println!("{result:?}");
     // Assert persisted
-    assert_eq!(test_ctx.stack, test_ctx.handle.get_stack(test_ctx.stack.id)?);
+    assert_eq!(
+        test_ctx.stack,
+        test_ctx.handle.get_stack(test_ctx.stack.id)?
+    );
     Ok(())
 }
 
@@ -89,7 +104,10 @@ fn add_multiple_series() -> Result<()> {
 
     let result = test_ctx.stack.add_series(&ctx, head_1, None);
     assert!(result.is_ok());
-    assert_eq!(head_names(&test_ctx), vec!["head_1", "head_2", "virtual", "head_4"]);
+    assert_eq!(
+        head_names(&test_ctx),
+        vec!["head_1", "head_2", "virtual", "head_4"]
+    );
 
     // archive is noop
     let before_prune = test_ctx.stack.heads.clone();
@@ -120,7 +138,11 @@ fn add_series_invalid_name_fails() -> Result<()> {
 fn add_series_duplicate_name_fails() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
-    let reference = StackBranch::new(test_ctx.commits[1].id().to_gix(), "asdf".into(), &*ctx.repo.get()?)?;
+    let reference = StackBranch::new(
+        test_ctx.commits[1].id().to_gix(),
+        "asdf".into(),
+        &*ctx.repo.get()?,
+    )?;
     let result = test_ctx.stack.add_series(&ctx, reference.clone(), None);
     assert!(result.is_ok());
     let result = test_ctx.stack.add_series(&ctx, reference, None);
@@ -248,7 +270,11 @@ fn remove_branch_with_multiple_last_heads() -> Result<()> {
     assert_eq!(head_names(&test_ctx), vec!["virtual"]); // defaults to stack name
     let default_head = test_ctx.stack.heads[0].clone();
     let repo = &*ctx.repo.get()?;
-    let to_stay = StackBranch::new(test_ctx.commits.last().unwrap().id().to_gix(), "to_stay".into(), repo)?;
+    let to_stay = StackBranch::new(
+        test_ctx.commits.last().unwrap().id().to_gix(),
+        "to_stay".into(),
+        repo,
+    )?;
     let result = test_ctx.stack.add_series(&ctx, to_stay.clone(), None);
     assert!(result.is_ok());
     assert_eq!(head_names(&test_ctx), vec!["to_stay", "virtual"]);
@@ -273,7 +299,11 @@ fn remove_branch_no_orphan_commits() -> Result<()> {
     let default_head = test_ctx.stack.heads[0].clone(); // references the newest commit
 
     let repo = &*ctx.repo.get()?;
-    let to_stay = StackBranch::new(test_ctx.commits.first().unwrap().id().to_gix(), "to_stay".into(), repo)?; // references the oldest commit
+    let to_stay = StackBranch::new(
+        test_ctx.commits.first().unwrap().id().to_gix(),
+        "to_stay".into(),
+        repo,
+    )?; // references the oldest commit
     let result = test_ctx.stack.add_series(&ctx, to_stay.clone(), None);
     assert!(result.is_ok());
     assert_eq!(head_names(&test_ctx), vec!["to_stay", "virtual"]);
@@ -294,7 +324,9 @@ fn update_series_noop_does_nothing() -> Result<()> {
     let mut test_ctx = test_ctx(&ctx)?;
     let heads_before = test_ctx.stack.heads.clone();
     let noop_update = PatchReferenceUpdate::default();
-    let result = test_ctx.stack.update_branch(&ctx, "virtual".into(), &noop_update);
+    let result = test_ctx
+        .stack
+        .update_branch(&ctx, "virtual".into(), &noop_update);
     assert!(result.is_ok());
     assert_eq!(test_ctx.stack.heads, heads_before);
     Ok(())
@@ -307,7 +339,9 @@ fn update_branch_name_fails_validation() -> Result<()> {
     let update = PatchReferenceUpdate {
         name: Some("invalid name".into()),
     };
-    let result = test_ctx.stack.update_branch(&ctx, "virtual".into(), &update);
+    let result = test_ctx
+        .stack
+        .update_branch(&ctx, "virtual".into(), &update);
     assert_eq!(result.err().unwrap().to_string(), "Invalid branch name");
     Ok(())
 }
@@ -321,7 +355,9 @@ fn update_branch_name_to_same_name_is_noop() -> Result<()> {
     let update = PatchReferenceUpdate {
         name: Some(branch_name.clone()),
     };
-    let result = test_ctx.stack.update_branch(&ctx, branch_name.clone(), &update);
+    let result = test_ctx
+        .stack
+        .update_branch(&ctx, branch_name.clone(), &update);
 
     assert!(result.is_ok());
     assert_eq!(test_ctx.stack.heads[0].name(), &branch_name);
@@ -336,11 +372,16 @@ fn update_branch_name_success() -> Result<()> {
     let update = PatchReferenceUpdate {
         name: Some("new-name".into()),
     };
-    let result = test_ctx.stack.update_branch(&ctx, "virtual".into(), &update);
+    let result = test_ctx
+        .stack
+        .update_branch(&ctx, "virtual".into(), &update);
     assert!(result.is_ok());
     assert_eq!(test_ctx.stack.heads[0].name(), "new-name");
     // Assert persisted
-    assert_eq!(test_ctx.stack, test_ctx.handle.get_stack(test_ctx.stack.id)?);
+    assert_eq!(
+        test_ctx.stack,
+        test_ctx.handle.get_stack(test_ctx.stack.id)?
+    );
     Ok(())
 }
 
@@ -349,14 +390,21 @@ fn update_branch_name_resets_pr_number() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
     let pr_number = 123;
-    test_ctx.stack.set_pr_number(&ctx, "virtual", Some(pr_number))?;
+    test_ctx
+        .stack
+        .set_pr_number(&ctx, "virtual", Some(pr_number))?;
     assert_eq!(test_ctx.stack.heads[0].pr_number, Some(pr_number));
     let update = PatchReferenceUpdate {
         name: Some("new-name".into()),
     };
-    test_ctx.stack.update_branch(&ctx, "virtual".into(), &update)?;
+    test_ctx
+        .stack
+        .update_branch(&ctx, "virtual".into(), &update)?;
     assert_eq!(test_ctx.stack.heads[0].pr_number, None);
-    assert_eq!(test_ctx.stack, test_ctx.handle.get_stack(test_ctx.stack.id)?);
+    assert_eq!(
+        test_ctx.stack,
+        test_ctx.handle.get_stack(test_ctx.stack.id)?
+    );
     Ok(())
 }
 
@@ -521,7 +569,9 @@ fn set_stack_head_commit_invalid() -> Result<()> {
     let mut test_ctx = test_ctx(&ctx)?;
     let vb_state = VirtualBranchesHandle::new(ctx.project_data_dir());
     let gix_repo = ctx.repo.get()?;
-    let result = test_ctx.stack.set_stack_head(&vb_state, &gix_repo, git2::Oid::zero());
+    let result = test_ctx
+        .stack
+        .set_stack_head(&vb_state, &gix_repo, git2::Oid::zero());
     assert!(result.is_err());
     Ok(())
 }
@@ -533,7 +583,9 @@ fn set_stack_head() -> Result<()> {
     let commit = test_ctx.other_commits.last().unwrap();
     let vb_state = VirtualBranchesHandle::new(ctx.project_data_dir());
     let gix_repo = ctx.repo.get()?;
-    let result = test_ctx.stack.set_stack_head(&vb_state, &gix_repo, commit.id());
+    let result = test_ctx
+        .stack
+        .set_stack_head(&vb_state, &gix_repo, commit.id());
     assert!(result.is_ok());
     let branches = test_ctx.stack.branches();
     assert_eq!(
@@ -557,7 +609,10 @@ fn archive_heads_noop() -> Result<()> {
         .archive_integrated_heads(&ctx, &*ctx.repo.get()?, &[], false)?;
     assert_eq!(initial_state, test_ctx.stack.heads);
     // Assert persisted
-    assert_eq!(test_ctx.stack, test_ctx.handle.get_stack(test_ctx.stack.id)?);
+    assert_eq!(
+        test_ctx.stack,
+        test_ctx.handle.get_stack(test_ctx.stack.id)?
+    );
     Ok(())
 }
 
@@ -585,7 +640,10 @@ fn archive_heads_success() -> Result<()> {
     assert!(test_ctx.stack.heads[0].archived);
     assert!(!test_ctx.stack.heads[1].archived);
     // Assert persisted
-    assert_eq!(test_ctx.stack, test_ctx.handle.get_stack(test_ctx.stack.id)?);
+    assert_eq!(
+        test_ctx.stack,
+        test_ctx.handle.get_stack(test_ctx.stack.id)?
+    );
     Ok(())
 }
 
@@ -627,7 +685,10 @@ fn set_pr_numberentifiers_success() -> Result<()> {
     assert!(result.is_ok());
     assert_eq!(test_ctx.stack.heads[0].pr_number, Some(123));
     // Assert persisted
-    assert_eq!(test_ctx.stack, test_ctx.handle.get_stack(test_ctx.stack.id)?);
+    assert_eq!(
+        test_ctx.stack,
+        test_ctx.handle.get_stack(test_ctx.stack.id)?
+    );
     Ok(())
 }
 
@@ -635,7 +696,9 @@ fn set_pr_numberentifiers_success() -> Result<()> {
 fn set_pr_numberentifiers_series_not_found_fails() -> Result<()> {
     let (ctx, _temp_dir) = command_ctx("multiple-commits")?;
     let mut test_ctx = test_ctx(&ctx)?;
-    let result = test_ctx.stack.set_pr_number(&ctx, "does-not-exist", Some(123));
+    let result = test_ctx
+        .stack
+        .set_pr_number(&ctx, "does-not-exist", Some(123));
     assert_eq!(
         result.err().unwrap().to_string(),
         format!(
@@ -667,7 +730,10 @@ fn add_head_with_archived_bottom_head() -> Result<()> {
         "abcd".to_string(),
         &*ctx.repo.get()?,
     )?;
-    let patches: Vec<gix::ObjectId> = vec![test_ctx.commits[0].id.to_gix(), test_ctx.commits[1].id.to_gix()];
+    let patches: Vec<gix::ObjectId> = vec![
+        test_ctx.commits[0].id.to_gix(),
+        test_ctx.commits[1].id.to_gix(),
+    ];
 
     let updated_heads = gitbutler_stack::add_head(
         existing_heads,
@@ -685,7 +751,12 @@ fn command_ctx(name: &str) -> Result<(Context, TempDir)> {
 }
 
 fn head_names(test_ctx: &TestContext) -> Vec<String> {
-    test_ctx.stack.heads.iter().map(|h| h.name().clone()).collect_vec()
+    test_ctx
+        .stack
+        .heads
+        .iter()
+        .map(|h| h.name().clone())
+        .collect_vec()
 }
 
 fn test_ctx(ctx: &Context) -> Result<TestContext> {
@@ -695,7 +766,11 @@ fn test_ctx(ctx: &Context) -> Result<TestContext> {
     let other_stack = stacks.iter().find(|b| b.name() != "virtual").unwrap();
     let target = handle.get_default_target()?;
     let git2_repo = ctx.git2_repo.get()?;
-    let mut branch_commits = git2_repo.log(stack.head_oid(ctx)?.to_git2(), LogUntil::Commit(target.sha), false)?;
+    let mut branch_commits = git2_repo.log(
+        stack.head_oid(ctx)?.to_git2(),
+        LogUntil::Commit(target.sha),
+        false,
+    )?;
     branch_commits.reverse();
     let mut other_commits = git2_repo.log(
         other_stack.head_oid(ctx)?.to_git2(),
@@ -758,7 +833,8 @@ fn next_available_name_avoids_remote_tracking_branches() -> Result<()> {
     repo.reference(remote_branch, id, PreviousValue::Any, "test")?;
 
     // Request a unique name starting from my-test-branch
-    let unique = Stack::next_available_name(&repo, &test_ctx.handle, "my-test-branch".to_string(), false)?;
+    let unique =
+        Stack::next_available_name(&repo, &test_ctx.handle, "my-test-branch".to_string(), false)?;
 
     assert_eq!(
         unique, "my-test-branch-1",

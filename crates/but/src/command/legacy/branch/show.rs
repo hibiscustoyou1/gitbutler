@@ -27,7 +27,9 @@ pub fn show(
             .find(|(_, id)| id.as_str() == branch_id)
             .map(|(name, _)| name.clone())
             .ok_or_else(|| {
-                anyhow::anyhow!("Branch ID '{branch_id}' not found. Run 'but branch' to see available IDs.")
+                anyhow::anyhow!(
+                    "Branch ID '{branch_id}' not found. Run 'but branch' to see available IDs."
+                )
             })?
     } else {
         // Assume it's a branch name
@@ -42,10 +44,13 @@ pub fn show(
 
     // Get review information if requested
     let reviews = if review {
-        crate::command::legacy::forge::review::get_review_map(ctx, Some(but_forge::CacheConfig::CacheOnly))?
-            .get(&branch_name)
-            .cloned()
-            .unwrap_or_default()
+        crate::command::legacy::forge::review::get_review_map(
+            ctx,
+            Some(but_forge::CacheConfig::CacheOnly),
+        )?
+        .get(&branch_name)
+        .cloned()
+        .unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -53,7 +58,11 @@ pub fn show(
     // Generate AI summary if requested
     let ai_summary = if generate_ai_summary {
         let git_config = gix::config::File::from_globals()?;
-        Some(generate_branch_summary(&branch_name, &commits, &git_config)?)
+        Some(generate_branch_summary(
+            &branch_name,
+            &commits,
+            &git_config,
+        )?)
     } else {
         None
     };
@@ -127,7 +136,11 @@ fn check_merge_conflicts(ctx: &Context, branch_name: &str) -> Result<MergeCheck,
     let target = stack.get_default_target()?;
 
     // Try to find the remote tracking branch (e.g., refs/remotes/origin/master)
-    let target_ref_name = format!("refs/remotes/{}/{}", target.branch.remote(), target.branch.branch());
+    let target_ref_name = format!(
+        "refs/remotes/{}/{}",
+        target.branch.remote(),
+        target.branch.branch()
+    );
     let target_commit = match repo.find_reference(&target_ref_name) {
         Ok(reference) => {
             let target_oid = reference.id();
@@ -177,11 +190,21 @@ fn check_merge_conflicts(ctx: &Context, branch_name: &str) -> Result<MergeCheck,
 
         // For each conflicting file, find which commits on both sides modified it
         for path in conflict_paths {
-            let branch_commits =
-                find_commits_modifying_file(git2_repo, &gix_repo, &path, merge_base_gix, branch_commit_gix)?;
+            let branch_commits = find_commits_modifying_file(
+                git2_repo,
+                &gix_repo,
+                &path,
+                merge_base_gix,
+                branch_commit_gix,
+            )?;
 
-            let upstream_commits =
-                find_commits_modifying_file(git2_repo, &gix_repo, &path, merge_base_gix, target_commit_gix)?;
+            let upstream_commits = find_commits_modifying_file(
+                git2_repo,
+                &gix_repo,
+                &path,
+                merge_base_gix,
+                target_commit_gix,
+            )?;
 
             conflicting_files.push(ConflictingFile {
                 path,
@@ -301,7 +324,11 @@ fn find_commits_modifying_file(
     Ok(commits)
 }
 
-fn get_commits_ahead(ctx: &Context, branch_name: &str, show_files: bool) -> Result<Vec<CommitInfo>, anyhow::Error> {
+fn get_commits_ahead(
+    ctx: &Context,
+    branch_name: &str,
+    show_files: bool,
+) -> Result<Vec<CommitInfo>, anyhow::Error> {
     use gix::prelude::ObjectIdExt as _;
 
     let repo = &*ctx.git2_repo.get()?;
@@ -312,7 +339,11 @@ fn get_commits_ahead(ctx: &Context, branch_name: &str, show_files: bool) -> Resu
     let target = stack.get_default_target()?;
 
     // Try to find the remote tracking branch (e.g., refs/remotes/origin/master)
-    let target_ref_name = format!("refs/remotes/{}/{}", target.branch.remote(), target.branch.branch());
+    let target_ref_name = format!(
+        "refs/remotes/{}/{}",
+        target.branch.remote(),
+        target.branch.branch()
+    );
     let target_oid_gix = match gix_repo.find_reference(&target_ref_name) {
         Ok(reference) => reference.id().detach(),
         Err(_) => {
@@ -438,14 +469,20 @@ fn get_commits_ahead(ctx: &Context, branch_name: &str, show_files: bool) -> Resu
     Ok(commits)
 }
 
-fn get_unassigned_files(ctx: &mut Context, branch_name: &str) -> Result<Vec<String>, anyhow::Error> {
+fn get_unassigned_files(
+    ctx: &mut Context,
+    branch_name: &str,
+) -> Result<Vec<String>, anyhow::Error> {
     use std::collections::BTreeMap;
 
     use bstr::{BString, ByteSlice};
     use but_hunk_assignment::HunkAssignment;
 
     // Find the stack that contains this branch
-    let stacks = but_api::legacy::workspace::stacks(ctx, Some(but_workspace::legacy::StacksFilter::InWorkspace))?;
+    let stacks = but_api::legacy::workspace::stacks(
+        ctx,
+        Some(but_workspace::legacy::StacksFilter::InWorkspace),
+    )?;
 
     // Find the stack ID for this branch
     let stack_id = stacks
@@ -677,7 +714,10 @@ fn output_human(
                     } else if file.status == "deleted" {
                         format!("    {} (deleted, -{})", status_color, file.deletions)
                     } else {
-                        format!("    {} (+{}, -{})", status_color, file.insertions, file.deletions)
+                        format!(
+                            "    {} (+{}, -{})",
+                            status_color, file.insertions, file.deletions
+                        )
                     };
 
                     writeln!(buf, "{change_str}")?;
@@ -708,7 +748,13 @@ fn output_human(
         writeln!(buf, "{}", "Reviews:".bold())?;
         for review in reviews {
             writeln!(buf)?;
-            writeln!(buf, "  {} {}{}", "PR/MR:".dimmed(), review.unit_symbol, review.number)?;
+            writeln!(
+                buf,
+                "  {} {}{}",
+                "PR/MR:".dimmed(),
+                review.unit_symbol,
+                review.number
+            )?;
             writeln!(buf, "  {} {}", "Title:".dimmed(), review.title)?;
             writeln!(buf, "  {} {}", "URL:".dimmed(), review.html_url.cyan())?;
 
@@ -749,14 +795,27 @@ fn output_human(
                 "Merges cleanly into upstream".green()
             )?;
         } else {
-            writeln!(buf, "{} {}", "Merge Check:".bold(), "Conflicts detected".red().bold())?;
+            writeln!(
+                buf,
+                "{} {}",
+                "Merge Check:".bold(),
+                "Conflicts detected".red().bold()
+            )?;
             writeln!(buf)?;
             writeln!(
                 buf,
                 "  {} file{} conflict{}:",
                 check.conflicting_files.len(),
-                if check.conflicting_files.len() == 1 { "" } else { "s" },
-                if check.conflicting_files.len() == 1 { "s" } else { "" }
+                if check.conflicting_files.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                if check.conflicting_files.len() == 1 {
+                    "s"
+                } else {
+                    ""
+                }
             )?;
             writeln!(buf)?;
 
@@ -782,7 +841,12 @@ fn output_human(
                 if !file.upstream_commits.is_empty() {
                     writeln!(buf, "    Modified by upstream:")?;
                     for commit in &file.upstream_commits {
-                        writeln!(buf, "      {} {}", commit.short_sha.magenta(), commit.message)?;
+                        writeln!(
+                            buf,
+                            "      {} {}",
+                            commit.short_sha.magenta(),
+                            commit.message
+                        )?;
                         writeln!(
                             buf,
                             "        {} by {}",
