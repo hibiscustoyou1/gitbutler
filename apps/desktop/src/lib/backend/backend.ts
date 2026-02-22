@@ -1,3 +1,4 @@
+import type { Webview } from '@tauri-apps/api/webview';
 import type { Readable } from 'svelte/store';
 
 export type DeepLinkHandlers = {
@@ -85,6 +86,10 @@ export interface IBackend {
 	 * Init deep linking handling.
 	 */
 	initDeepLinking: (handlers: DeepLinkHandlers) => Promise<void>;
+	/**
+	 * Get the applications webview
+	 */
+	getCurrentWebView: () => Webview | null;
 }
 
 export interface DiskStore {

@@ -26,6 +26,9 @@ export default class Web implements IBackend {
 	getAppInfo = webGetAppInfo;
 	readTextFromClipboard = webReadTextFromClipboard;
 	writeTextToClipboard = webWriteTextToClipboard;
+	getCurrentWebView() {
+		return null;
+	}
 	async filePicker<T extends OpenDialogOptions>(options?: T): Promise<OpenDialogReturn<T>> {
 		return await webFilePicker<T>(options);
 	}
