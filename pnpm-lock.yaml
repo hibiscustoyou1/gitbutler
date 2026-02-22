@@ -79,6 +79,7 @@ overrides:
   fast-xml-parser: 5.3.7
   '@isaacs/brace-expansion': 5.0.1
   minimatch@10.1.1: 10.2.2
+  qs: 6.14.1
   '@lexical/clipboard': 0.27.2
   '@lexical/code': 0.27.2
   '@lexical/file': 0.27.2
@@ -7996,8 +7997,8 @@ packages:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
 
-  qs@6.14.0:
-    resolution: {integrity: sha512-YWWTjgABSKcvs/nWBi9PycY/JiPJqOD4JA6o9Sej2AtvSGarXxKC3OQSk4pAarbdQlKAh5D4FCQkJNkW+GAn3w==}
+  qs@6.14.1:
+    resolution: {integrity: sha512-4EK3+xJl8Ts67nLYNwqw/dsFVnCf+qR7RgXSK9jEEm9unao3njwMDdmsdvoKBKHzxd7tCYz5e5M+SnMjdtXGQQ==}
     engines: {node: '>=0.6'}
 
   query-selector-shadow-dom@1.0.1:
@@ -9977,7 +9978,7 @@ snapshots:
       json-stringify-safe: 5.0.1
       mime-types: 2.1.35
       performance-now: 2.1.0
-      qs: 6.14.0
+      qs: 6.14.1
       safe-buffer: 5.2.1
       tough-cookie: 5.1.2
       tunnel-agent: 0.6.0
@@ -10504,13 +10505,13 @@ snapshots:
   '@gitbeaker/core@42.5.0':
     dependencies:
       '@gitbeaker/requester-utils': 42.5.0
-      qs: 6.14.0
+      qs: 6.14.1
       xcase: 2.0.1
 
   '@gitbeaker/requester-utils@42.5.0':
     dependencies:
       picomatch-browser: 2.2.6
-      qs: 6.14.0
+      qs: 6.14.1
       rate-limiter-flexible: 4.0.1
       xcase: 2.0.1
 
@@ -17428,7 +17429,7 @@ snapshots:
 
   punycode@2.3.1: {}
 
-  qs@6.14.0:
+  qs@6.14.1:
     dependencies:
       side-channel: 1.1.0
 
