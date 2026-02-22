@@ -280,7 +280,8 @@ impl InputOutputChannel<'_> {
                         }
                     }
                     KeyEditAction::Submit => {
-                        self.out.stdout.write_all(b"\n")?;
+                        // In raw mode, '\n' may not return to column 0, so always emit CRLF.
+                        self.out.stdout.write_all(b"\r\n")?;
                         self.out.stdout.flush()?;
                         let trimmed = line.trim().to_owned();
                         return if trimmed.is_empty() {
@@ -290,7 +291,8 @@ impl InputOutputChannel<'_> {
                         };
                     }
                     KeyEditAction::EndOfInput => {
-                        self.out.stdout.write_all(b"\n")?;
+                        // Keep follow-up output aligned even after prompt cancellation.
+                        self.out.stdout.write_all(b"\r\n")?;
                         self.out.stdout.flush()?;
                         return Ok(ReadlineInput::EndOfInput);
                     }
@@ -361,7 +363,8 @@ impl InputOutputChannel<'_> {
 
     /// Prompt for y/n confirmation without a default.
     /// Automatically appends `[y/n]` to the prompt.
-    /// Returns `NoInput` if the user provides empty input.
+    /// Re-prompts on empty input and returns `NoInput` only if input is ended
+    /// (for example Ctrl-C, Ctrl-D, or Esc).
     ///
     /// ```ignore
     /// let result = inout.confirm_no_default("Are you sure you want to do this?")?;
@@ -369,15 +372,18 @@ impl InputOutputChannel<'_> {
     /// // Are you sure you want to do this? [y/n]:
     /// ```
     pub fn confirm_no_default(&mut self, prompt: impl AsRef<str>) -> anyhow::Result<ConfirmOrEmpty> {
-        match self.readline(&format!("{} [y/n]: ", prompt.as_ref()))? {
-            ReadlineInput::Text(input) => {
-                if input.to_lowercase().starts_with('y') {
-                    Ok(ConfirmOrEmpty::Yes)
-                } else {
-                    Ok(ConfirmOrEmpty::No)
+        let prompt = format!("{} [y/n]: ", prompt.as_ref());
+        loop {
+            match self.readline(&prompt)? {
+                ReadlineInput::Text(input) => {
+                    if input.to_lowercase().starts_with('y') {
+                        return Ok(ConfirmOrEmpty::Yes);
+                    }
+                    return Ok(ConfirmOrEmpty::No);
                 }
+                ReadlineInput::Empty => continue,
+                ReadlineInput::EndOfInput => return Ok(ConfirmOrEmpty::NoInput),
             }
-            ReadlineInput::Empty | ReadlineInput::EndOfInput => Ok(ConfirmOrEmpty::NoInput),
         }
     }
 }

@@ -656,10 +656,7 @@ fn prompt_for_install_scope(progress: &mut impl std::io::Write) -> Result<Instal
     match prompt.display() {
         Ok(InstallScopeOption::Local) => Ok(InstallScope::Local),
         Ok(InstallScopeOption::Global) => Ok(InstallScope::Global),
-        Err(AbortReason::Interrupt) => {
-            writeln!(progress)?;
-            Err(UserCancelled.into())
-        }
+        Err(AbortReason::Interrupt) => Err(UserCancelled.into()),
         Err(AbortReason::Error(err)) => Err(anyhow::Error::from(err).context("Failed to read user selection")),
     }
 }
@@ -749,10 +746,7 @@ fn prompt_for_install_path(
 
     let selection: String = match prompt.display() {
         Ok(s) => s,
-        Err(AbortReason::Interrupt) => {
-            writeln!(progress)?;
-            return Err(UserCancelled.into());
-        }
+        Err(AbortReason::Interrupt) => return Err(UserCancelled.into()),
         Err(AbortReason::Error(err)) => {
             return Err(anyhow::Error::from(err).context("Failed to read user selection"));
         }
