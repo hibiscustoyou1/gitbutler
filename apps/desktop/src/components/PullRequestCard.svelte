@@ -4,6 +4,7 @@
 	import ReduxResult from '$components/ReduxResult.svelte';
 	import { CLIPBOARD_SERVICE } from '$lib/backend/clipboard';
 	import { DEFAULT_FORGE_FACTORY } from '$lib/forge/forgeFactory.svelte';
+	import { showError } from '$lib/notifications/toasts';
 	import { URL_SERVICE } from '$lib/utils/url';
 	import { inject } from '@gitbutler/core/context';
 	import {
@@ -81,6 +82,8 @@
 		try {
 			await prService.setDraft(prNumber, draft);
 			await prService.fetch(prNumber, { forceRefetch: true });
+		} catch (err: unknown) {
+			showError('Failed to update draft status', err);
 		} finally {
 			draftToggling = false;
 		}
